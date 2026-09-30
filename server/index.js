@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomInt, randomUUID } from "node:crypto";
@@ -28,6 +28,7 @@ import {
 
 const GAME_DIR = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const DIST_DIR = resolve(GAME_DIR, "dist");
+const DEFAULT_SAVE_DIRECTORY = resolve(GAME_DIR, ".data", "saves");
 const MIME_TYPES = new Map([
   [".css", "text/css; charset=utf-8"],
   [".html", "text/html; charset=utf-8"],
@@ -70,17 +71,8 @@ function safeName(value) {
   return name.length > 0 ? name : null;
 }
 
-function createInventory() {
-  return new Map([
-    ["oak_log", 3],
-    ["oak_planks", 8],
-    ["stone", 4],
-    ["sand", 4],
-    ["brick", 4],
-    ["obsidian", 4],
-    ["snow", 4],
-    ["ice", 4],
-  ]);
+function createInventory(mode = "survival") {
+  return mode === "design" ? new Map([...BLOCK_TYPES].map((block) => [block, 1])) : new Map();
 }
 
 function addItems(inventory, item, amount) {
@@ -100,6 +92,67 @@ function removeItems(inventory, item, amount) {
 
 function inventoryItems(inventory) {
   return [...inventory].sort(([left], [right]) => left.localeCompare(right));
+}
+
+function loadSavedRooms(saveDirectory) {
+  if (!existsSync(saveDirectory)) return [];
+  const rooms = [];
+  for (const filename of readdirSync(saveDirectory)) {
+    const id = filename.replace(/\.json$/i, "");
+    if (!/^[A-Z0-9]{6}$/.test(id) || !filename.endsWith(".json")) continue;
+    try {
+      const saved = JSON.parse(readFileSync(resolve(saveDirectory, filename), "utf8"));
+      const blockChanges = new Map(Array.isArray(saved.blockChanges) ? saved.blockChanges : []);
+      const savedPlayers = new Map((Array.isArray(saved.players) ? saved.players : [])
+        .filter((player) => typeof player.name === "string" && Array.isArray(player.inventory))
+        .map((player) => [player.name.toLowerCase(), player]));
+      rooms.push({
+        id,
+        name: typeof saved.name === "string" ? saved.name : "Saved world",
+        hostId: null,
+        members: new Set(),
+        mode: saved.mode === "design" ? "design" : "survival",
+        seed: Number.isSafeInteger(saved.seed) ? saved.seed : 1,
+        started: true,
+        blocks: new Map(blockChanges),
+        blockChanges,
+        droppedItems: new Map(Array.isArray(saved.droppedItems) ? saved.droppedItems : []),
+        savedPlayers,
+        saved: true,
+      });
+    } catch {
+      continue;
+    }
+  }
+  return rooms;
+}
+
+function persistRoom(room, players, saveDirectory) {
+  mkdirSync(saveDirectory, { recursive: true });
+  const savedPlayers = new Map(room.savedPlayers ?? []);
+  for (const id of room.members) {
+    const player = players.get(id);
+    if (!player) continue;
+    savedPlayers.set(player.name.toLowerCase(), {
+      name: player.name,
+      x: player.x,
+      z: player.z,
+      yaw: player.yaw,
+      inventory: inventoryItems(player.inventory),
+    });
+  }
+  room.savedPlayers = savedPlayers;
+  room.saved = true;
+  writeFileSync(resolve(saveDirectory, `${room.id}.json`), JSON.stringify({
+    id: room.id,
+    name: room.name,
+    mode: room.mode,
+    seed: room.seed,
+    started: room.started,
+    blockChanges: [...room.blockChanges],
+    droppedItems: [...room.droppedItems],
+    players: [...savedPlayers.values()],
+  }));
 }
 
 function staticResponse(request, response) {
@@ -141,14 +194,19 @@ function staticResponse(request, response) {
   response.end(readFileSync(filePath));
 }
 
-export function createGameServer({ host = "0.0.0.0", port = 3001, seed: requestedSeed } = {}) {
+export function createGameServer({
+  host = "0.0.0.0",
+  port = 3001,
+  seed: requestedSeed,
+  saveDirectory = DEFAULT_SAVE_DIRECTORY,
+} = {}) {
   const configuredSeed = requestedSeed ?? process.env.WORLD_SEED;
   const seed = configuredSeed === undefined ? randomInt(0, 0x1_0000_0000) : Number(configuredSeed);
   if (!Number.isSafeInteger(seed) || seed < 0 || seed > 0xffff_ffff) {
     throw new RangeError("WORLD_SEED must be an integer between 0 and 4294967295.");
   }
   const players = new Map();
-  const rooms = new Map();
+  const rooms = new Map(loadSavedRooms(saveDirectory).map((room) => [room.id, room]));
   const bots = createBots();
   const httpServer = createServer(staticResponse);
   const webSocketServer = new WebSocketServer({
@@ -163,6 +221,8 @@ export function createGameServer({ host = "0.0.0.0", port = 3001, seed: requeste
     players: room.members.size,
     maxPlayers: 8,
     started: room.started,
+    mode: room.mode,
+    saved: Boolean(room.saved),
   });
 
   const lobbyRooms = () => [...rooms.values()]
@@ -224,7 +284,8 @@ export function createGameServer({ host = "0.0.0.0", port = 3001, seed: requeste
   const sendInitial = (player, room) => writeJson(player.socket, {
     type: "init",
     id: player.id,
-    seed,
+    seed: room.seed,
+    mode: room.mode,
     chunkSize: CHUNK_SIZE,
     players: [...room.members].map((id) => players.get(id)).filter(Boolean).map(({ id, name, x, z, yaw, color }) => ({
       id,
@@ -316,13 +377,18 @@ export function createGameServer({ host = "0.0.0.0", port = 3001, seed: requeste
           name: roomName || `${player.name}'s World`,
           hostId: player.id,
           members: new Set([player.id]),
+          mode: message.mode === "design" ? "design" : "survival",
+          seed,
           started: false,
           blocks: new Map(),
           blockChanges: new Map(),
           droppedItems: new Map(),
+          savedPlayers: new Map(),
+          saved: false,
         };
         rooms.set(roomId, room);
         player.roomId = roomId;
+        player.inventory = createInventory(room.mode);
         writeJson(socket, { type: "room_created", room: roomSummary(room), hostId: room.hostId });
         sendRoomState(room);
         sendLobbyRooms();
@@ -341,6 +407,16 @@ export function createGameServer({ host = "0.0.0.0", port = 3001, seed: requeste
         }
         room.members.add(player.id);
         player.roomId = room.id;
+        const savedPlayer = room.savedPlayers?.get(player.name.toLowerCase());
+        player.inventory = savedPlayer
+          ? new Map(savedPlayer.inventory)
+          : createInventory(room.mode);
+        if (savedPlayer) {
+          player.x = savedPlayer.x;
+          player.z = savedPlayer.z;
+          player.yaw = savedPlayer.yaw;
+        }
+        if (!room.hostId) room.hostId = player.id;
         writeJson(socket, { type: "room_joined", room: roomSummary(room), hostId: room.hostId });
         sendRoomState(room);
         if (room.started) {
@@ -356,7 +432,7 @@ export function createGameServer({ host = "0.0.0.0", port = 3001, seed: requeste
         if (room) {
           room.members.delete(player.id);
           player.roomId = null;
-          if (room.members.size === 0) rooms.delete(room.id);
+          if (room.members.size === 0 && !room.saved) rooms.delete(room.id);
           else {
             if (room.hostId === player.id) room.hostId = room.members.values().next().value;
             sendRoomState(room);
@@ -384,6 +460,22 @@ export function createGameServer({ host = "0.0.0.0", port = 3001, seed: requeste
         return;
       }
 
+      if (message.type === "save_room") {
+        const room = rooms.get(player.roomId);
+        if (!room?.started) {
+          writeJson(socket, { type: "save_result", saved: false, message: "Start a world before saving." });
+          return;
+        }
+        try {
+          persistRoom(room, players, saveDirectory);
+          writeJson(socket, { type: "save_result", saved: true, message: "World saved." });
+          sendLobbyRooms();
+        } catch {
+          writeJson(socket, { type: "save_result", saved: false, message: "World could not be saved." });
+        }
+        return;
+      }
+
       if (message.type === "name") {
         const name = safeName(message.name);
         if (!name) {
@@ -392,7 +484,32 @@ export function createGameServer({ host = "0.0.0.0", port = 3001, seed: requeste
         }
         player.name = name;
         const room = rooms.get(player.roomId);
-        if (room) sendRoomState(room);
+        if (room) {
+          sendRoomState(room);
+          if (room.started) broadcastToRoom(room, roomSnapshot(room));
+        }
+        writeJson(socket, { type: "name_result", name });
+        return;
+      }
+
+      if (message.type === "teleport") {
+        const room = rooms.get(player.roomId);
+        const target = room?.started && room.members.has(message.targetId)
+          ? players.get(message.targetId)
+          : null;
+        if (!target) {
+          writeJson(socket, { type: "error", message: "That player is not in your world." });
+          return;
+        }
+        player.x = wrapPlanetX(target.x + 2);
+        player.z = target.z;
+        player.yaw = target.yaw;
+        writeJson(socket, {
+          type: "teleport_result",
+          position: { x: player.x, z: player.z, yaw: player.yaw },
+          targetId: target.id,
+        });
+        broadcastToRoom(room, roomSnapshot(room));
         return;
       }
 
@@ -513,24 +630,24 @@ export function createGameServer({ host = "0.0.0.0", port = 3001, seed: requeste
         const room = rooms.get(player.roomId);
         if (!room?.started) return;
         const { action, position, block } = message;
-        if (!canEditBlock(position, block, action, room.blocks, seed)) {
+        if (!canEditBlock(position, block, action, room.blocks, room.seed)) {
           writeJson(socket, { type: "error", message: "That block cannot be changed." });
           return;
         }
         const key = blockKey(position.x, position.y, position.z);
         const currentBlock = room.blocks.has(key)
           ? room.blocks.get(key)
-          : getBaseBlockAt(position.x, position.y, position.z, seed);
+          : getBaseBlockAt(position.x, position.y, position.z, room.seed);
         const changedBlock = action === "remove" ? currentBlock : block;
         if (action === "remove") {
-          if ((player.inventory.get(changedBlock) ?? 0) >= MAX_STACK_SIZE) {
+          if (room.mode !== "design" && (player.inventory.get(changedBlock) ?? 0) >= MAX_STACK_SIZE) {
             writeJson(socket, { type: "error", message: "That item stack is full." });
             return;
           }
           room.blocks.set(key, null);
-          addItems(player.inventory, changedBlock, 1);
+          if (room.mode !== "design") addItems(player.inventory, changedBlock, 1);
         } else {
-          if (!removeItems(player.inventory, block, 1)) {
+          if (room.mode !== "design" && !removeItems(player.inventory, block, 1)) {
             writeJson(socket, { type: "error", message: "You need that block in your inventory to place it." });
             return;
           }
@@ -546,7 +663,7 @@ export function createGameServer({ host = "0.0.0.0", port = 3001, seed: requeste
       const room = rooms.get(player.roomId);
       if (room) {
         room.members.delete(player.id);
-        if (room.members.size === 0) rooms.delete(room.id);
+        if (room.members.size === 0 && !room.saved) rooms.delete(room.id);
         else {
           if (room.hostId === player.id) room.hostId = room.members.values().next().value;
           sendRoomState(room);

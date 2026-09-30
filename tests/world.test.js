@@ -121,3 +121,16 @@ test("generates a seeded city building and road blocks", () => {
   const [x, y, z] = key.split(",").map(Number);
   assert.ok(canEditBlock({ x, y, z }, type, "remove", cityChunk, 12345));
 });
+
+test("generates a sandy city beach, city sidewalk trees, and surrounding forest", () => {
+  const beachChunk = createChunkBlocks(7, 0, 12345);
+  const cityTreeChunk = createChunkBlocks(-6, -3, 12345);
+  const forestChunk = createChunkBlocks(10, 0, 12345);
+
+  assert.equal(beachChunk.get(blockKey(120, 0, 0)), "sand");
+  assert.equal(cityTreeChunk.get(blockKey(-84, 1, -35)), "oak_log");
+  assert.ok([...forestChunk].some(([key, type]) => {
+    const [x, y, z] = key.split(",").map(Number);
+    return type === "oak_log" && y > 0 && Math.hypot(x, z) > 140 && Math.hypot(x, z) < 228;
+  }));
+});

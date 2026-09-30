@@ -5,6 +5,7 @@ import {
   blockKey,
   canCraft,
   CHUNK_SIZE,
+  CITY_BEACH_OUTER_RADIUS,
   CITY_RADIUS,
   createChunkBlocks,
   MAX_CITY_BUILDING_HEIGHT,
@@ -14,6 +15,9 @@ import {
   MIN_PLANET_CHUNK_Z,
   PLANET_LATITUDE_BLOCKS,
   PLANET_LONGITUDE_BLOCKS,
+  PLANET_MAX_Z,
+  PLANET_MIN_X,
+  PLANET_MIN_Z,
   PLANET_RADIUS,
   planetFrameAt,
   planetPointAt,
@@ -51,6 +55,8 @@ const lobbyPlayerNameInput = document.querySelector("#lobby-player-name");
 const lobbyStatus = document.querySelector("#lobby-status");
 const lobbyNotice = document.querySelector("#lobby-notice");
 const lobbyRoomList = document.querySelector("#lobby-room-list");
+const savedGameList = document.querySelector("#saved-game-list");
+const savedGamesToggle = document.querySelector("#toggle-saved-games-button");
 const lobbyHome = document.querySelector("#lobby-home");
 const lobbyWaiting = document.querySelector("#lobby-waiting");
 const roomNotice = document.querySelector("#room-notice");
@@ -58,12 +64,25 @@ const roomTitle = document.querySelector("#room-title");
 const roomStateLabel = document.querySelector("#room-state-label");
 const roomMemberList = document.querySelector("#room-member-list");
 const startRoomButton = document.querySelector("#start-room-button");
+const gameMenu = document.querySelector("#game-menu");
+const gameMenuToggle = document.querySelector("#game-menu-toggle");
+const gameMenuStatus = document.querySelector("#game-menu-status");
+const worldMapPanel = document.querySelector("#world-map-panel");
+const worldMapCanvas = document.querySelector("#world-map-canvas");
+const worldMapMarkers = document.querySelector("#world-map-markers");
+const teleportTarget = document.querySelector("#teleport-target");
+const teleportButton = document.querySelector("#teleport-button");
 const hotbar = document.querySelector("#hotbar");
 const inventoryPanel = document.querySelector("#inventory-panel");
 const inventoryList = document.querySelector("#inventory-list");
 const recipeList = document.querySelector("#recipe-list");
 const joystick = document.querySelector("#joystick");
 const joystickKnob = document.querySelector("#joystick-knob");
+const savedPlayerName = localStorage.getItem("player-name");
+if (savedPlayerName) {
+  playerNameInput.value = savedPlayerName;
+  lobbyPlayerNameInput.value = savedPlayerName;
+}
 const blockChoices = [
   ["grass", "Grass", grassTextureUrl],
   ["dirt", "Dirt", dirtTextureUrl],
@@ -86,7 +105,7 @@ const blockChoices = [
 const blockNames = new Map(blockChoices.map(([id, name]) => [id, name]));
 const blockChoiceById = new Map(blockChoices.map((choice) => [choice[0], choice]));
 const HOTBAR_SIZE = 6;
-const hotbarItems = blockChoices.slice(0, HOTBAR_SIZE).map(([id]) => id);
+const hotbarItems = Array(HOTBAR_SIZE).fill(null);
 const textureLoader = new THREE.TextureLoader();
 const materials = new Map();
 
@@ -170,7 +189,8 @@ const state = {
   seed: 1,
   socket: null,
   connected: false,
-  selected: "grass",
+  mode: "survival",
+  selected: null,
   lastSentAt: 0,
   lastPickupAt: 0,
   jumpVelocity: 0,
@@ -532,10 +552,91 @@ function renderDroppedItems(drops) {
 function applySnapshot(message) {
   const playerList = message.players ?? [];
   const botList = message.bots ?? [];
+  state.roomPlayers = playerList;
   updateAvatars(playerList, players);
   updateAvatars(botList, bots, true);
   renderDroppedItems(message.drops ?? []);
   onlineCount.textContent = String(playerList.length);
+  renderWorldMapMarkers(playerList);
+}
+
+function drawWorldMap() {
+  const context = worldMapCanvas.getContext("2d");
+  const columns = 160;
+  const rows = 80;
+  worldMapCanvas.width = columns * 4;
+  worldMapCanvas.height = rows * 4;
+  const cellWidth = worldMapCanvas.width / columns;
+  const cellHeight = worldMapCanvas.height / rows;
+  for (let row = 0; row < rows; row += 1) {
+    const z = PLANET_MAX_Z - (row + 0.5) / rows * PLANET_LATITUDE_BLOCKS;
+    for (let column = 0; column < columns; column += 1) {
+      const x = PLANET_MIN_X + (column + 0.5) / columns * PLANET_LONGITUDE_BLOCKS;
+      const distance = Math.hypot(x, z);
+      const height = terrainHeightAt(x, z, state.seed);
+      let color;
+      if (distance <= CITY_RADIUS) {
+        color = Math.abs(Math.floor(x / 16) + Math.floor(z / 16)) % 2 ? "#68716a" : "#8a9188";
+      } else if (distance <= CITY_BEACH_OUTER_RADIUS) {
+        color = "#d2c38b";
+      } else if (height >= 20) {
+        color = "#92988a";
+      } else if (distance < 228) {
+        color = height < 4 ? "#64865b" : "#3d714e";
+      } else {
+        color = height < 5 ? "#8a9b62" : "#61794f";
+      }
+      context.fillStyle = color;
+      context.fillRect(column * cellWidth, row * cellHeight, cellWidth + 1, cellHeight + 1);
+    }
+  }
+}
+
+function renderWorldMapMarkers(playerList = state.roomPlayers ?? []) {
+  const currentTarget = teleportTarget.value;
+  teleportTarget.replaceChildren();
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "Choose a player";
+  teleportTarget.append(placeholder);
+  worldMapMarkers.replaceChildren();
+
+  for (const player of playerList) {
+    const isSelf = player.id === state.id;
+    if (!isSelf) {
+      const option = document.createElement("option");
+      option.value = player.id;
+      option.textContent = player.name;
+      teleportTarget.append(option);
+    }
+    const marker = document.createElement("button");
+    marker.type = "button";
+    marker.className = `map-marker${isSelf ? " self" : ""}`;
+    marker.style.left = `${(wrapPlanetX(player.x) - PLANET_MIN_X) / PLANET_LONGITUDE_BLOCKS * 100}%`;
+    marker.style.top = `${(PLANET_MAX_Z - player.z) / PLANET_LATITUDE_BLOCKS * 100}%`;
+    marker.title = isSelf ? `${player.name} (you)` : player.name;
+    marker.setAttribute("aria-label", isSelf ? `${player.name}, your location` : `${player.name}, tap to show name`);
+    marker.setAttribute("aria-pressed", "false");
+    const dot = document.createElement("span");
+    dot.className = "map-marker-dot";
+    const label = document.createElement("span");
+    label.className = "map-marker-name";
+    label.textContent = isSelf ? `${player.name} (you)` : player.name;
+    marker.append(dot, label);
+    marker.addEventListener("click", () => {
+      for (const otherMarker of worldMapMarkers.querySelectorAll(".map-marker")) {
+        otherMarker.setAttribute("aria-pressed", String(otherMarker === marker && marker.getAttribute("aria-pressed") !== "true"));
+      }
+      if (!isSelf) teleportTarget.value = player.id;
+      teleportButton.disabled = !teleportTarget.value;
+    });
+    worldMapMarkers.append(marker);
+  }
+
+  teleportTarget.value = [...teleportTarget.options].some((option) => option.value === currentTarget)
+    ? currentTarget
+    : "";
+  teleportButton.disabled = !teleportTarget.value;
 }
 
 function setLobbyStatus(label, online = false) {
@@ -547,13 +648,13 @@ function showLobbyNotice(message, inRoom = false) {
   (inRoom ? roomNotice : lobbyNotice).textContent = message;
 }
 
-function renderLobbyRooms(rooms) {
-  lobbyRoomList.replaceChildren();
+function renderRoomList(container, rooms, emptyMessage) {
+  container.replaceChildren();
   if (!rooms.length) {
     const empty = document.createElement("p");
     empty.className = "lobby-empty";
-    empty.textContent = "No open worlds yet. Create one to get started.";
-    lobbyRoomList.append(empty);
+    empty.textContent = emptyMessage;
+    container.append(empty);
     return;
   }
 
@@ -566,16 +667,21 @@ function renderLobbyRooms(rooms) {
     name.textContent = room.name;
     const meta = document.createElement("div");
     meta.className = "lobby-room-meta";
-    meta.textContent = `${room.players}/${room.maxPlayers} players · ${room.started ? "In progress" : "Waiting"}`;
+    meta.textContent = `${room.mode === "design" ? "Design" : "Survival"} · ${room.saved ? "Saved" : `${room.players}/${room.maxPlayers} players · ${room.started ? "In progress" : "Waiting"}`}`;
     description.append(name, meta);
     const join = document.createElement("button");
     join.type = "button";
     join.className = "room-join-button";
     join.dataset.roomId = room.id;
-    join.textContent = "Join";
+    join.textContent = room.saved ? "Resume" : "Join";
     row.append(description, join);
-    lobbyRoomList.append(row);
+    container.append(row);
   }
+}
+
+function renderLobbyRooms(rooms) {
+  renderRoomList(lobbyRoomList, rooms.filter((room) => !room.saved), "No open worlds yet. Create one to get started.");
+  renderRoomList(savedGameList, rooms.filter((room) => room.saved), "No saved games on this server yet.");
 }
 
 function renderRoomState(message) {
@@ -625,9 +731,16 @@ function updatePlayerName() {
 }
 
 function showLobbyHome() {
+  state.connected = false;
+  moveKeys.clear();
   lobbyRoom = null;
+  multiplayerMenu.hidden = false;
   lobbyHome.hidden = false;
   lobbyWaiting.hidden = true;
+  gameMenu.hidden = true;
+  worldMapPanel.hidden = true;
+  gameMenuToggle.setAttribute("aria-expanded", "false");
+  gameMenuStatus.textContent = "";
   showLobbyNotice("");
 }
 
@@ -666,12 +779,37 @@ function connect() {
       renderRoomState(message);
     } else if (message.type === "room_left") {
       showLobbyHome();
+    } else if (message.type === "name_result") {
+      playerNameInput.value = message.name;
+      lobbyPlayerNameInput.value = message.name;
+      localStorage.setItem("player-name", message.name);
+    } else if (message.type === "save_result") {
+      gameMenuStatus.textContent = message.message;
+    } else if (message.type === "teleport_result") {
+      playerPosition.x = message.position.x;
+      playerPosition.z = message.position.z;
+      playerPosition.y = terrainHeightAt(playerPosition.x, playerPosition.z, state.seed) + 1.65;
+      look.yaw = message.position.yaw;
+      state.jumpVelocity = 0;
+      updateChunkWindow(true);
+      renderWorld();
+      gameMenu.hidden = true;
+      worldMapPanel.hidden = true;
+      gameMenuToggle.setAttribute("aria-expanded", "false");
+      gameMenuStatus.textContent = "";
+      notify("Teleported to player.");
     } else if (message.type === "init") {
       state.connected = true;
       multiplayerMenu.hidden = true;
       statusText.textContent = "Connected";
       state.id = message.id;
       state.seed = message.seed;
+      state.mode = message.mode === "design" ? "design" : "survival";
+      hotbarItems.splice(0, HOTBAR_SIZE, ...(state.mode === "design"
+        ? blockChoices.slice(0, HOTBAR_SIZE).map(([id]) => id)
+        : Array(HOTBAR_SIZE).fill(null)));
+      updateHotbar();
+      selectBlock(state.mode === "design" ? hotbarItems[0] : null);
       worldSeedLabel.textContent = `Seed ${state.seed}`;
       worldBlocks.clear();
       loadedChunks.clear();
@@ -734,7 +872,11 @@ playerNameInput.addEventListener("change", () => {
 lobbyPlayerNameInput.addEventListener("change", updatePlayerName);
 document.querySelector("#create-room-button").addEventListener("click", () => {
   if (updatePlayerName()) {
-    sendLobbyMessage({ type: "create_room", roomName: document.querySelector("#room-name-input").value });
+    sendLobbyMessage({
+      type: "create_room",
+      roomName: document.querySelector("#room-name-input").value,
+      mode: document.querySelector("#world-mode").value,
+    });
   }
 });
 lobbyRoomList.addEventListener("click", (event) => {
@@ -743,9 +885,47 @@ lobbyRoomList.addEventListener("click", (event) => {
     sendLobbyMessage({ type: "join_room", roomId: joinButton.dataset.roomId });
   }
 });
+savedGameList.addEventListener("click", (event) => {
+  const resumeButton = event.target.closest("button[data-room-id]");
+  if (resumeButton && updatePlayerName()) {
+    sendLobbyMessage({ type: "join_room", roomId: resumeButton.dataset.roomId });
+  }
+});
+savedGamesToggle.addEventListener("click", () => {
+  savedGameList.hidden = !savedGameList.hidden;
+  savedGamesToggle.setAttribute("aria-expanded", String(!savedGameList.hidden));
+  savedGamesToggle.textContent = savedGameList.hidden ? "Show" : "Hide";
+});
 document.querySelector("#refresh-rooms-button").addEventListener("click", () => sendLobbyMessage({ type: "list_rooms" }));
 document.querySelector("#leave-room-button").addEventListener("click", () => sendLobbyMessage({ type: "leave_room" }));
 startRoomButton.addEventListener("click", () => sendLobbyMessage({ type: "start_room" }));
+gameMenuToggle.addEventListener("click", () => {
+  gameMenu.hidden = !gameMenu.hidden;
+  gameMenuToggle.setAttribute("aria-expanded", String(!gameMenu.hidden));
+});
+document.querySelector("#save-world-button").addEventListener("click", () => {
+  gameMenuStatus.textContent = "Saving…";
+  sendLobbyMessage({ type: "save_room" });
+});
+document.querySelector("#logout-button").addEventListener("click", () => {
+  sendLobbyMessage({ type: "leave_room" });
+});
+document.querySelector("#open-world-map-button").addEventListener("click", () => {
+  drawWorldMap();
+  renderWorldMapMarkers();
+  worldMapPanel.hidden = false;
+  gameMenu.hidden = true;
+  gameMenuToggle.setAttribute("aria-expanded", "false");
+});
+document.querySelector("#close-world-map-button").addEventListener("click", () => {
+  worldMapPanel.hidden = true;
+});
+teleportTarget.addEventListener("change", () => {
+  teleportButton.disabled = !teleportTarget.value;
+});
+teleportButton.addEventListener("click", () => {
+  if (teleportTarget.value) sendLobbyMessage({ type: "teleport", targetId: teleportTarget.value });
+});
 
 function selectBlock(id) {
   state.selected = id;
@@ -926,14 +1106,15 @@ document.querySelector("#close-inventory").addEventListener("click", () => toggl
 function updateHotbar() {
   for (const [index, button] of [...hotbar.querySelectorAll(".block-choice")].entries()) {
     const id = hotbarItems[index];
-    const [blockId, name, textureUrl] = blockChoiceById.get(id);
-    button.dataset.block = blockId;
-    button.setAttribute("aria-label", `${name} block${index < 9 ? `, shortcut ${index + 1}` : ""}`);
+    const choice = blockChoiceById.get(id);
+    const [, name, textureUrl] = choice ?? [];
+    button.dataset.block = id ?? "";
+    button.setAttribute("aria-label", id ? `${name} block, shortcut ${index + 1}` : `Empty slot ${index + 1}`);
     button.querySelector(".block-swatch").style.backgroundImage = textureUrl
       ? `url("${textureUrl}")`
-      : "linear-gradient(135deg, #ffd56a, #ed7338 55%, #604230 56%)";
-    button.querySelector(".block-label").textContent = name;
-    const count = state.inventory.get(id) ?? 0;
+      : id === "campfire" ? "linear-gradient(135deg, #ffd56a, #ed7338 55%, #604230 56%)" : "none";
+    button.querySelector(".block-label").textContent = name ?? "";
+    const count = id ? state.inventory.get(id) ?? 0 : 0;
     const counter = button.querySelector(".block-count");
     counter.textContent = String(count);
     counter.hidden = count === 0;
@@ -974,21 +1155,21 @@ function handleHotbarSlot(index) {
     assignHotbarSlot(index, state.pendingHotbarItem);
     return;
   }
-  selectBlock(hotbarItems[index]);
+  if (hotbarItems[index]) selectBlock(hotbarItems[index]);
 }
 
-for (const [index, [id, name, textureUrl]] of blockChoices.slice(0, HOTBAR_SIZE).entries()) {
+for (let index = 0; index < HOTBAR_SIZE; index += 1) {
   const button = document.createElement("button");
   button.className = "block-choice";
   button.type = "button";
-  button.dataset.block = id;
-  button.setAttribute("aria-label", `${name} block${index < 9 ? `, shortcut ${index + 1}` : ""}`);
-  button.innerHTML = `<span class="block-swatch"></span><span class="block-label">${name}</span><span class="block-count" hidden></span>${index < 9 ? `<kbd>${index + 1}</kbd>` : ""}`;
+  button.dataset.block = "";
+  button.setAttribute("aria-label", `Empty slot ${index + 1}`);
+  button.innerHTML = `<span class="block-swatch"></span><span class="block-label"></span><span class="block-count" hidden></span><kbd>${index + 1}</kbd>`;
   button.addEventListener("click", () => handleHotbarSlot(index));
   hotbar.append(button);
 }
 updateHotbar();
-selectBlock("grass");
+selectBlock(null);
 
 function targetBlock() {
   raycaster.setFromCamera(center, camera);
@@ -1010,7 +1191,11 @@ function sendEdit(action) {
     return;
   }
   const [x, y, z] = target.coords;
-  if (action === "place" && (state.inventory.get(state.selected) ?? 0) < 1) {
+  if (action === "place" && !state.selected) {
+    notify("Choose a block from your inventory first.");
+    return;
+  }
+  if (action === "place" && state.mode !== "design" && (state.inventory.get(state.selected) ?? 0) < 1) {
     notify(`No ${blockNames.get(state.selected)} in your inventory.`);
     return;
   }
@@ -1169,6 +1354,7 @@ function jump() {
 }
 
 function updateMovement(delta) {
+  if (!state.connected || !gameMenu.hidden || !worldMapPanel.hidden) return;
   let forwardInput = (moveKeys.has("KeyW") || moveKeys.has("ArrowUp") ? 1 : 0)
     - (moveKeys.has("KeyS") || moveKeys.has("ArrowDown") ? 1 : 0);
   let strafeInput = (moveKeys.has("KeyD") || moveKeys.has("ArrowRight") ? 1 : 0)

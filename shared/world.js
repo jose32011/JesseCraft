@@ -26,6 +26,8 @@ export const PLANET_RADIUS = 256;
 export const PLANET_LONGITUDE_BLOCKS = 1600;
 export const PLANET_LATITUDE_BLOCKS = 800;
 export const CITY_RADIUS = 108;
+export const CITY_BEACH_OUTER_RADIUS = 140;
+export const FOREST_OUTER_RADIUS = 228;
 export const CITY_BLOCK_SIZE = 32;
 export const MAX_CITY_BUILDING_HEIGHT = 26;
 export const PLANET_MIN_X = -PLANET_LONGITUDE_BLOCKS / 2;
@@ -154,7 +156,7 @@ function noise2d(x, z, seed) {
 export function terrainHeightAt(x, z, seed = 1) {
   x = wrapPlanetX(x);
   z = Math.max(PLANET_MIN_Z, Math.min(PLANET_MAX_Z, z));
-  if (Math.hypot(x, z) <= CITY_RADIUS) return 0;
+  if (Math.hypot(x, z) <= CITY_BEACH_OUTER_RADIUS) return 0;
   const worldSeed = normalizeSeed(seed);
   const longitude = (x - PLANET_MIN_X + 0.5) / PLANET_LONGITUDE_BLOCKS * Math.PI * 2 - Math.PI;
   const latitude = (z - PLANET_MIN_Z + 0.5) / PLANET_LATITUDE_BLOCKS * Math.PI - Math.PI / 2;
@@ -187,6 +189,36 @@ function clampUnit(value) {
 
 function seededValue(x, z, seed) {
   return (hashNoise(x * 19.19 + 11, z * 7.73 - 29, seed) + 1) / 2;
+}
+
+function cityTreeAt(x, z, seed) {
+  const cellX = Math.floor((x + CITY_BLOCK_SIZE / 2) / CITY_BLOCK_SIZE);
+  const cellZ = Math.floor((z + CITY_BLOCK_SIZE / 2) / CITY_BLOCK_SIZE);
+  if (seededValue(cellX + 31, cellZ - 17, seed) >= 0.72) return null;
+  const side = seededValue(cellX + 9, cellZ + 4, seed) < 0.5 ? -12 : 12;
+  const offset = (Math.floor(seededValue(cellX - 5, cellZ + 13, seed) * 4) * 6) - 9;
+  const treeX = cellX * CITY_BLOCK_SIZE + side;
+  const treeZ = cellZ * CITY_BLOCK_SIZE + offset;
+  if (x !== treeX || z !== treeZ || Math.hypot(x, z) > CITY_RADIUS - 6) return null;
+  return {
+    x: treeX,
+    z: treeZ,
+    ground: 0,
+    height: 3 + Math.floor(seededValue(cellX + 23, cellZ + 7, seed) * 3),
+  };
+}
+
+function cityTreeBlockAt(x, y, z, seed) {
+  const tree = cityTreeAt(x, z, seed);
+  if (!tree) return null;
+  const trunkTop = tree.ground + tree.height;
+  if (y > tree.ground && y <= trunkTop) return "oak_log";
+  const leafDistance = Math.abs(x - tree.x) + Math.abs(z - tree.z);
+  for (let layer = trunkTop - 1; layer <= trunkTop + 2; layer += 1) {
+    const radius = layer === trunkTop + 2 ? 1 : 2;
+    if (y === layer && leafDistance <= radius * 2) return "leaves";
+  }
+  return null;
 }
 
 function cityBlockAt(x, y, z, seed) {
@@ -228,13 +260,17 @@ function cityBlockAt(x, y, z, seed) {
 function treePosition(gridX, gridZ, seed) {
   const x = gridX * 10 + Math.round((seededValue(gridX, gridZ, seed) - 0.5) * 6);
   const z = gridZ * 10 + Math.round((seededValue(gridZ, gridX, seed) - 0.5) * 6);
-  if (Math.hypot(x, z) <= CITY_RADIUS || seededValue(x + 3, z - 7, seed) >= 0.32) return null;
+  const distanceFromCity = Math.hypot(x, z);
+  const treeChance = distanceFromCity <= CITY_RADIUS ? 0 : distanceFromCity <= FOREST_OUTER_RADIUS ? 0.72 : 0.32;
+  if (seededValue(x + 3, z - 7, seed) >= treeChance) return null;
   const ground = terrainHeightAt(x, z, seed);
   if (ground >= 17) return null;
   return { x, z, ground, height: 3 + Math.floor(seededValue(x - 13, z + 9, seed) * 3) };
 }
 
 function treeBlockAt(x, y, z, seed) {
+  const cityTree = cityTreeBlockAt(x, y, z, seed);
+  if (cityTree) return cityTree;
   const gridX = Math.round(x / 10);
   const gridZ = Math.round(z / 10);
   for (let gx = gridX - 2; gx <= gridX + 2; gx += 1) {
@@ -289,6 +325,8 @@ export function getBaseBlockAt(x, y, z, seed = 1) {
   if (house) return house;
   const cityBlock = cityBlockAt(wrapPlanetX(x), y, z, normalizeSeed(seed));
   if (cityBlock) return cityBlock;
+  const beach = Math.hypot(wrapPlanetX(x), z) > CITY_RADIUS && Math.hypot(wrapPlanetX(x), z) <= CITY_BEACH_OUTER_RADIUS;
+  if (beach && y === 0) return "sand";
   if (x >= -2 && x <= 3 && y === 0 && z === 2) return "sand";
 
   const tree = treeBlockAt(x, y, z, normalizeSeed(seed));
@@ -319,8 +357,9 @@ export function createChunkBlocks(chunkX, chunkZ, seed = 1) {
   for (let x = startX; x < startX + CHUNK_SIZE; x += 1) {
     for (let z = startZ; z < startZ + CHUNK_SIZE; z += 1) {
       const surface = terrainHeightAt(x, z, seed);
+      const beach = Math.hypot(x, z) > CITY_RADIUS && Math.hypot(x, z) <= CITY_BEACH_OUTER_RADIUS;
       for (let y = BEDROCK_Y + 1; y <= surface; y += 1) {
-        const type = y === surface ? "grass" : y >= surface - 2 ? "dirt" : "stone";
+        const type = y === surface ? beach ? "sand" : "grass" : y >= surface - 2 ? "dirt" : "stone";
         if (type) blocks.set(blockKey(x, y, z), type);
       }
     }
@@ -359,6 +398,28 @@ export function createChunkBlocks(chunkX, chunkZ, seed = 1) {
       for (let y = 0; y <= MAX_CITY_BUILDING_HEIGHT; y += 1) {
         const type = cityBlockAt(x, y, z, normalizeSeed(seed));
         if (type) blocks.set(blockKey(x, y, z), type);
+      }
+    }
+  }
+
+  for (let x = Math.max(startX, -CITY_RADIUS); x < Math.min(startX + CHUNK_SIZE, CITY_RADIUS + 1); x += 1) {
+    for (let z = Math.max(startZ, -CITY_RADIUS); z < Math.min(startZ + CHUNK_SIZE, CITY_RADIUS + 1); z += 1) {
+      const tree = cityTreeAt(x, z, normalizeSeed(seed));
+      if (!tree) continue;
+      const trunkTop = tree.ground + tree.height;
+      for (let y = tree.ground + 1; y <= trunkTop; y += 1) {
+        blocks.set(blockKey(x, y, z), "oak_log");
+      }
+      for (let treeX = tree.x - 2; treeX <= tree.x + 2; treeX += 1) {
+        if (treeX < startX || treeX >= startX + CHUNK_SIZE) continue;
+        for (let treeZ = tree.z - 2; treeZ <= tree.z + 2; treeZ += 1) {
+          if (treeZ < startZ || treeZ >= startZ + CHUNK_SIZE) continue;
+          const leafDistance = Math.abs(treeX - tree.x) + Math.abs(treeZ - tree.z);
+          for (let y = trunkTop - 1; y <= trunkTop + 2; y += 1) {
+            const radius = y === trunkTop + 2 ? 1 : 2;
+            if (leafDistance <= radius * 2) blocks.set(blockKey(treeX, y, treeZ), "leaves");
+          }
+        }
       }
     }
   }
