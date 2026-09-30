@@ -46,7 +46,6 @@ import "./style.css";
 const canvas = document.querySelector("#world");
 const statusText = document.querySelector("#connection-status");
 const statusDot = document.querySelector("#connection-dot");
-const worldSeedLabel = document.querySelector("#world-seed");
 const toast = document.querySelector("#toast");
 const playerNameInput = document.querySelector("#player-name");
 const multiplayerMenu = document.querySelector("#multiplayer-menu");
@@ -816,7 +815,6 @@ function connect() {
         : Array(HOTBAR_SIZE).fill(null)));
       updateHotbar();
       selectBlock(state.mode === "design" ? hotbarItems[0] : null);
-      worldSeedLabel.textContent = `Seed ${state.seed}`;
       worldBlocks.clear();
       loadedChunks.clear();
       renderCandidatesByChunk.clear();

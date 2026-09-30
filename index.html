@@ -58,7 +58,6 @@
           <input id="player-name" maxlength="16" value="Explorer" aria-label="Your name" />
           <button class="inventory-toggle" id="inventory-toggle" aria-expanded="false" aria-controls="inventory-panel">Bag</button>
           <button class="game-menu-toggle" id="game-menu-toggle" aria-label="World settings" aria-expanded="false" aria-controls="game-menu">&#9881;</button>
-          <span class="world-seed" id="world-seed" title="Seed used to generate this world">Seed —</span>
           <span class="connection"><i id="connection-dot"></i><span id="connection-status">Connecting…</span></span>
         </div>
       </header>
@@ -85,7 +84,7 @@
         <div class="world-map-legend"><span><i class="map-self-dot"></i>You</span><span><i></i>Players</span></div>
       </section>
 
-      <section class="help-card" id="help-card" aria-label="Game controls">
+      <section class="help-card" id="help-card" aria-label="Game controls" hidden>
         <button class="close-help" id="close-help" aria-label="Close controls">×</button>
         <strong>Welcome to your world</strong>
         <p><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Space</kbd> jump · drag to look</p>
