@@ -46,7 +46,6 @@ import "./style.css";
 const canvas = document.querySelector("#world");
 const statusText = document.querySelector("#connection-status");
 const statusDot = document.querySelector("#connection-dot");
-const onlineCount = document.querySelector("#online-count");
 const worldSeedLabel = document.querySelector("#world-seed");
 const toast = document.querySelector("#toast");
 const playerNameInput = document.querySelector("#player-name");
@@ -556,40 +555,47 @@ function applySnapshot(message) {
   updateAvatars(playerList, players);
   updateAvatars(botList, bots, true);
   renderDroppedItems(message.drops ?? []);
-  onlineCount.textContent = String(playerList.length);
   renderWorldMapMarkers(playerList);
 }
 
 function drawWorldMap() {
+  if (state.mapSeed === state.seed) return;
+  state.mapSeed = state.seed;
   const context = worldMapCanvas.getContext("2d");
-  const columns = 160;
-  const rows = 80;
+  const columns = 80;
+  const rows = 40;
   worldMapCanvas.width = columns * 4;
   worldMapCanvas.height = rows * 4;
   const cellWidth = worldMapCanvas.width / columns;
   const cellHeight = worldMapCanvas.height / rows;
-  for (let row = 0; row < rows; row += 1) {
-    const z = PLANET_MAX_Z - (row + 0.5) / rows * PLANET_LATITUDE_BLOCKS;
-    for (let column = 0; column < columns; column += 1) {
-      const x = PLANET_MIN_X + (column + 0.5) / columns * PLANET_LONGITUDE_BLOCKS;
-      const distance = Math.hypot(x, z);
-      const height = terrainHeightAt(x, z, state.seed);
-      let color;
-      if (distance <= CITY_RADIUS) {
-        color = Math.abs(Math.floor(x / 16) + Math.floor(z / 16)) % 2 ? "#68716a" : "#8a9188";
-      } else if (distance <= CITY_BEACH_OUTER_RADIUS) {
-        color = "#d2c38b";
-      } else if (height >= 20) {
-        color = "#92988a";
-      } else if (distance < 228) {
-        color = height < 4 ? "#64865b" : "#3d714e";
-      } else {
-        color = height < 5 ? "#8a9b62" : "#61794f";
+  let row = 0;
+  const drawRows = () => {
+    const endRow = Math.min(row + 3, rows);
+    for (; row < endRow; row += 1) {
+      const z = PLANET_MAX_Z - (row + 0.5) / rows * PLANET_LATITUDE_BLOCKS;
+      for (let column = 0; column < columns; column += 1) {
+        const x = PLANET_MIN_X + (column + 0.5) / columns * PLANET_LONGITUDE_BLOCKS;
+        const distance = Math.hypot(x, z);
+        const height = terrainHeightAt(x, z, state.seed);
+        let color;
+        if (distance <= CITY_RADIUS) {
+          color = Math.abs(Math.floor(x / 16) + Math.floor(z / 16)) % 2 ? "#68716a" : "#8a9188";
+        } else if (distance <= CITY_BEACH_OUTER_RADIUS) {
+          color = "#d2c38b";
+        } else if (height >= 20) {
+          color = "#92988a";
+        } else if (distance < 228) {
+          color = height < 4 ? "#64865b" : "#3d714e";
+        } else {
+          color = height < 5 ? "#8a9b62" : "#61794f";
+        }
+        context.fillStyle = color;
+        context.fillRect(column * cellWidth, row * cellHeight, cellWidth + 1, cellHeight + 1);
       }
-      context.fillStyle = color;
-      context.fillRect(column * cellWidth, row * cellHeight, cellWidth + 1, cellHeight + 1);
     }
-  }
+    if (row < rows) requestAnimationFrame(drawRows);
+  };
+  requestAnimationFrame(drawRows);
 }
 
 function renderWorldMapMarkers(playerList = state.roomPlayers ?? []) {
@@ -935,14 +941,19 @@ function selectBlock(id) {
 }
 
 function updateInventory(items) {
+  const previousInventory = state.inventory;
   state.inventory = new Map(items);
-  renderInventory();
-  for (const button of hotbar.querySelectorAll("button")) {
-    const count = state.inventory.get(button.dataset.block) ?? 0;
-    const counter = button.querySelector(".block-count");
-    counter.textContent = String(count);
-    counter.hidden = count === 0;
+  for (const [item, count] of state.inventory) {
+    if (count <= (previousInventory.get(item) ?? 0) || hotbarItems.includes(item)) continue;
+    const emptySlot = hotbarItems.indexOf(null);
+    if (emptySlot < 0) break;
+    hotbarItems[emptySlot] = item;
   }
+  updateHotbar();
+  if (!state.selected) {
+    selectBlock(hotbarItems.find((item) => item) ?? null);
+  }
+  renderInventory();
 }
 
 function renderInventory() {

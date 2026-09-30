@@ -86,7 +86,7 @@ test("generates seeded terrain and shares chunk edits with joining players", asy
       }),
     );
     assert.equal((await minedBlock).action, "remove");
-    assert.equal((await minedInventory).items.find(([item]) => item === "dirt")[1], 1);
+    assert.equal((await minedInventory).items.find(([item]) => item === "dirt")[1], 2);
 
     const editPosition = { x: 0, y: 15, z: 0 };
     const editBroadcast = nextMessage(firstPlayer, (message) => message.type === "block");

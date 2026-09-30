@@ -640,12 +640,12 @@ export function createGameServer({
           : getBaseBlockAt(position.x, position.y, position.z, room.seed);
         const changedBlock = action === "remove" ? currentBlock : block;
         if (action === "remove") {
-          if (room.mode !== "design" && (player.inventory.get(changedBlock) ?? 0) >= MAX_STACK_SIZE) {
+          if ((player.inventory.get(changedBlock) ?? 0) >= MAX_STACK_SIZE) {
             writeJson(socket, { type: "error", message: "That item stack is full." });
             return;
           }
           room.blocks.set(key, null);
-          if (room.mode !== "design") addItems(player.inventory, changedBlock, 1);
+          addItems(player.inventory, changedBlock, 1);
         } else {
           if (room.mode !== "design" && !removeItems(player.inventory, block, 1)) {
             writeJson(socket, { type: "error", message: "You need that block in your inventory to place it." });
