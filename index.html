@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#18251f" />
+    <meta
+      name="description"
+      content="Voxland is a multiplayer voxel-building game for desktop and mobile browsers."
+    />
+    <title>Jesses World</title>
+  </head>
+  <body>
+    <main id="game">
+      <canvas id="world" aria-label="Voxel world"></canvas>
+      <section class="multiplayer-menu" id="multiplayer-menu" aria-label="Multiplayer lobby">
+        <div class="lobby-panel">
+          <header class="lobby-header">
+            <span class="brand-mark" aria-hidden="true">V</span>
+            <div class="lobby-title"><span>VOXLAND / MULTIPLAYER</span><h1>Jesses World</h1></div>
+            <span class="lobby-status" id="lobby-status"><i></i> Connecting</span>
+          </header>
+          <section class="lobby-home" id="lobby-home">
+            <p class="eyebrow">YOUR ADVENTURE</p>
+            <h2>Choose a world</h2>
+            <label class="lobby-field">Player name<input id="lobby-player-name" maxlength="16" value="Explorer" autocomplete="nickname" /></label>
+            <div class="lobby-create-row">
+              <label class="lobby-field">New world<input id="room-name-input" maxlength="30" placeholder="Name your world" /></label>
+              <button class="lobby-primary" id="create-room-button" type="button">Create world</button>
+            </div>
+            <div class="room-list-heading"><span>OPEN WORLDS</span><button id="refresh-rooms-button" type="button" aria-label="Refresh worlds">Refresh</button></div>
+            <div class="lobby-room-list" id="lobby-room-list" aria-live="polite"></div>
+            <p class="lobby-notice" id="lobby-notice" role="status"></p>
+          </section>
+          <section class="lobby-waiting" id="lobby-waiting" hidden>
+            <p class="eyebrow" id="room-state-label">ROOM READY</p>
+            <h2 id="room-title">Waiting for players</h2>
+            <p class="room-share">Your world is open. Friends can join from the lobby.</p>
+            <div class="room-member-list" id="room-member-list"></div>
+            <div class="room-footer"><button class="lobby-secondary" id="leave-room-button" type="button">Leave room</button><button class="lobby-primary" id="start-room-button" type="button">Start world</button></div>
+            <p class="lobby-notice" id="room-notice" role="status"></p>
+          </section>
+        </div>
+      </section>
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">V</span>
+          <div>
+            <strong>Jesses World</strong>
+            <span class="tagline">Jesses Land of Wonders</span>
+          </div>
+        </div>
+        <div class="session">
+          <label class="sr-only" for="player-name">Your name</label>
+          <input id="player-name" maxlength="16" value="Explorer" aria-label="Your name" />
+          <button class="inventory-toggle" id="inventory-toggle" aria-expanded="false" aria-controls="inventory-panel">Bag</button>
+          <span class="world-seed" id="world-seed" title="Seed used to generate this world">Seed —</span>
+          <span class="connection"><i id="connection-dot"></i><span id="connection-status">Connecting…</span></span>
+          <span class="online-count"><i aria-hidden="true"></i><span id="online-count">1</span> online</span>
+        </div>
+      </header>
+
+      <div class="toast" id="toast" role="status"></div>
+
+      <section class="help-card" id="help-card" aria-label="Game controls">
+        <button class="close-help" id="close-help" aria-label="Close controls">×</button>
+        <strong>Welcome to your world</strong>
+        <p><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Space</kbd> jump · drag to look</p>
+        <p>Tap <b>Break</b> or click to mine · <b>Place</b> or right-click to build</p>
+        <p><kbd>I</kbd> inventory · mine blocks to collect materials and open your bag to craft.</p>
+        <p>Choose a block below. The little villagers are wandering bots.</p>
+      </section>
+      <button class="help-toggle" id="help-toggle" aria-label="Show controls">?</button>
+
+      <section class="inventory-panel" id="inventory-panel" aria-label="Inventory and crafting" hidden>
+        <div class="inventory-heading">
+          <div>
+            <span class="eyebrow">YOUR STUFF</span>
+            <h2>Inventory</h2>
+          </div>
+          <button class="close-help" id="close-inventory" aria-label="Close inventory">×</button>
+        </div>
+        <p class="inventory-hint">Mine blocks to collect them. Drop items here, then walk near them to pick them up. Drag an item onto a hotbar slot, or tap an item and then a slot.</p>
+        <div class="inventory-list" id="inventory-list"></div>
+        <div class="crafting-section">
+          <div class="crafting-heading">
+            <h3>Crafting</h3>
+            <span>Use materials you have</span>
+          </div>
+          <div class="recipe-list" id="recipe-list"></div>
+        </div>
+      </section>
+
+      <section class="hotbar" id="hotbar" aria-label="Choose a block"></section>
+      <div class="mobile-controls" aria-label="Touch controls">
+        <div class="joystick" id="joystick" aria-label="Movement joystick">
+          <span class="joystick-knob" id="joystick-knob"></span>
+        </div>
+        <div class="action-buttons">
+          <button class="action-button jump-button" id="jump-button" aria-label="Jump">Jump</button>
+          <button class="action-button break-button" id="break-button">Break</button>
+          <button class="action-button place-button" id="place-button">Place</button>
+        </div>
+      </div>
+      <footer class="bottom-note">Created for my Son Jesse Parker<a href="README.md" target="_blank" rel="noreferrer"></a></footer>
+    </main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,22 @@
+{
+  "name": "voxland-game",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n server,client -c green,blue \"npm:server:dev\" \"npm:client:dev\"",
+    "server:dev": "node server/index.js",
+    "client:dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "start": "node server/index.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "three": "^0.183.0",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "vite": "^6.4.1"
+  }
+}
