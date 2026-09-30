@@ -18,6 +18,7 @@ import {
   MAX_STACK_SIZE,
   PLANET_MAX_X,
   PLANET_MAX_Z,
+  PLANET_LATITUDE_BLOCKS,
   PLANET_LONGITUDE_BLOCKS,
   PLANET_MIN_X,
   PLANET_MIN_Z,
@@ -29,6 +30,10 @@ import {
 const GAME_DIR = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const DIST_DIR = resolve(GAME_DIR, "dist");
 const DEFAULT_SAVE_DIRECTORY = resolve(GAME_DIR, ".data", "saves");
+const MAX_PLAYER_HEALTH = 100;
+const PLAYER_ATTACK_DAMAGE = 20;
+const PLAYER_ATTACK_RANGE = 3.5;
+const PLAYER_ATTACK_COOLDOWN_MS = 650;
 const MIME_TYPES = new Map([
   [".css", "text/css; charset=utf-8"],
   [".html", "text/html; charset=utf-8"],
@@ -255,13 +260,14 @@ export function createGameServer({
 
   const roomSnapshot = (room) => ({
     type: "snapshot",
-    players: [...room.members].map((id) => players.get(id)).filter(Boolean).map(({ id, name, x, z, yaw, color }) => ({
+    players: [...room.members].map((id) => players.get(id)).filter(Boolean).map(({ id, name, x, z, yaw, color, health }) => ({
       id,
       name,
       x,
       z,
       yaw,
       color,
+      health,
     })),
     bots: [...bots.values()],
     drops: [...room.droppedItems.values()].map(({ id, item, count, x, z }) => ({
@@ -287,17 +293,19 @@ export function createGameServer({
     seed: room.seed,
     mode: room.mode,
     chunkSize: CHUNK_SIZE,
-    players: [...room.members].map((id) => players.get(id)).filter(Boolean).map(({ id, name, x, z, yaw, color }) => ({
+    players: [...room.members].map((id) => players.get(id)).filter(Boolean).map(({ id, name, x, z, yaw, color, health }) => ({
       id,
       name,
       x,
       z,
       yaw,
       color,
+      health,
     })),
     bots: [...bots.values()],
     drops: [...room.droppedItems.values()].map(({ id, item, count, x, z }) => ({ id, item, count, x, z })),
     inventory: inventoryItems(player.inventory),
+    health: player.health,
   });
 
   const snapshotTimer = setInterval(() => {
@@ -336,6 +344,8 @@ export function createGameServer({
       x: 0,
       z: 0,
       yaw: 0,
+      health: MAX_PLAYER_HEALTH,
+      lastAttackAt: 0,
       color: colors[Math.floor(Math.random() * colors.length)],
       inventory: createInventory(),
       socket,
@@ -415,6 +425,7 @@ export function createGameServer({
           player.x = savedPlayer.x;
           player.z = savedPlayer.z;
           player.yaw = savedPlayer.yaw;
+          player.health = Math.max(1, Math.min(MAX_PLAYER_HEALTH, savedPlayer.health ?? MAX_PLAYER_HEALTH));
         }
         if (!room.hostId) room.hostId = player.id;
         writeJson(socket, { type: "room_joined", room: roomSummary(room), hostId: room.hostId });
@@ -513,8 +524,66 @@ export function createGameServer({
         return;
       }
 
+      if (message.type === "attack") {
+        const room = rooms.get(player.roomId);
+        const target = room?.started && room.members.has(message.targetId)
+          ? players.get(message.targetId)
+          : null;
+        const now = Date.now();
+        if (
+          !room?.started ||
+          player.health <= 0 ||
+          now - player.lastAttackAt < PLAYER_ATTACK_COOLDOWN_MS
+        ) {
+          writeJson(socket, { type: "attack_result", hit: false });
+          return;
+        }
+        player.lastAttackAt = now;
+        if (!target || target.id === player.id || target.health <= 0) {
+          writeJson(socket, { type: "attack_result", hit: false });
+          return;
+        }
+
+        const latitude = (player.z - PLANET_MIN_Z + 0.5) / PLANET_LATITUDE_BLOCKS * Math.PI - Math.PI / 2;
+        const east = wrapPlanetX(target.x - player.x) * Math.cos(latitude);
+        const north = target.z - player.z;
+        const distance = Math.hypot(east, north);
+        const facing = (east * -Math.sin(player.yaw) + north * Math.cos(player.yaw)) / Math.max(distance, 0.001);
+        if (distance > PLAYER_ATTACK_RANGE || facing < 0.2) {
+          writeJson(socket, { type: "attack_result", hit: false, message: "No player in reach." });
+          return;
+        }
+
+        target.health = Math.max(0, target.health - PLAYER_ATTACK_DAMAGE);
+        writeJson(socket, {
+          type: "attack_result",
+          hit: true,
+          targetId: target.id,
+          damage: PLAYER_ATTACK_DAMAGE,
+          health: target.health,
+        });
+        broadcastToRoom(room, roomSnapshot(room));
+        return;
+      }
+
+      if (message.type === "respawn") {
+        const room = rooms.get(player.roomId);
+        if (!room?.started || player.health > 0) return;
+        player.health = MAX_PLAYER_HEALTH;
+        player.x = 0;
+        player.z = 0;
+        player.yaw = 0;
+        writeJson(socket, {
+          type: "respawn_result",
+          position: { x: player.x, z: player.z, yaw: player.yaw },
+          health: player.health,
+        });
+        broadcastToRoom(room, roomSnapshot(room));
+        return;
+      }
+
       if (message.type === "move") {
-        if (!rooms.get(player.roomId)?.started) return;
+        if (!rooms.get(player.roomId)?.started || player.health <= 0) return;
         if (!validPlayerPosition(message.position)) {
           writeJson(socket, { type: "error", message: "Movement was outside the world." });
           return;

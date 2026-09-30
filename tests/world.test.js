@@ -4,6 +4,7 @@ import {
   BEDROCK_Y,
   advancePlanetPosition,
   blockKey,
+  canCraft,
   canEditBlock,
   createChunkBlocks,
   getBaseBlockAt,
@@ -17,6 +18,7 @@ import {
   PLANET_MIN_Z,
   PLANET_RADIUS,
   planetPointAt,
+  RECIPES,
   terrainHeightAt,
   wrapPlanetX,
 } from "../server/world.js";
@@ -84,6 +86,13 @@ test("allows placing the expanded building palette", () => {
   for (const block of ["brick", "obsidian", "snow", "ice"]) {
     assert.equal(canEditBlock(position, block, "place", edits, 1), true);
   }
+});
+
+test("crafts a placeable crafting table from four planks", () => {
+  const recipe = RECIPES.find((candidate) => candidate.id === "crafting_table");
+  assert.ok(recipe);
+  assert.equal(canCraft(new Map([["oak_planks", 4]]), recipe), true);
+  assert.equal(canCraft(new Map([["oak_planks", 3]]), recipe), false);
 });
 
 test("keeps block coordinates inside the finite planet", () => {

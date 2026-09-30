@@ -62,6 +62,13 @@
         </div>
       </header>
 
+      <section class="health-hud" aria-label="Player health">
+        <span>HEALTH</span>
+        <progress id="health-progress" max="100" value="100"></progress>
+        <strong id="health-value">100</strong>
+        <button type="button" id="respawn-button" hidden>Respawn</button>
+      </section>
+
       <div class="toast" id="toast" role="status"></div>
 
       <section class="game-menu" id="game-menu" aria-label="World settings" hidden>
@@ -87,7 +94,7 @@
       <section class="help-card" id="help-card" aria-label="Game controls" hidden>
         <button class="close-help" id="close-help" aria-label="Close controls">×</button>
         <strong>Welcome to your world</strong>
-        <p><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Space</kbd> jump · drag to look</p>
+        <p><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Space</kbd> jump · <kbd>F</kbd> punch · drag to look</p>
         <p>Tap <b>Break</b> or click to mine · <b>Place</b> or right-click to build</p>
         <p><kbd>I</kbd> inventory · mine blocks to collect materials and open your bag to craft.</p>
         <p>Choose a block below. The little villagers are wandering bots.</p>
@@ -123,6 +130,7 @@
           <button class="action-button jump-button" id="jump-button" aria-label="Jump">Jump</button>
           <button class="action-button break-button" id="break-button">Break</button>
           <button class="action-button place-button" id="place-button">Place</button>
+          <button class="action-button attack-button" id="attack-button">Punch</button>
         </div>
       </div>
       <footer class="bottom-note">Created for my Son Jesse Parker<a href="README.md" target="_blank" rel="noreferrer"></a></footer>

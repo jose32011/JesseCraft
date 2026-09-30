@@ -16,6 +16,7 @@ export const BLOCK_TYPES = new Set([
   "white_concrete",
   "blue_concrete",
   "red_concrete",
+  "crafting_table",
 ]);
 
 export const CHUNK_SIZE = 16;
@@ -66,6 +67,13 @@ export const RECIPES = [
     label: "Campfire ×1",
     ingredients: { oak_log: 2, stone: 3 },
     result: "campfire",
+    resultCount: 1,
+  },
+  {
+    id: "crafting_table",
+    label: "Crafting table ×1",
+    ingredients: { oak_planks: 4 },
+    result: "crafting_table",
     resultCount: 1,
   },
 ];

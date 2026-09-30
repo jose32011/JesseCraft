@@ -41,6 +41,7 @@ import blackConcreteTextureUrl from "./assets/blocks/own/black_concrete.png";
 import whiteConcreteTextureUrl from "./assets/blocks/own/white_concrete.png";
 import blueConcreteTextureUrl from "./assets/blocks/own/blue_concrete.png";
 import redConcreteTextureUrl from "./assets/blocks/own/red_concrete.png";
+import craftingTableTextureUrl from "./assets/blocks/vibes/table.png";
 import "./style.css";
 
 const canvas = document.querySelector("#world");
@@ -76,6 +77,10 @@ const inventoryList = document.querySelector("#inventory-list");
 const recipeList = document.querySelector("#recipe-list");
 const joystick = document.querySelector("#joystick");
 const joystickKnob = document.querySelector("#joystick-knob");
+const healthProgress = document.querySelector("#health-progress");
+const healthValue = document.querySelector("#health-value");
+const respawnButton = document.querySelector("#respawn-button");
+const attackButton = document.querySelector("#attack-button");
 const savedPlayerName = localStorage.getItem("player-name");
 if (savedPlayerName) {
   playerNameInput.value = savedPlayerName;
@@ -99,6 +104,7 @@ const blockChoices = [
   ["white_concrete", "Concrete", whiteConcreteTextureUrl],
   ["blue_concrete", "Blue Concrete", blueConcreteTextureUrl],
   ["red_concrete", "Red Concrete", redConcreteTextureUrl],
+  ["crafting_table", "Crafting Table", craftingTableTextureUrl],
 ];
 const blockNames = new Map(blockChoices.map(([id, name]) => [id, name]));
 const blockChoiceById = new Map(blockChoices.map((choice) => [choice[0], choice]));
@@ -189,6 +195,7 @@ const state = {
   connected: false,
   mode: "survival",
   selected: null,
+  health: 100,
   lastSentAt: 0,
   lastPickupAt: 0,
   jumpVelocity: 0,
@@ -551,10 +558,19 @@ function applySnapshot(message) {
   const playerList = message.players ?? [];
   const botList = message.bots ?? [];
   state.roomPlayers = playerList;
+  const self = playerList.find((player) => player.id === state.id);
+  if (self) updateHealth(self.health);
   updateAvatars(playerList, players);
   updateAvatars(botList, bots, true);
   renderDroppedItems(message.drops ?? []);
   renderWorldMapMarkers(playerList);
+}
+
+function updateHealth(health) {
+  state.health = Math.max(0, Math.min(100, health ?? state.health));
+  healthProgress.value = state.health;
+  healthValue.textContent = String(state.health);
+  respawnButton.hidden = state.health > 0;
 }
 
 function drawWorldMap() {
@@ -790,6 +806,19 @@ function connect() {
       localStorage.setItem("player-name", message.name);
     } else if (message.type === "save_result") {
       gameMenuStatus.textContent = message.message;
+    } else if (message.type === "attack_result") {
+      if (message.hit) notify(`Hit for ${message.damage} damage.`);
+      else if (message.message) notify(message.message);
+    } else if (message.type === "respawn_result") {
+      playerPosition.x = message.position.x;
+      playerPosition.z = message.position.z;
+      playerPosition.y = terrainHeightAt(playerPosition.x, playerPosition.z, state.seed) + 1.65;
+      look.yaw = message.position.yaw;
+      state.jumpVelocity = 0;
+      updateHealth(message.health);
+      updateChunkWindow(true);
+      renderWorld();
+      notify("You are back in the world.");
     } else if (message.type === "teleport_result") {
       playerPosition.x = message.position.x;
       playerPosition.z = message.position.z;
@@ -810,6 +839,7 @@ function connect() {
       state.id = message.id;
       state.seed = message.seed;
       state.mode = message.mode === "design" ? "design" : "survival";
+      updateHealth(message.health);
       hotbarItems.splice(0, HOTBAR_SIZE, ...(state.mode === "design"
         ? blockChoices.slice(0, HOTBAR_SIZE).map(([id]) => id)
         : Array(HOTBAR_SIZE).fill(null)));
@@ -1189,6 +1219,36 @@ function targetBlock() {
   return { coords, normal: hit.face.normal.clone() };
 }
 
+function findCombatTarget() {
+  const latitude = (playerPosition.z - PLANET_MIN_Z + 0.5) / PLANET_LATITUDE_BLOCKS * Math.PI - Math.PI / 2;
+  const forwardEast = -Math.sin(look.yaw);
+  const forwardNorth = Math.cos(look.yaw);
+  let closest = null;
+  let closestDistance = 3.5;
+  for (const player of state.roomPlayers ?? []) {
+    if (player.id === state.id || player.health <= 0) continue;
+    const east = wrapPlanetX(player.x - playerPosition.x) * Math.cos(latitude);
+    const north = player.z - playerPosition.z;
+    const distance = Math.hypot(east, north);
+    if (distance >= closestDistance) continue;
+    const facing = (east * forwardEast + north * forwardNorth) / Math.max(distance, 0.001);
+    if (facing < 0.2) continue;
+    closest = player;
+    closestDistance = distance;
+  }
+  return closest;
+}
+
+function attackPlayer() {
+  if (!state.connected || state.health <= 0) return;
+  const target = findCombatTarget();
+  if (!target) {
+    notify("No player in reach. Face a nearby player to punch.");
+    return;
+  }
+  state.socket.send(JSON.stringify({ type: "attack", targetId: target.id }));
+}
+
 function sendEdit(action) {
   if (state.socket?.readyState !== WebSocket.OPEN) {
     notify("Waiting for the world connection.");
@@ -1228,6 +1288,8 @@ function sendEdit(action) {
 
 document.querySelector("#break-button").addEventListener("click", () => sendEdit("remove"));
 document.querySelector("#place-button").addEventListener("click", () => sendEdit("place"));
+attackButton.addEventListener("click", attackPlayer);
+respawnButton.addEventListener("click", () => sendLobbyMessage({ type: "respawn" }));
 document.querySelector("#jump-button").addEventListener("pointerdown", (event) => {
   event.preventDefault();
   jump();
@@ -1252,6 +1314,10 @@ window.addEventListener("keydown", (event) => {
   if (event.code === "Space") {
     event.preventDefault();
     if (!event.repeat) jump();
+    return;
+  }
+  if (event.code === "KeyF") {
+    attackPlayer();
     return;
   }
   moveKeys.add(event.code);

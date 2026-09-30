@@ -709,6 +709,7 @@ kbd {
 
   .mobile-controls {
     position: absolute;
+    z-index: 6;
     right: 17px;
     bottom: calc(max(95px, env(safe-area-inset-bottom) + 83px));
     left: 17px;
@@ -794,6 +795,14 @@ kbd {
   .jump-button {
     border-color: rgba(141, 199, 255, 0.48);
     color: #c5e4ff;
+  }
+
+  .attack-button {
+    min-width: 76px;
+    border-color: rgba(255, 132, 105, 0.72);
+    background: rgba(89, 43, 37, 0.94);
+    color: #ffd2c6;
+    box-shadow: 0 0 0 2px rgba(255, 132, 105, 0.16), 0 5px 15px rgba(17, 29, 24, 0.3);
   }
 
   .hotbar {
@@ -1124,6 +1133,64 @@ kbd {
   line-height: 1;
 }
 
+.health-hud {
+  position: absolute;
+  z-index: 3;
+  top: 67px;
+  right: 22px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 10px;
+}
+
+.health-hud progress {
+  width: 96px;
+  height: 9px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 8px;
+  appearance: none;
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.health-hud progress::-webkit-progress-bar {
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.health-hud progress::-webkit-progress-value {
+  border-radius: 8px;
+  background: #e16c5a;
+  transition: width 150ms ease;
+}
+
+.health-hud progress::-moz-progress-bar {
+  border-radius: 8px;
+  background: #e16c5a;
+}
+
+.health-hud strong {
+  min-width: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.health-hud button {
+  padding: 4px 7px;
+  border: 1px solid rgba(185, 233, 137, 0.42);
+  border-radius: 5px;
+  background: rgba(185, 233, 137, 0.13);
+  color: var(--lime);
+  cursor: pointer;
+  font-size: 10px;
+}
+
 .game-menu-toggle:hover,
 .game-menu-toggle[aria-expanded="true"] {
   border-color: rgba(185, 233, 137, 0.5);
@@ -1331,6 +1398,11 @@ kbd {
 }
 
 @media (pointer: coarse), (max-width: 700px) {
+  .health-hud {
+    top: 60px;
+    right: 12px;
+  }
+
   .mobile-crosshair {
     position: absolute;
     z-index: 4;
