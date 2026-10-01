@@ -27,6 +27,7 @@ import {
   planetFrameAt,
   planetPointAt,
   RECIPES,
+  WORLD_LOCATIONS,
   terrainHeightAt,
   wrapPlanetX,
 } from "../shared/world.js";
@@ -91,6 +92,8 @@ const respawnButton = document.querySelector("#respawn-button");
 const attackButton = document.querySelector("#attack-button");
 const fishButton = document.querySelector("#fish-button");
 const savedPlayerName = localStorage.getItem("player-name");
+const activeRoomStorageKey = "active-room-id";
+let resumeRequested = false;
 if (savedPlayerName) {
   playerNameInput.value = savedPlayerName;
   lobbyPlayerNameInput.value = savedPlayerName;
@@ -718,7 +721,7 @@ function renderWorldMapMarkers(playerList = state.roomPlayers ?? []) {
   teleportTarget.replaceChildren();
   const placeholder = document.createElement("option");
   placeholder.value = "";
-  placeholder.textContent = "Choose a player";
+  placeholder.textContent = "Choose a player or location";
   teleportTarget.append(placeholder);
   worldMapMarkers.replaceChildren();
 
@@ -750,6 +753,37 @@ function renderWorldMapMarkers(playerList = state.roomPlayers ?? []) {
       }
       if (!isSelf) teleportTarget.value = player.id;
       teleportButton.disabled = !teleportTarget.value;
+    });
+    worldMapMarkers.append(marker);
+  }
+
+  for (const location of WORLD_LOCATIONS) {
+    const option = document.createElement("option");
+    option.value = `location:${location.id}`;
+    option.textContent = location.name;
+    teleportTarget.append(option);
+
+    const marker = document.createElement("button");
+    marker.type = "button";
+    marker.className = "map-marker location-marker";
+    const visualOffset = location.id === "beach" ? -1.6 : location.id === "harbor" ? 1.6 : 0;
+    marker.style.left = `${(wrapPlanetX(location.x) - PLANET_MIN_X) / PLANET_LONGITUDE_BLOCKS * 100 + visualOffset}%`;
+    marker.style.top = `${(PLANET_MAX_Z - location.z) / PLANET_LATITUDE_BLOCKS * 100}%`;
+    marker.title = `${location.name} (teleport point)`;
+    marker.setAttribute("aria-label", `${location.name}, teleport point`);
+    marker.setAttribute("aria-pressed", "false");
+    const dot = document.createElement("span");
+    dot.className = "map-marker-dot";
+    const label = document.createElement("span");
+    label.className = "map-marker-name";
+    label.textContent = location.name;
+    marker.append(dot, label);
+    marker.addEventListener("click", () => {
+      for (const otherMarker of worldMapMarkers.querySelectorAll(".map-marker")) {
+        otherMarker.setAttribute("aria-pressed", String(otherMarker === marker));
+      }
+      teleportTarget.value = `location:${location.id}`;
+      teleportButton.disabled = false;
     });
     worldMapMarkers.append(marker);
   }
@@ -892,6 +926,8 @@ function connect() {
     } else if (message.type === "room_list") {
       renderLobbyRooms(message.rooms ?? []);
     } else if (message.type === "room_created" || message.type === "room_joined") {
+      localStorage.setItem(activeRoomStorageKey, message.room.id);
+      resumeRequested = false;
       lobbyRoom = { room: message.room, hostId: message.hostId, members: [] };
       lobbyHome.hidden = true;
       lobbyWaiting.hidden = false;
@@ -899,11 +935,18 @@ function connect() {
     } else if (message.type === "room_state") {
       renderRoomState(message);
     } else if (message.type === "room_left") {
+      localStorage.removeItem(activeRoomStorageKey);
+      resumeRequested = false;
       showLobbyHome();
     } else if (message.type === "name_result") {
       playerNameInput.value = message.name;
       lobbyPlayerNameInput.value = message.name;
       localStorage.setItem("player-name", message.name);
+      const activeRoomId = localStorage.getItem(activeRoomStorageKey);
+      if (activeRoomId && !resumeRequested && !state.connected && !lobbyRoom) {
+        resumeRequested = true;
+        sendLobbyMessage({ type: "join_room", roomId: activeRoomId });
+      }
     } else if (message.type === "save_result") {
       gameMenuStatus.textContent = message.message;
     } else if (message.type === "fish_result") {
@@ -944,6 +987,11 @@ function connect() {
       state.id = message.id;
       state.seed = message.seed;
       state.mode = message.mode === "design" ? "design" : "survival";
+      if (message.position) {
+        playerPosition.x = message.position.x;
+        playerPosition.z = message.position.z;
+        look.yaw = message.position.yaw;
+      }
       updateHealth(message.health);
       updateXp(message.xp ?? state.xp, message.level ?? state.level);
       updateCoins(message.coins ?? state.coins);
@@ -994,13 +1042,17 @@ function connect() {
         renderWorld();
       }
     } else if (message.type === "error") {
+      if (resumeRequested) {
+        localStorage.removeItem(activeRoomStorageKey);
+        resumeRequested = false;
+        showLobbyHome();
+      }
       showLobbyNotice(message.message, Boolean(lobbyRoom));
       notify(message.message);
     }
   });
   socket.addEventListener("close", () => {
-    state.connected = false;
-    multiplayerMenu.hidden = false;
+    showLobbyHome();
     setLobbyStatus("Reconnecting");
     statusText.textContent = "Reconnecting…";
     statusDot.classList.remove("online");
@@ -1073,7 +1125,11 @@ teleportTarget.addEventListener("change", () => {
   teleportButton.disabled = !teleportTarget.value;
 });
 teleportButton.addEventListener("click", () => {
-  if (teleportTarget.value) sendLobbyMessage({ type: "teleport", targetId: teleportTarget.value });
+  if (teleportTarget.value.startsWith("location:")) {
+    sendLobbyMessage({ type: "teleport", locationId: teleportTarget.value.slice("location:".length) });
+  } else if (teleportTarget.value) {
+    sendLobbyMessage({ type: "teleport", targetId: teleportTarget.value });
+  }
 });
 
 function selectBlock(id) {

@@ -36,6 +36,7 @@ import {
 const GAME_DIR = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const DIST_DIR = resolve(GAME_DIR, "dist");
 const DEFAULT_SAVE_DIRECTORY = resolve(GAME_DIR, ".data", "saves");
+const ROOM_RECONNECT_GRACE_MS = 5 * 60 * 1000;
 const MAX_PLAYER_HEALTH = 100;
 const PLAYER_ATTACK_DAMAGE = 20;
 const PLAYER_ATTACK_RANGE = 3.5;
@@ -396,6 +397,7 @@ export function createGameServer({
     bots: [...bots.values()],
     monsters: serializeMonsters(room),
     drops: [...room.droppedItems.values()].map(({ id, item, count, x, z }) => ({ id, item, count, x, z })),
+    position: { x: player.x, z: player.z, yaw: player.yaw },
     inventory: inventoryItems(player.inventory),
     health: player.health,
     xp: player.xp ?? 0,
@@ -558,6 +560,7 @@ export function createGameServer({
           droppedItems: new Map(),
           savedPlayers: new Map(),
           monsters: createMonsters(),
+          disconnectTimer: null,
           saved: false,
         };
         rooms.set(roomId, room);
@@ -578,6 +581,10 @@ export function createGameServer({
         if (player.roomId) {
           writeJson(socket, { type: "error", message: "Leave your current room first." });
           return;
+        }
+        if (room.disconnectTimer) {
+          clearTimeout(room.disconnectTimer);
+          room.disconnectTimer = null;
         }
         room.members.add(player.id);
         player.roomId = room.id;
@@ -610,7 +617,10 @@ export function createGameServer({
         if (room) {
           room.members.delete(player.id);
           player.roomId = null;
-          if (room.members.size === 0 && !room.saved) rooms.delete(room.id);
+          if (room.members.size === 0 && !room.saved) {
+            if (room.disconnectTimer) clearTimeout(room.disconnectTimer);
+            rooms.delete(room.id);
+          }
           else {
             if (room.hostId === player.id) room.hostId = room.members.values().next().value;
             sendRoomState(room);
@@ -975,10 +985,28 @@ export function createGameServer({
     socket.on("close", () => {
       const room = rooms.get(player.roomId);
       if (room) {
+        room.savedPlayers.set(player.name.toLowerCase(), {
+          name: player.name,
+          x: player.x,
+          z: player.z,
+          yaw: player.yaw,
+          health: player.health,
+          inventory: inventoryItems(player.inventory),
+          xp: player.xp ?? 0,
+          level: player.level ?? 0,
+          coins: player.coins ?? 0,
+        });
         room.members.delete(player.id);
-        if (room.members.size === 0 && !room.saved) rooms.delete(room.id);
-        else {
-          if (room.hostId === player.id) room.hostId = room.members.values().next().value;
+        if (room.hostId === player.id) room.hostId = room.members.values().next().value ?? null;
+        if (room.members.size === 0 && !room.saved) {
+          room.disconnectTimer = setTimeout(() => {
+            if (rooms.get(room.id) === room && room.members.size === 0 && !room.saved) {
+              rooms.delete(room.id);
+              sendLobbyRooms();
+            }
+          }, ROOM_RECONNECT_GRACE_MS);
+          room.disconnectTimer.unref?.();
+        } else {
           sendRoomState(room);
           if (room.started) broadcastToRoom(room, roomSnapshot(room));
         }

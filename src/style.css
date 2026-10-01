@@ -1379,6 +1379,17 @@ kbd {
   background: #b9e989;
 }
 
+.location-marker {
+  z-index: 2;
+}
+
+.location-marker .map-marker-dot,
+.world-map-legend .map-location-dot {
+  border-radius: 2px;
+  background: #f2cf68;
+  transform: rotate(45deg);
+}
+
 .map-marker-name {
   position: absolute;
   left: 14px;

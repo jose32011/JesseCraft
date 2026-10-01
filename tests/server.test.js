@@ -197,6 +197,59 @@ test("generates seeded terrain and shares chunk edits with joining players", asy
   }
 });
 
+test("rejoins an active world with player state after a disconnect", async () => {
+  const server = createGameServer({ host: "127.0.0.1", port: 0, seed: 9876 });
+  const sockets = [];
+  try {
+    const address = await server.listen();
+    const url = `ws://127.0.0.1:${address.port}/ws`;
+    const firstConnection = connect(url);
+    sockets.push(firstConnection.socket);
+    const firstLobby = nextMessage(firstConnection.socket, (message) => message.type === "lobby");
+    await firstConnection.opened;
+    await firstLobby;
+    const firstName = nextMessage(firstConnection.socket, (message) => message.type === "name_result");
+    firstConnection.socket.send(JSON.stringify({ type: "name", name: "Refresh Tester" }));
+    await firstName;
+
+    const createdMessage = nextMessage(firstConnection.socket, (message) => message.type === "room_created");
+    firstConnection.socket.send(JSON.stringify({ type: "create_room", roomName: "Refresh World" }));
+    const roomId = (await createdMessage).room.id;
+    const firstInit = nextMessage(firstConnection.socket, (message) => message.type === "init");
+    firstConnection.socket.send(JSON.stringify({ type: "start_room" }));
+    const initial = await firstInit;
+    const player = server.players.get(initial.id);
+    player.x = 24;
+    player.z = 37;
+    player.yaw = 1.25;
+    player.inventory.set("oak_planks", 7);
+
+    const firstClosed = new Promise((resolve) => firstConnection.socket.once("close", resolve));
+    firstConnection.socket.close();
+    await firstClosed;
+
+    const resumedConnection = connect(url);
+    sockets.push(resumedConnection.socket);
+    const resumedLobby = nextMessage(resumedConnection.socket, (message) => message.type === "lobby");
+    await resumedConnection.opened;
+    await resumedLobby;
+    const resumedName = nextMessage(resumedConnection.socket, (message) => message.type === "name_result");
+    resumedConnection.socket.send(JSON.stringify({ type: "name", name: "Refresh Tester" }));
+    await resumedName;
+    const resumedInit = nextMessage(resumedConnection.socket, (message) => message.type === "init");
+    resumedConnection.socket.send(JSON.stringify({ type: "join_room", roomId }));
+    const restored = await resumedInit;
+
+    assert.equal(restored.seed, 9876);
+    assert.deepEqual(restored.position, { x: 24, z: 37, yaw: 1.25 });
+    assert.equal(restored.inventory.find(([item]) => item === "oak_planks")[1], 7);
+    assert.equal(server.rooms.get(roomId).members.size, 1);
+  } finally {
+    for (const socket of sockets) socket.terminate();
+    await server.close();
+  }
+});
+
 test("crafting awards XP levels and restores them with saved worlds", async () => {
   const saveDirectory = mkdtempSync(join(tmpdir(), "voxland-saves-xp-"));
   const sockets = [];
