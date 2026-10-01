@@ -8,6 +8,11 @@ import {
   CITY_BEACH_OUTER_RADIUS,
   CITY_RADIUS,
   createChunkBlocks,
+  FISH_TYPE_BY_ID,
+  HARBOR_DOCK_MAX_Z,
+  HARBOR_DOCK_MIN_Z,
+  HARBOR_WATER_OUTER_RADIUS,
+  isNearHarbor,
   MAX_CITY_BUILDING_HEIGHT,
   MAX_PLANET_CHUNK_X,
   MAX_PLANET_CHUNK_Z,
@@ -42,6 +47,7 @@ import whiteConcreteTextureUrl from "./assets/blocks/own/white_concrete.png";
 import blueConcreteTextureUrl from "./assets/blocks/own/blue_concrete.png";
 import redConcreteTextureUrl from "./assets/blocks/own/red_concrete.png";
 import craftingTableTextureUrl from "./assets/blocks/vibes/table.png";
+import waterTextureUrl from "./assets/blocks/own/water.png";
 import "./style.css";
 
 const canvas = document.querySelector("#world");
@@ -79,8 +85,11 @@ const joystick = document.querySelector("#joystick");
 const joystickKnob = document.querySelector("#joystick-knob");
 const healthProgress = document.querySelector("#health-progress");
 const healthValue = document.querySelector("#health-value");
+const xpHud = document.querySelector("#xp-hud");
+const coinHud = document.querySelector("#coin-hud");
 const respawnButton = document.querySelector("#respawn-button");
 const attackButton = document.querySelector("#attack-button");
+const fishButton = document.querySelector("#fish-button");
 const savedPlayerName = localStorage.getItem("player-name");
 if (savedPlayerName) {
   playerNameInput.value = savedPlayerName;
@@ -105,6 +114,12 @@ const blockChoices = [
   ["blue_concrete", "Blue Concrete", blueConcreteTextureUrl],
   ["red_concrete", "Red Concrete", redConcreteTextureUrl],
   ["crafting_table", "Crafting Table", craftingTableTextureUrl],
+  ["water", "Water", waterTextureUrl],
+  ["fishing_rod", "Fishing Rod", null],
+  ["raw_fish", "Bluegill", null],
+  ["sunfish", "Sunfish", null],
+  ["gold_fish", "Goldfish", null],
+  ["salmon", "Salmon", null],
 ];
 const blockNames = new Map(blockChoices.map(([id, name]) => [id, name]));
 const blockChoiceById = new Map(blockChoices.map((choice) => [choice[0], choice]));
@@ -112,6 +127,26 @@ const HOTBAR_SIZE = 6;
 const hotbarItems = Array(HOTBAR_SIZE).fill(null);
 const textureLoader = new THREE.TextureLoader();
 const materials = new Map();
+
+function createFishTexture(color = "#91d8db") {
+  const textureCanvas = document.createElement("canvas");
+  textureCanvas.width = 16;
+  textureCanvas.height = 16;
+  const context = textureCanvas.getContext("2d");
+  context.fillStyle = color;
+  context.fillRect(4, 6, 8, 5);
+  context.fillRect(2, 7, 2, 3);
+  context.fillRect(12, 7, 2, 3);
+  context.fillStyle = "#eaf3d1";
+  context.fillRect(5, 7, 6, 3);
+  context.fillStyle = "#203c43";
+  context.fillRect(10, 7, 1, 1);
+  const texture = new THREE.CanvasTexture(textureCanvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.magFilter = THREE.NearestFilter;
+  texture.minFilter = THREE.NearestFilter;
+  return texture;
+}
 
 function createCampfireTexture() {
   const textureCanvas = document.createElement("canvas");
@@ -139,8 +174,49 @@ function createCampfireTexture() {
   return texture;
 }
 
+function createFishingRodTexture() {
+  const textureCanvas = document.createElement("canvas");
+  textureCanvas.width = 16;
+  textureCanvas.height = 16;
+  const context = textureCanvas.getContext("2d");
+  context.fillStyle = "#b2875b";
+  context.fillRect(7, 2, 2, 8);
+  context.fillStyle = "#8b5d3a";
+  context.fillRect(5, 10, 6, 2);
+  context.strokeStyle = "#fff0d8";
+  context.lineWidth = 2;
+  context.beginPath();
+  context.moveTo(8, 0);
+  context.lineTo(12, 6);
+  context.stroke();
+  context.strokeStyle = "#d3d5d9";
+  context.beginPath();
+  context.moveTo(12, 6);
+  context.lineTo(14, 10);
+  context.stroke();
+  context.fillStyle = "#c67b4f";
+  context.fillRect(13, 9, 2, 2);
+  const texture = new THREE.CanvasTexture(textureCanvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.magFilter = THREE.NearestFilter;
+  texture.minFilter = THREE.NearestFilter;
+  return texture;
+}
+
 for (const [id, name, url] of blockChoices) {
-  const texture = url ? textureLoader.load(url) : createCampfireTexture();
+  const texture = url
+    ? textureLoader.load(url)
+    : id === "raw_fish"
+      ? createFishTexture("#91d8db")
+      : id === "sunfish"
+        ? createFishTexture("#f5c76a")
+        : id === "gold_fish"
+          ? createFishTexture("#e4c15d")
+          : id === "salmon"
+            ? createFishTexture("#ff8a5b")
+            : id === "fishing_rod"
+              ? createFishingRodTexture()
+              : createCampfireTexture();
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.magFilter = THREE.NearestFilter;
   texture.minFilter = THREE.NearestFilter;
@@ -148,8 +224,9 @@ for (const [id, name, url] of blockChoices) {
     id,
     new THREE.MeshLambertMaterial({
       map: texture,
-      transparent: id === "glass",
-      opacity: id === "glass" ? 0.58 : 1,
+      transparent: id === "glass" || id === "water",
+      opacity: id === "glass" ? 0.58 : id === "water" ? 0.62 : 1,
+      depthWrite: id !== "glass" && id !== "water",
     }),
   );
 }
@@ -196,11 +273,15 @@ const state = {
   mode: "survival",
   selected: null,
   health: 100,
+  xp: 0,
+  level: 0,
+  coins: 0,
   lastSentAt: 0,
   lastPickupAt: 0,
   jumpVelocity: 0,
   inventory: new Map(),
   pendingHotbarItem: null,
+  fishingCast: null,
 };
 let lobbyRoom = null;
 let toastTimer;
@@ -378,7 +459,8 @@ function renderWorld() {
       ) continue;
       const visible = (neighborX, neighborY, neighborZ) => {
         const neighborType = worldBlocks.get(blockKey(neighborX, neighborY, neighborZ));
-        return !neighborType || neighborType === "glass" || type === "glass";
+        const neighborIsTransparent = neighborType === "glass" || neighborType === "water";
+        return !neighborType || neighborIsTransparent || type === "glass" || type === "water";
       };
       const hasVisibleFace =
         visible(x, y + 1, z) ||
@@ -394,6 +476,12 @@ function renderWorld() {
   }
 
   const matrix = new THREE.Object3D();
+  const east = new THREE.Vector3();
+  const up = new THREE.Vector3();
+  const westNorth = new THREE.Vector3();
+  const basis = new THREE.Matrix4();
+  const orientation = new THREE.Quaternion();
+  const scale = new THREE.Vector3();
   for (const [type, coordinates] of grouped) {
     const mesh = new THREE.InstancedMesh(cubeGeometry, materials.get(type), coordinates.length);
     mesh.userData.coordinates = coordinates;
@@ -404,14 +492,13 @@ function renderWorld() {
       const [x, y, z] = coordinates[index];
       const frame = planetFrameAt(x, z);
       const point = planetPointAt(x, y + 0.5, z);
-      const basis = new THREE.Matrix4().makeBasis(
-        new THREE.Vector3(frame.east.x, frame.east.y, frame.east.z),
-        new THREE.Vector3(frame.up.x, frame.up.y, frame.up.z),
-        new THREE.Vector3(-frame.north.x, -frame.north.y, -frame.north.z),
-      );
-      const orientation = new THREE.Quaternion().setFromRotationMatrix(basis);
+      east.set(frame.east.x, frame.east.y, frame.east.z);
+      up.set(frame.up.x, frame.up.y, frame.up.z);
+      westNorth.set(-frame.north.x, -frame.north.y, -frame.north.z);
+      basis.makeBasis(east, up, westNorth);
+      orientation.setFromRotationMatrix(basis);
       const blockRadius = PLANET_RADIUS + y + 1;
-      const scale = new THREE.Vector3(
+      scale.set(
         Math.max(0.05, 2 * Math.cos(frame.latitude) * blockRadius * Math.tan(Math.PI / PLANET_LONGITUDE_BLOCKS)),
         1,
         2 * blockRadius * Math.tan(Math.PI / (2 * PLANET_LATITUDE_BLOCKS)),
@@ -573,6 +660,17 @@ function updateHealth(health) {
   respawnButton.hidden = state.health > 0;
 }
 
+function updateXp(xp, level) {
+  state.xp = Number.isFinite(Number(xp)) ? Number(xp) : state.xp;
+  state.level = Number.isFinite(Number(level)) ? Number(level) : state.level;
+  xpHud.textContent = `XP ${state.xp} · Lv ${state.level}`;
+}
+
+function updateCoins(coins) {
+  state.coins = Number.isFinite(Number(coins)) ? Number(coins) : state.coins;
+  coinHud.textContent = `Coins ${state.coins}`;
+}
+
 function drawWorldMap() {
   if (state.mapSeed === state.seed) return;
   state.mapSeed = state.seed;
@@ -597,6 +695,8 @@ function drawWorldMap() {
           color = Math.abs(Math.floor(x / 16) + Math.floor(z / 16)) % 2 ? "#68716a" : "#8a9188";
         } else if (distance <= CITY_BEACH_OUTER_RADIUS) {
           color = "#d2c38b";
+        } else if (distance <= HARBOR_WATER_OUTER_RADIUS) {
+          color = "#286a75";
         } else if (height >= 20) {
           color = "#92988a";
         } else if (distance < 228) {
@@ -806,6 +906,11 @@ function connect() {
       localStorage.setItem("player-name", message.name);
     } else if (message.type === "save_result") {
       gameMenuStatus.textContent = message.message;
+    } else if (message.type === "fish_result") {
+      if (message.caught) {
+        triggerFishingCast(message.item);
+      }
+      notify(message.message);
     } else if (message.type === "attack_result") {
       if (message.hit) notify(`Hit for ${message.damage} damage.`);
       else if (message.message) notify(message.message);
@@ -840,6 +945,8 @@ function connect() {
       state.seed = message.seed;
       state.mode = message.mode === "design" ? "design" : "survival";
       updateHealth(message.health);
+      updateXp(message.xp ?? state.xp, message.level ?? state.level);
+      updateCoins(message.coins ?? state.coins);
       hotbarItems.splice(0, HOTBAR_SIZE, ...(state.mode === "design"
         ? blockChoices.slice(0, HOTBAR_SIZE).map(([id]) => id)
         : Array(HOTBAR_SIZE).fill(null)));
@@ -869,6 +976,14 @@ function connect() {
       scheduleWorldRender();
     } else if (message.type === "inventory") {
       updateInventory(message.items);
+    } else if (message.type === "currency") {
+      updateCoins(message.coins);
+    } else if (message.type === "xp") {
+      updateXp(message.xp, message.level);
+      notify(`Crafting XP +2. Total XP: ${message.xp} · Level: ${message.level}`);
+    } else if (message.type === "sell_result") {
+      updateCoins(message.coins);
+      notify(message.message);
     } else if (message.type === "block") {
       const { x, y, z } = message.position;
       const key = blockKey(x, y, z);
@@ -1039,6 +1154,16 @@ function renderInventory() {
     dropButton.textContent = "Drop 1";
     dropButton.setAttribute("aria-label", `Drop one ${blockNames.get(id) ?? id}`);
     dropButton.addEventListener("click", () => sendInventoryAction({ type: "drop", item: id, count: 1 }));
+    if (FISH_TYPE_BY_ID.has(id)) {
+      const sellButton = document.createElement("button");
+      sellButton.className = "drop-item";
+      sellButton.type = "button";
+      sellButton.draggable = false;
+      sellButton.textContent = "Sell 1";
+      sellButton.setAttribute("aria-label", `Sell one ${blockNames.get(id) ?? id}`);
+      sellButton.addEventListener("click", () => sendInventoryAction({ type: "sell", item: id, count: 1 }));
+      item.append(sellButton);
+    }
     const dragHandle = document.createElement("button");
     dragHandle.className = "inventory-drag-handle";
     dragHandle.type = "button";
@@ -1249,6 +1374,41 @@ function attackPlayer() {
   state.socket.send(JSON.stringify({ type: "attack", targetId: target.id }));
 }
 
+function fishAtHarbor() {
+  if (!state.connected || state.health <= 0) return;
+  if ((state.inventory.get("fishing_rod") ?? 0) < 1) {
+    notify("You need a fishing rod to fish.");
+    return;
+  }
+  if (!isNearHarbor(playerPosition.x, playerPosition.z)) {
+    notify("Walk to the harbor pier to fish.");
+    return;
+  }
+  sendLobbyMessage({ type: "fish" });
+}
+
+function triggerFishingCast(itemId) {
+  if (state.fishingCast) {
+    scene.remove(state.fishingCast.mesh);
+    state.fishingCast = null;
+  }
+  const fish = FISH_TYPE_BY_ID.get(itemId) ?? FISH_TYPE_BY_ID.get("raw_fish");
+  const bobber = new THREE.Mesh(
+    new THREE.SphereGeometry(0.09, 12, 12),
+    new THREE.MeshBasicMaterial({
+      color: fish.rarity === "rare" ? "#ffd166" : fish.rarity === "epic" ? "#f7617b" : "#8dd3ff",
+      transparent: true,
+      opacity: 0.95,
+    }),
+  );
+  const origin = new THREE.Vector3(0, 1.7, 0);
+  const direction = new THREE.Vector3(-Math.sin(look.yaw), 0.28, -Math.cos(look.yaw)).normalize();
+  const end = origin.clone().add(direction.multiplyScalar(2.6));
+  bobber.position.copy(origin);
+  scene.add(bobber);
+  state.fishingCast = { mesh: bobber, origin, end, age: 0 };
+}
+
 function sendEdit(action) {
   if (state.socket?.readyState !== WebSocket.OPEN) {
     notify("Waiting for the world connection.");
@@ -1289,6 +1449,8 @@ function sendEdit(action) {
 document.querySelector("#break-button").addEventListener("click", () => sendEdit("remove"));
 document.querySelector("#place-button").addEventListener("click", () => sendEdit("place"));
 attackButton.addEventListener("click", attackPlayer);
+fishButton.addEventListener("click", fishAtHarbor);
+document.querySelector("#fish-menu-button").addEventListener("click", fishAtHarbor);
 respawnButton.addEventListener("click", () => sendLobbyMessage({ type: "respawn" }));
 document.querySelector("#jump-button").addEventListener("pointerdown", (event) => {
   event.preventDefault();
@@ -1318,6 +1480,10 @@ window.addEventListener("keydown", (event) => {
   }
   if (event.code === "KeyF") {
     attackPlayer();
+    return;
+  }
+  if (event.code === "KeyR") {
+    fishAtHarbor();
     return;
   }
   moveKeys.add(event.code);
@@ -1526,6 +1692,19 @@ function animate() {
     const bob = Math.sin(now * 0.003 + mesh.position.x) * 0.08;
     mesh.position.copy(basePosition).addScaledVector(basePosition.clone().normalize(), bob);
     mesh.rotateY(delta * 1.8);
+  }
+  if (state.fishingCast) {
+    const cast = state.fishingCast;
+    cast.age += delta;
+    const t = Math.min(cast.age * 1.7, 1);
+    const current = cast.origin.clone().lerp(cast.end, t);
+    current.y += Math.sin(t * Math.PI) * 0.7;
+    cast.mesh.position.copy(current);
+    cast.mesh.scale.setScalar(1 + Math.sin(cast.age * 12) * 0.18);
+    if (cast.age >= 1.2) {
+      scene.remove(cast.mesh);
+      state.fishingCast = null;
+    }
   }
   renderer.render(scene, camera);
 }

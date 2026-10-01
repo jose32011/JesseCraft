@@ -805,6 +805,13 @@ kbd {
     box-shadow: 0 0 0 2px rgba(255, 132, 105, 0.16), 0 5px 15px rgba(17, 29, 24, 0.3);
   }
 
+  .fish-button {
+    min-width: 76px;
+    border-color: rgba(101, 201, 216, 0.66);
+    background: rgba(29, 73, 82, 0.94);
+    color: #c8f4f2;
+  }
+
   .hotbar {
     right: 8px;
     left: 8px;
@@ -1178,6 +1185,21 @@ kbd {
 
 .health-hud strong {
   min-width: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.xp-hud {
+  min-width: 82px;
+  padding: 3px 6px;
+  border: 1px solid rgba(147, 201, 255, 0.32);
+  border-radius: 6px;
+  background: rgba(86, 134, 181, 0.12);
+  color: #dfeeff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: center;
   font-variant-numeric: tabular-nums;
 }
 

@@ -12,12 +12,14 @@ import {
   MAX_PLANET_CHUNK_X,
   MAX_PLANET_CHUNK_Z,
   MAX_WORLD_COORDINATE,
+  HARBOR_SEABED_Y,
   PLANET_MAX_X,
   PLANET_MAX_Z,
   PLANET_MIN_X,
   PLANET_MIN_Z,
   PLANET_RADIUS,
   planetPointAt,
+  isNearHarbor,
   RECIPES,
   terrainHeightAt,
   wrapPlanetX,
@@ -134,12 +136,27 @@ test("generates a seeded city building and road blocks", () => {
 test("generates a sandy city beach, city sidewalk trees, and surrounding forest", () => {
   const beachChunk = createChunkBlocks(7, 0, 12345);
   const cityTreeChunk = createChunkBlocks(-6, -3, 12345);
-  const forestChunk = createChunkBlocks(10, 0, 12345);
+  const forestChunk = createChunkBlocks(11, -1, 12345);
 
   assert.equal(beachChunk.get(blockKey(120, 0, 0)), "sand");
   assert.equal(cityTreeChunk.get(blockKey(-84, 1, -35)), "oak_log");
   assert.ok([...forestChunk].some(([key, type]) => {
     const [x, y, z] = key.split(",").map(Number);
-    return type === "oak_log" && y > 0 && Math.hypot(x, z) > 140 && Math.hypot(x, z) < 228;
+    return type === "oak_log" && y > 0 && Math.hypot(x, z) > 190 && Math.hypot(x, z) < 228;
   }));
+});
+
+test("generates harbor water, a walkable pier, and a fishing boundary", () => {
+  const oceanChunk = createChunkBlocks(10, 0, 12345);
+  const dockChunk = createChunkBlocks(0, 8, 12345);
+
+  assert.equal(terrainHeightAt(160, 0, 12345), HARBOR_SEABED_Y);
+  assert.equal(oceanChunk.get(blockKey(160, 0, 0)), "water");
+  assert.equal(oceanChunk.get(blockKey(160, -4, 0)), "sand");
+  assert.equal([...oceanChunk.values()].some((type) => type === "oak_log" || type === "leaves"), false);
+  assert.equal(dockChunk.get(blockKey(0, 0, 140)), "oak_planks");
+  assert.equal(getBaseBlockAt(-17, 1, 132, 12345), "oak_log");
+  assert.equal(isNearHarbor(0, 140), true);
+  assert.equal(isNearHarbor(80, 140), false);
+  assert.equal(isNearHarbor(0, 120), false);
 });

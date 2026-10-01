@@ -62,10 +62,12 @@
         </div>
       </header>
 
-      <section class="health-hud" aria-label="Player health">
+      <section class="health-hud" aria-label="Player health and experience">
         <span>HEALTH</span>
         <progress id="health-progress" max="100" value="100"></progress>
         <strong id="health-value">100</strong>
+        <span class="xp-hud" id="xp-hud">XP 0 · Lv 0</span>
+        <span class="coin-hud" id="coin-hud">Coins 0</span>
         <button type="button" id="respawn-button" hidden>Respawn</button>
       </section>
 
@@ -77,6 +79,7 @@
         <label class="game-menu-label" for="teleport-target">Teleport to player</label>
         <select id="teleport-target" aria-label="Choose a player to teleport to"><option value="">No other players</option></select>
         <button type="button" id="teleport-button" disabled>Teleport</button>
+        <button type="button" id="fish-menu-button">Fish at harbor</button>
         <button type="button" id="logout-button">Log out</button>
         <span class="game-menu-status" id="game-menu-status" role="status"></span>
       </section>
@@ -95,6 +98,7 @@
         <button class="close-help" id="close-help" aria-label="Close controls">×</button>
         <strong>Welcome to your world</strong>
         <p><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Space</kbd> jump · <kbd>F</kbd> punch · drag to look</p>
+        <p><kbd>R</kbd> fish from the harbor pier.</p>
         <p>Tap <b>Break</b> or click to mine · <b>Place</b> or right-click to build</p>
         <p><kbd>I</kbd> inventory · mine blocks to collect materials and open your bag to craft.</p>
         <p>Choose a block below. The little villagers are wandering bots.</p>
@@ -131,6 +135,7 @@
           <button class="action-button break-button" id="break-button">Break</button>
           <button class="action-button place-button" id="place-button">Place</button>
           <button class="action-button attack-button" id="attack-button">Punch</button>
+          <button class="action-button fish-button" id="fish-button">Fish</button>
         </div>
       </div>
       <footer class="bottom-note">Created for my Son Jesse Parker<a href="README.md" target="_blank" rel="noreferrer"></a></footer>

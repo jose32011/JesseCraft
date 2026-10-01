@@ -22,6 +22,12 @@ npm start
 
 The production server serves the built client and the multiplayer WebSocket endpoint on port `3001`.
 
+## Saved-world persistence
+
+Without a database, saved worlds are stored as JSON files in `.data/saves`. To store them in Railway Postgres, add a `DATABASE_URL` variable to the game server service. When both services are in the same Railway project and environment, reference the Postgres service's private URL, for example `${{Postgres.DATABASE_URL}}` (replace `Postgres` with the exact service name). The server creates the `voxland_worlds` table at startup and writes worlds when a player chooses **Save**.
+
+For local development, set `DATABASE_URL` in the shell before starting the server, using the public TCP Proxy URL from Railway. Keep the URL private and out of source control. If the database password has been exposed, rotate it in Railway before connecting.
+
 ## Controls
 
 - Desktop: `W`/`A`/`S`/`D` to move, `Space` to jump, drag the view to look, click to break, right-click to place.

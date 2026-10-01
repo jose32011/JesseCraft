@@ -17,6 +17,18 @@ export const BLOCK_TYPES = new Set([
   "blue_concrete",
   "red_concrete",
   "crafting_table",
+  "water",
+  "fishing_rod",
+  "raw_fish",
+  "sunfish",
+  "gold_fish",
+  "salmon",
+  "copper_ore",
+  "copper_ingot",
+  "iron_ore",
+  "iron_ingot",
+  "wooden_sword",
+  "stone_sword",
 ]);
 
 export const CHUNK_SIZE = 16;
@@ -28,9 +40,22 @@ export const PLANET_LONGITUDE_BLOCKS = 1600;
 export const PLANET_LATITUDE_BLOCKS = 800;
 export const CITY_RADIUS = 108;
 export const CITY_BEACH_OUTER_RADIUS = 140;
+export const HARBOR_WATER_OUTER_RADIUS = 190;
+export const HARBOR_BUILD_RADIUS = 170;
 export const FOREST_OUTER_RADIUS = 228;
 export const CITY_BLOCK_SIZE = 32;
 export const MAX_CITY_BUILDING_HEIGHT = 26;
+export const WORLD_LOCATIONS = [
+  { id: "village", name: "Starter Village", x: 0, z: 0, yaw: 0 },
+  { id: "city", name: "Glass City", x: 48, z: 0, yaw: Math.PI },
+  { id: "beach", name: "Sandy Beach", x: 0, z: 124, yaw: 0 },
+  { id: "harbor", name: "Harbor Pier", x: 0, z: 140, yaw: 0 },
+  { id: "forest", name: "Pine Forest", x: 0, z: 210, yaw: 0 },
+  { id: "highlands", name: "Highlands", x: 40, z: 284, yaw: 0 },
+];
+export const HARBOR_SEABED_Y = -4;
+export const HARBOR_DOCK_MIN_Z = 120;
+export const HARBOR_DOCK_MAX_Z = 164;
 export const PLANET_MIN_X = -PLANET_LONGITUDE_BLOCKS / 2;
 export const PLANET_MAX_X = PLANET_MIN_X + PLANET_LONGITUDE_BLOCKS - 1;
 export const PLANET_MIN_Z = -PLANET_LATITUDE_BLOCKS / 2;
@@ -47,6 +72,23 @@ export const MAX_CHUNK_COORDINATE = Math.max(
   Math.abs(MAX_PLANET_CHUNK_Z),
 );
 export const MAX_STACK_SIZE = 64;
+export const FISH_TYPES = [
+  { id: "raw_fish", label: "Bluegill", rarity: "common", value: 3, weight: 60 },
+  { id: "sunfish", label: "Sunfish", rarity: "uncommon", value: 8, weight: 28 },
+  { id: "gold_fish", label: "Goldfish", rarity: "rare", value: 18, weight: 9 },
+  { id: "salmon", label: "Salmon", rarity: "epic", value: 32, weight: 3 },
+];
+export const FISH_TYPE_BY_ID = new Map(FISH_TYPES.map((fish) => [fish.id, fish]));
+export const FISH_ITEMS = FISH_TYPES.map((fish) => fish.id);
+export function rollFishReward() {
+  const totalWeight = FISH_TYPES.reduce((sum, fish) => sum + fish.weight, 0);
+  let roll = Math.random() * totalWeight;
+  for (const fish of FISH_TYPES) {
+    roll -= fish.weight;
+    if (roll < 0) return fish;
+  }
+  return FISH_TYPES[0];
+}
 export const RECIPES = [
   {
     id: "planks",
@@ -74,6 +116,41 @@ export const RECIPES = [
     label: "Crafting table ×1",
     ingredients: { oak_planks: 4 },
     result: "crafting_table",
+    resultCount: 1,
+  },
+  {
+    id: "fishing_rod",
+    label: "Fishing rod ×1",
+    ingredients: { oak_planks: 2, oak_log: 1 },
+    result: "fishing_rod",
+    resultCount: 1,
+  },
+  {
+    id: "wooden_sword",
+    label: "Wooden sword ×1",
+    ingredients: { oak_planks: 2, oak_log: 1 },
+    result: "wooden_sword",
+    resultCount: 1,
+  },
+  {
+    id: "stone_sword",
+    label: "Stone sword ×1",
+    ingredients: { oak_planks: 1, stone: 2 },
+    result: "stone_sword",
+    resultCount: 1,
+  },
+  {
+    id: "copper_ingot",
+    label: "Copper ingot ×1",
+    ingredients: { copper_ore: 2, campfire: 1 },
+    result: "copper_ingot",
+    resultCount: 1,
+  },
+  {
+    id: "iron_ingot",
+    label: "Iron ingot ×1",
+    ingredients: { iron_ore: 2, campfire: 1 },
+    result: "iron_ingot",
     resultCount: 1,
   },
 ];
@@ -134,6 +211,10 @@ export function advancePlanetPosition(x, z, eastDistance, northDistance, yaw = 0
   };
 }
 
+export function isNearHarbor(x, z) {
+  return Math.abs(wrapPlanetX(x)) <= 22 && z >= 132 && z <= HARBOR_DOCK_MAX_Z;
+}
+
 function normalizeSeed(seed) {
   return Number(seed) >>> 0;
 }
@@ -164,7 +245,9 @@ function noise2d(x, z, seed) {
 export function terrainHeightAt(x, z, seed = 1) {
   x = wrapPlanetX(x);
   z = Math.max(PLANET_MIN_Z, Math.min(PLANET_MAX_Z, z));
-  if (Math.hypot(x, z) <= CITY_BEACH_OUTER_RADIUS) return 0;
+  const distanceFromHarbor = Math.hypot(x, z);
+  if (distanceFromHarbor <= CITY_BEACH_OUTER_RADIUS) return 0;
+  if (distanceFromHarbor <= HARBOR_WATER_OUTER_RADIUS) return HARBOR_SEABED_Y;
   const worldSeed = normalizeSeed(seed);
   const longitude = (x - PLANET_MIN_X + 0.5) / PLANET_LONGITUDE_BLOCKS * Math.PI * 2 - Math.PI;
   const latitude = (z - PLANET_MIN_Z + 0.5) / PLANET_LATITUDE_BLOCKS * Math.PI - Math.PI / 2;
@@ -229,7 +312,7 @@ function cityTreeBlockAt(x, y, z, seed) {
   return null;
 }
 
-function cityBlockAt(x, y, z, seed) {
+function cityColumnAt(x, z, seed) {
   if (Math.hypot(x, z) > CITY_RADIUS || Math.hypot(x, z) < 14) return null;
 
   const cellX = Math.floor((x + CITY_BLOCK_SIZE / 2) / CITY_BLOCK_SIZE);
@@ -237,12 +320,13 @@ function cityBlockAt(x, y, z, seed) {
   const localX = x - cellX * CITY_BLOCK_SIZE;
   const localZ = z - cellZ * CITY_BLOCK_SIZE;
   const onStreet = Math.abs(localX) >= 12 || Math.abs(localZ) >= 12;
-  if (onStreet) {
-    if (y !== 0) return null;
-    return Math.abs(localX) === 12 || Math.abs(localX) === 13 || Math.abs(localZ) === 12 || Math.abs(localZ) === 13
+  if (onStreet) return {
+    height: 0,
+    street: true,
+    type: Math.abs(localX) === 12 || Math.abs(localX) === 13 || Math.abs(localZ) === 12 || Math.abs(localZ) === 13
       ? "white_concrete"
-      : "black_concrete";
-  }
+      : "black_concrete",
+  };
 
   if (Math.hypot(cellX * CITY_BLOCK_SIZE, cellZ * CITY_BLOCK_SIZE) < 18) return null;
   const width = 14 + Math.floor(seededValue(cellX + 17, cellZ - 3, seed) * 6);
@@ -253,16 +337,57 @@ function cityBlockAt(x, y, z, seed) {
   const palette = ["white_concrete", "black_concrete"];
   const facade = palette[Math.floor(seededValue(cellX + 5, cellZ + 11, seed) * palette.length)];
   const wall = Math.abs(localX) === Math.floor(width / 2) || Math.abs(localZ) === Math.floor(depth / 2);
+  return {
+    height,
+    facade,
+    wall,
+    corner: Math.abs(localX) === Math.floor(width / 2) && Math.abs(localZ) === Math.floor(depth / 2),
+    window: Math.abs(localX + localZ + cellX + cellZ) % 4 === 0,
+  };
+}
+
+function cityColumnBlockAt(column, y) {
+  if (!column) return null;
+  if (column.street) return y === 0 ? column.type : null;
+  const { height, facade, wall, corner, window } = column;
   if (y === 0) return "white_concrete";
   if (y < 0 || y > height) return null;
   if (y === height) return "black_concrete";
   if (y % 5 === 0) return wall ? facade : "white_concrete";
   if (!wall) return null;
-  if (y % 5 === 2 && (Math.abs(localX + localZ + cellX + cellZ) % 4 === 0)) return "glass";
-  if (y % 5 === 1 && Math.abs(localX) === Math.floor(width / 2) && Math.abs(localZ) === Math.floor(depth / 2)) {
+  if (y % 5 === 2 && window) return "glass";
+  if (y % 5 === 1 && corner) {
     return "black_concrete";
   }
   return facade;
+}
+
+function cityBlockAt(x, y, z, seed) {
+  return cityColumnBlockAt(cityColumnAt(x, z, seed), y);
+}
+
+function harborBlockAt(x, y, z) {
+  const walkway = Math.abs(x) <= 3 && z >= HARBOR_DOCK_MIN_Z && z <= 152;
+  const pierEnd = Math.abs(x) <= 14 && z >= 150 && z <= HARBOR_DOCK_MAX_Z;
+  const baitShackDeck = x >= -17 && x <= -6 && z >= 126 && z <= 138;
+  if ((walkway || pierEnd || baitShackDeck) && y === 0) return "oak_planks";
+
+  if (walkway && (Math.abs(x) === 3 || (z % 7 === 0 && Math.abs(x) === 2)) && y >= HARBOR_SEABED_Y + 1 && y <= -1) {
+    return "oak_log";
+  }
+
+  const shackWall = baitShackDeck && (x === -17 || x === -6 || z === 126 || z === 138);
+  if (shackWall && y >= 1 && y <= 3) {
+    if (x === -6 && z >= 131 && z <= 132) return null;
+    const window = y === 2 && (z === 126 || z === 138) && (x === -14 || x === -9);
+    return window ? "glass" : "oak_log";
+  }
+
+  if (baitShackDeck && y === 4 && z === 132) return "oak_planks";
+  if (pierEnd && y === 1 && (Math.abs(x) === 14 || z === 150 || z === HARBOR_DOCK_MAX_Z) && (x + z) % 3 === 0) {
+    return "oak_log";
+  }
+  return null;
 }
 
 function treePosition(gridX, gridZ, seed) {
@@ -272,7 +397,7 @@ function treePosition(gridX, gridZ, seed) {
   const treeChance = distanceFromCity <= CITY_RADIUS ? 0 : distanceFromCity <= FOREST_OUTER_RADIUS ? 0.72 : 0.32;
   if (seededValue(x + 3, z - 7, seed) >= treeChance) return null;
   const ground = terrainHeightAt(x, z, seed);
-  if (ground >= 17) return null;
+  if (ground < 0 || ground >= 17) return null;
   return { x, z, ground, height: 3 + Math.floor(seededValue(x - 13, z + 9, seed) * 3) };
 }
 
@@ -333,8 +458,14 @@ export function getBaseBlockAt(x, y, z, seed = 1) {
   if (house) return house;
   const cityBlock = cityBlockAt(wrapPlanetX(x), y, z, normalizeSeed(seed));
   if (cityBlock) return cityBlock;
+  const harbor = harborBlockAt(x, y, z);
+  if (harbor) return harbor;
   const beach = Math.hypot(wrapPlanetX(x), z) > CITY_RADIUS && Math.hypot(wrapPlanetX(x), z) <= CITY_BEACH_OUTER_RADIUS;
   if (beach && y === 0) return "sand";
+  const water = Math.hypot(wrapPlanetX(x), z);
+  if (water > CITY_BEACH_OUTER_RADIUS && water <= HARBOR_WATER_OUTER_RADIUS && y > HARBOR_SEABED_Y && y <= 0) {
+    return "water";
+  }
   if (x >= -2 && x <= 3 && y === 0 && z === 2) return "sand";
 
   const tree = treeBlockAt(x, y, z, normalizeSeed(seed));
@@ -342,7 +473,10 @@ export function getBaseBlockAt(x, y, z, seed = 1) {
 
   const surface = terrainHeightAt(x, z, seed);
   if (y > surface) return null;
-  if (y === surface) return "grass";
+  if (y === surface) {
+    const coastal = Math.hypot(wrapPlanetX(x), z) <= HARBOR_WATER_OUTER_RADIUS;
+    return coastal ? "sand" : "grass";
+  }
   if (y >= surface - 2) return "dirt";
   return "stone";
 }
@@ -365,10 +499,16 @@ export function createChunkBlocks(chunkX, chunkZ, seed = 1) {
   for (let x = startX; x < startX + CHUNK_SIZE; x += 1) {
     for (let z = startZ; z < startZ + CHUNK_SIZE; z += 1) {
       const surface = terrainHeightAt(x, z, seed);
-      const beach = Math.hypot(x, z) > CITY_RADIUS && Math.hypot(x, z) <= CITY_BEACH_OUTER_RADIUS;
+      const beach = Math.hypot(x, z) > CITY_RADIUS && Math.hypot(x, z) <= HARBOR_WATER_OUTER_RADIUS;
       for (let y = BEDROCK_Y + 1; y <= surface; y += 1) {
         const type = y === surface ? beach ? "sand" : "grass" : y >= surface - 2 ? "dirt" : "stone";
         if (type) blocks.set(blockKey(x, y, z), type);
+      }
+      const waterDistance = Math.hypot(x, z);
+      if (waterDistance > CITY_BEACH_OUTER_RADIUS && waterDistance <= HARBOR_WATER_OUTER_RADIUS) {
+        for (let y = HARBOR_SEABED_Y + 1; y <= 0; y += 1) {
+          blocks.set(blockKey(x, y, z), "water");
+        }
       }
     }
   }
@@ -401,10 +541,22 @@ export function createChunkBlocks(chunkX, chunkZ, seed = 1) {
     }
   }
 
+  const citySeed = normalizeSeed(seed);
   for (let x = Math.max(startX, -CITY_RADIUS); x < Math.min(startX + CHUNK_SIZE, CITY_RADIUS + 1); x += 1) {
     for (let z = Math.max(startZ, -CITY_RADIUS); z < Math.min(startZ + CHUNK_SIZE, CITY_RADIUS + 1); z += 1) {
-      for (let y = 0; y <= MAX_CITY_BUILDING_HEIGHT; y += 1) {
-        const type = cityBlockAt(x, y, z, normalizeSeed(seed));
+      const column = cityColumnAt(x, z, citySeed);
+      if (!column) continue;
+      for (let y = 0; y <= Math.min(column.height, MAX_CITY_BUILDING_HEIGHT); y += 1) {
+        const type = cityColumnBlockAt(column, y);
+        if (type) blocks.set(blockKey(x, y, z), type);
+      }
+    }
+  }
+
+  for (let x = Math.max(startX, -18); x < Math.min(startX + CHUNK_SIZE, 19); x += 1) {
+    for (let z = Math.max(startZ, HARBOR_DOCK_MIN_Z); z < Math.min(startZ + CHUNK_SIZE, HARBOR_DOCK_MAX_Z + 1); z += 1) {
+      for (let y = HARBOR_SEABED_Y + 1; y <= 4; y += 1) {
+        const type = harborBlockAt(x, y, z);
         if (type) blocks.set(blockKey(x, y, z), type);
       }
     }

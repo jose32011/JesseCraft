@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSy
 import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomInt, randomUUID } from "node:crypto";
+import { Pool } from "pg";
 import { WebSocket, WebSocketServer } from "ws";
 import {
   BLOCK_TYPES,
@@ -10,6 +11,8 @@ import {
   canCraft,
   canEditBlock,
   CHUNK_SIZE,
+  FISH_TYPES,
+  FISH_TYPE_BY_ID,
   getBaseBlockAt,
   MAX_PLANET_CHUNK_X,
   MAX_PLANET_CHUNK_Z,
@@ -23,6 +26,9 @@ import {
   PLANET_MIN_X,
   PLANET_MIN_Z,
   RECIPES,
+  WORLD_LOCATIONS,
+  isNearHarbor,
+  rollFishReward,
   terrainHeightAt,
   wrapPlanetX,
 } from "./world.js";
@@ -34,6 +40,10 @@ const MAX_PLAYER_HEALTH = 100;
 const PLAYER_ATTACK_DAMAGE = 20;
 const PLAYER_ATTACK_RANGE = 3.5;
 const PLAYER_ATTACK_COOLDOWN_MS = 650;
+const MONSTER_ATTACK_RANGE = 2;
+const MONSTER_ATTACK_DAMAGE = 8;
+const MONSTER_ATTACK_COOLDOWN_MS = 1400;
+const MONSTER_RESPAWN_MS = 8000;
 const MIME_TYPES = new Map([
   [".css", "text/css; charset=utf-8"],
   [".html", "text/html; charset=utf-8"],
@@ -54,6 +64,39 @@ function createBots() {
     ["bot-pebble", { id: "bot-pebble", name: "Pebble", x: 1, z: -5, yaw: 0, color: "#d3a36e", targetX: 1, targetZ: -5 }],
     ["bot-fern", { id: "bot-fern", name: "Fern", x: 8, z: 1, yaw: 0, color: "#8f8ed3", targetX: 8, targetZ: 1 }],
   ]);
+}
+
+function createMonsters() {
+  return new Map([
+    ["monster-crab", {
+      id: "monster-crab", name: "Dune Crab", species: "crab", x: 0, z: 126, yaw: 0, color: "#e58154",
+      homeX: 0, homeZ: 126, targetX: 0, targetZ: 126, health: 60, maxHealth: 60, lastAttackAt: 0, respawnAt: 0,
+    }],
+    ["monster-slime", {
+      id: "monster-slime", name: "Moss Slime", species: "slime", x: 4, z: 210, yaw: 0, color: "#79c66f",
+      homeX: 4, homeZ: 210, targetX: 4, targetZ: 210, health: 60, maxHealth: 60, lastAttackAt: 0, respawnAt: 0,
+    }],
+    ["monster-wisp", {
+      id: "monster-wisp", name: "Highland Wisp", species: "wisp", x: 44, z: 284, yaw: 0, color: "#76cbd1",
+      homeX: 44, homeZ: 284, targetX: 44, targetZ: 284, health: 60, maxHealth: 60, lastAttackAt: 0, respawnAt: 0,
+    }],
+  ]);
+}
+
+function serializeMonsters(room) {
+  return [...room.monsters.values()]
+    .filter((monster) => monster.health > 0)
+    .map(({ id, name, species, x, z, yaw, color, health, maxHealth }) => ({
+      id,
+      name,
+      species,
+      x,
+      z,
+      yaw,
+      color,
+      health,
+      maxHealth,
+    }));
 }
 
 function validPlayerPosition(position) {
@@ -99,6 +142,34 @@ function inventoryItems(inventory) {
   return [...inventory].sort(([left], [right]) => left.localeCompare(right));
 }
 
+function restoreSavedRoom(saved) {
+  if (!saved || typeof saved !== "object") return null;
+  const blockChanges = new Map(Array.isArray(saved.blockChanges) ? saved.blockChanges : []);
+  const savedPlayers = new Map((Array.isArray(saved.players) ? saved.players : [])
+    .filter((player) => typeof player.name === "string" && Array.isArray(player.inventory))
+    .map((player) => [player.name.toLowerCase(), {
+      ...player,
+      xp: Number.isFinite(Number(player.xp)) ? Number(player.xp) : 0,
+      level: Number.isFinite(Number(player.level)) ? Number(player.level) : 0,
+      coins: Number.isFinite(Number(player.coins)) ? Number(player.coins) : 0,
+    }]));
+  return {
+    id: saved.id,
+    name: typeof saved.name === "string" ? saved.name : "Saved world",
+    hostId: null,
+    members: new Set(),
+    mode: saved.mode === "design" ? "design" : "survival",
+    seed: Number.isSafeInteger(saved.seed) ? saved.seed : 1,
+    started: true,
+    blocks: new Map(blockChanges),
+    blockChanges,
+    droppedItems: new Map(Array.isArray(saved.droppedItems) ? saved.droppedItems : []),
+    savedPlayers,
+    monsters: createMonsters(),
+    saved: true,
+  };
+}
+
 function loadSavedRooms(saveDirectory) {
   if (!existsSync(saveDirectory)) return [];
   const rooms = [];
@@ -107,24 +178,8 @@ function loadSavedRooms(saveDirectory) {
     if (!/^[A-Z0-9]{6}$/.test(id) || !filename.endsWith(".json")) continue;
     try {
       const saved = JSON.parse(readFileSync(resolve(saveDirectory, filename), "utf8"));
-      const blockChanges = new Map(Array.isArray(saved.blockChanges) ? saved.blockChanges : []);
-      const savedPlayers = new Map((Array.isArray(saved.players) ? saved.players : [])
-        .filter((player) => typeof player.name === "string" && Array.isArray(player.inventory))
-        .map((player) => [player.name.toLowerCase(), player]));
-      rooms.push({
-        id,
-        name: typeof saved.name === "string" ? saved.name : "Saved world",
-        hostId: null,
-        members: new Set(),
-        mode: saved.mode === "design" ? "design" : "survival",
-        seed: Number.isSafeInteger(saved.seed) ? saved.seed : 1,
-        started: true,
-        blocks: new Map(blockChanges),
-        blockChanges,
-        droppedItems: new Map(Array.isArray(saved.droppedItems) ? saved.droppedItems : []),
-        savedPlayers,
-        saved: true,
-      });
+      const room = restoreSavedRoom({ ...saved, id });
+      if (room) rooms.push(room);
     } catch {
       continue;
     }
@@ -132,8 +187,7 @@ function loadSavedRooms(saveDirectory) {
   return rooms;
 }
 
-function persistRoom(room, players, saveDirectory) {
-  mkdirSync(saveDirectory, { recursive: true });
+function roomSaveData(room, players) {
   const savedPlayers = new Map(room.savedPlayers ?? []);
   for (const id of room.members) {
     const player = players.get(id);
@@ -144,11 +198,14 @@ function persistRoom(room, players, saveDirectory) {
       z: player.z,
       yaw: player.yaw,
       inventory: inventoryItems(player.inventory),
+      xp: player.xp ?? 0,
+      level: player.level ?? 0,
+      coins: player.coins ?? 0,
     });
   }
   room.savedPlayers = savedPlayers;
   room.saved = true;
-  writeFileSync(resolve(saveDirectory, `${room.id}.json`), JSON.stringify({
+  return {
     id: room.id,
     name: room.name,
     mode: room.mode,
@@ -157,7 +214,34 @@ function persistRoom(room, players, saveDirectory) {
     blockChanges: [...room.blockChanges],
     droppedItems: [...room.droppedItems],
     players: [...savedPlayers.values()],
-  }));
+  };
+}
+
+function persistRoom(room, players, saveDirectory) {
+  mkdirSync(saveDirectory, { recursive: true });
+  writeFileSync(resolve(saveDirectory, `${room.id}.json`), JSON.stringify(roomSaveData(room, players)));
+}
+
+async function initializeDatabase(pool) {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS voxland_worlds (
+      id CHAR(6) PRIMARY KEY,
+      payload JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  const { rows } = await pool.query("SELECT payload FROM voxland_worlds");
+  return rows.map(({ payload }) => restoreSavedRoom(payload)).filter(Boolean);
+}
+
+async function persistRoomToDatabase(room, players, pool) {
+  const payload = roomSaveData(room, players);
+  await pool.query(`
+    INSERT INTO voxland_worlds (id, payload)
+    VALUES ($1, $2::jsonb)
+    ON CONFLICT (id) DO UPDATE
+    SET payload = EXCLUDED.payload, updated_at = NOW()
+  `, [room.id, JSON.stringify(payload)]);
 }
 
 function staticResponse(request, response) {
@@ -204,14 +288,20 @@ export function createGameServer({
   port = 3001,
   seed: requestedSeed,
   saveDirectory = DEFAULT_SAVE_DIRECTORY,
+  databaseUrl = process.env.DATABASE_URL,
 } = {}) {
+  if (process.env.RAILWAY_ENVIRONMENT && !databaseUrl) {
+    throw new Error("DATABASE_URL must be set for Railway deployments.");
+  }
   const configuredSeed = requestedSeed ?? process.env.WORLD_SEED;
   const seed = configuredSeed === undefined ? randomInt(0, 0x1_0000_0000) : Number(configuredSeed);
   if (!Number.isSafeInteger(seed) || seed < 0 || seed > 0xffff_ffff) {
     throw new RangeError("WORLD_SEED must be an integer between 0 and 4294967295.");
   }
+  const pool = databaseUrl ? new Pool({ connectionString: databaseUrl }) : null;
   const players = new Map();
-  const rooms = new Map(loadSavedRooms(saveDirectory).map((room) => [room.id, room]));
+  const rooms = new Map(pool ? [] : loadSavedRooms(saveDirectory).map((room) => [room.id, room]));
+  let databaseInitialized = false;
   const bots = createBots();
   const httpServer = createServer(staticResponse);
   const webSocketServer = new WebSocketServer({
@@ -270,6 +360,7 @@ export function createGameServer({
       health,
     })),
     bots: [...bots.values()],
+    monsters: serializeMonsters(room),
     drops: [...room.droppedItems.values()].map(({ id, item, count, x, z }) => ({
       id,
       item,
@@ -303,9 +394,13 @@ export function createGameServer({
       health,
     })),
     bots: [...bots.values()],
+    monsters: serializeMonsters(room),
     drops: [...room.droppedItems.values()].map(({ id, item, count, x, z }) => ({ id, item, count, x, z })),
     inventory: inventoryItems(player.inventory),
     health: player.health,
+    xp: player.xp ?? 0,
+    level: player.level ?? 0,
+    coins: player.coins ?? 0,
   });
 
   const snapshotTimer = setInterval(() => {
@@ -334,6 +429,70 @@ export function createGameServer({
       }
     }
   }, 250);
+  const monsterTimer = setInterval(() => {
+    const now = Date.now();
+    for (const room of rooms.values()) {
+      if (!room.started) continue;
+      let changed = false;
+      for (const monster of room.monsters.values()) {
+        if (monster.health <= 0) {
+          if (now < monster.respawnAt) continue;
+          monster.x = monster.homeX;
+          monster.z = monster.homeZ;
+          monster.targetX = monster.homeX;
+          monster.targetZ = monster.homeZ;
+          monster.health = monster.maxHealth;
+          monster.respawnAt = 0;
+          changed = true;
+          continue;
+        }
+
+        let closestPlayer = null;
+        let closestDistance = 14;
+        for (const id of room.members) {
+          const candidate = players.get(id);
+          if (!candidate || candidate.health <= 0) continue;
+          const latitude = (monster.z - PLANET_MIN_Z + 0.5) / PLANET_LATITUDE_BLOCKS * Math.PI - Math.PI / 2;
+          const east = wrapPlanetX(candidate.x - monster.x) * Math.cos(latitude);
+          const north = candidate.z - monster.z;
+          const distance = Math.hypot(east, north);
+          if (distance < closestDistance) {
+            closestPlayer = candidate;
+            closestDistance = distance;
+          }
+        }
+
+        if (closestPlayer && closestDistance <= MONSTER_ATTACK_RANGE) {
+          if (now - monster.lastAttackAt >= MONSTER_ATTACK_COOLDOWN_MS) {
+            closestPlayer.health = Math.max(0, closestPlayer.health - MONSTER_ATTACK_DAMAGE);
+            monster.lastAttackAt = now;
+            changed = true;
+          }
+          continue;
+        }
+
+        if (closestPlayer) {
+          monster.targetX = closestPlayer.x;
+          monster.targetZ = closestPlayer.z;
+        } else if (Math.hypot(monster.targetX - monster.x, monster.targetZ - monster.z) < 0.3) {
+          monster.targetX = monster.homeX + Math.round((Math.random() * 12 - 6) * 2) / 2;
+          monster.targetZ = monster.homeZ + Math.round((Math.random() * 12 - 6) * 2) / 2;
+        }
+
+        const deltaX = wrapPlanetX(monster.targetX - monster.x);
+        const deltaZ = monster.targetZ - monster.z;
+        const distance = Math.hypot(deltaX, deltaZ);
+        if (distance > 0.3) {
+          const step = Math.min(closestPlayer ? 0.28 : 0.1, distance);
+          monster.x = wrapPlanetX(monster.x + deltaX / distance * step);
+          monster.z += deltaZ / distance * step;
+          monster.yaw = Math.atan2(-deltaX, -deltaZ);
+          changed = true;
+        }
+      }
+      if (changed) broadcastToRoom(room, roomSnapshot(room));
+    }
+  }, 250);
 
   webSocketServer.on("connection", (socket) => {
     const id = randomUUID();
@@ -345,7 +504,11 @@ export function createGameServer({
       z: 0,
       yaw: 0,
       health: MAX_PLAYER_HEALTH,
+      xp: 0,
+      level: 0,
+      coins: 0,
       lastAttackAt: 0,
+      lastFishAt: 0,
       color: colors[Math.floor(Math.random() * colors.length)],
       inventory: createInventory(),
       socket,
@@ -354,7 +517,7 @@ export function createGameServer({
     players.set(id, player);
     writeJson(socket, { type: "lobby", playerId: id, rooms: lobbyRooms() });
 
-    socket.on("message", (raw) => {
+    socket.on("message", async (raw) => {
       let message;
       try {
         message = JSON.parse(raw.toString());
@@ -394,6 +557,7 @@ export function createGameServer({
           blockChanges: new Map(),
           droppedItems: new Map(),
           savedPlayers: new Map(),
+          monsters: createMonsters(),
           saved: false,
         };
         rooms.set(roomId, room);
@@ -425,6 +589,9 @@ export function createGameServer({
           player.x = savedPlayer.x;
           player.z = savedPlayer.z;
           player.yaw = savedPlayer.yaw;
+          player.xp = Number.isFinite(Number(savedPlayer.xp)) ? Number(savedPlayer.xp) : 0;
+          player.level = Number.isFinite(Number(savedPlayer.level)) ? Number(savedPlayer.level) : 0;
+          player.coins = Number.isFinite(Number(savedPlayer.coins)) ? Number(savedPlayer.coins) : 0;
           player.health = Math.max(1, Math.min(MAX_PLAYER_HEALTH, savedPlayer.health ?? MAX_PLAYER_HEALTH));
         }
         if (!room.hostId) room.hostId = player.id;
@@ -478,7 +645,8 @@ export function createGameServer({
           return;
         }
         try {
-          persistRoom(room, players, saveDirectory);
+          if (pool) await persistRoomToDatabase(room, players, pool);
+          else persistRoom(room, players, saveDirectory);
           writeJson(socket, { type: "save_result", saved: true, message: "World saved." });
           sendLobbyRooms();
         } catch {
@@ -505,20 +673,28 @@ export function createGameServer({
 
       if (message.type === "teleport") {
         const room = rooms.get(player.roomId);
+        const location = room?.started
+          ? WORLD_LOCATIONS.find((candidate) => candidate.id === message.locationId)
+          : null;
         const target = room?.started && room.members.has(message.targetId)
           ? players.get(message.targetId)
           : null;
-        if (!target) {
-          writeJson(socket, { type: "error", message: "That player is not in your world." });
+        if (!target && !location) {
+          writeJson(socket, {
+            type: "error",
+            message: message.targetId ? "That player is not in your world." : "That world location is unknown.",
+          });
           return;
         }
-        player.x = wrapPlanetX(target.x + 2);
-        player.z = target.z;
-        player.yaw = target.yaw;
+        player.x = location ? location.x : wrapPlanetX(target.x + 2);
+        player.z = location ? location.z : target.z;
+        player.yaw = location ? location.yaw : target.yaw;
         writeJson(socket, {
           type: "teleport_result",
           position: { x: player.x, z: player.z, yaw: player.yaw },
-          targetId: target.id,
+          targetId: target?.id ?? null,
+          locationId: location?.id ?? null,
+          locationName: location?.name ?? null,
         });
         broadcastToRoom(room, roomSnapshot(room));
         return;
@@ -526,9 +702,11 @@ export function createGameServer({
 
       if (message.type === "attack") {
         const room = rooms.get(player.roomId);
-        const target = room?.started && room.members.has(message.targetId)
+        const playerTarget = room?.started && room.members.has(message.targetId)
           ? players.get(message.targetId)
           : null;
+        const monsterTarget = room?.started ? room.monsters.get(message.targetId) : null;
+        const target = playerTarget ?? monsterTarget;
         const now = Date.now();
         if (
           !room?.started ||
@@ -550,19 +728,82 @@ export function createGameServer({
         const distance = Math.hypot(east, north);
         const facing = (east * -Math.sin(player.yaw) + north * Math.cos(player.yaw)) / Math.max(distance, 0.001);
         if (distance > PLAYER_ATTACK_RANGE || facing < 0.2) {
-          writeJson(socket, { type: "attack_result", hit: false, message: "No player in reach." });
+          writeJson(socket, { type: "attack_result", hit: false, message: "No target in reach." });
           return;
         }
 
         target.health = Math.max(0, target.health - PLAYER_ATTACK_DAMAGE);
+        if (monsterTarget && target.health === 0) target.respawnAt = now + MONSTER_RESPAWN_MS;
         writeJson(socket, {
           type: "attack_result",
           hit: true,
           targetId: target.id,
           damage: PLAYER_ATTACK_DAMAGE,
           health: target.health,
+          monster: Boolean(monsterTarget),
+          killed: Boolean(monsterTarget && target.health === 0),
         });
         broadcastToRoom(room, roomSnapshot(room));
+        return;
+      }
+
+      if (message.type === "fish") {
+        const room = rooms.get(player.roomId);
+        const now = Date.now();
+        if (!room?.started || player.health <= 0) return;
+        if ((player.inventory.get("fishing_rod") ?? 0) < 1) {
+          writeJson(socket, { type: "fish_result", caught: false, message: "You need a fishing rod to fish." });
+          return;
+        }
+        if (!isNearHarbor(player.x, player.z)) {
+          writeJson(socket, { type: "fish_result", caught: false, message: "Go to the harbor pier to fish." });
+          return;
+        }
+        if (now - player.lastFishAt < 2500) {
+          writeJson(socket, { type: "fish_result", caught: false, message: "Give the line a moment before casting again." });
+          return;
+        }
+        const fish = rollFishReward();
+        if ((player.inventory.get(fish.id) ?? 0) >= MAX_STACK_SIZE) {
+          writeJson(socket, { type: "fish_result", caught: false, message: "That fish stack is full." });
+          return;
+        }
+        player.lastFishAt = now;
+        addItems(player.inventory, fish.id, 1);
+        writeJson(socket, {
+          type: "fish_result",
+          caught: true,
+          item: fish.id,
+          rarity: fish.rarity,
+          value: fish.value,
+          message: `You caught a ${fish.label}!`,
+        });
+        writeJson(socket, { type: "inventory", items: inventoryItems(player.inventory) });
+        return;
+      }
+
+      if (message.type === "sell") {
+        const room = rooms.get(player.roomId);
+        if (!room?.started) return;
+        const item = typeof message.item === "string" ? message.item : "";
+        const count = Number(message.count);
+        const fish = FISH_TYPE_BY_ID.get(item);
+        if (!fish || !Number.isInteger(count) || count < 1 || !removeItems(player.inventory, item, count)) {
+          writeJson(socket, { type: "error", message: "You do not have that many fish to sell." });
+          return;
+        }
+        const payout = fish.value * count;
+        player.coins = (player.coins ?? 0) + payout;
+        writeJson(socket, {
+          type: "sell_result",
+          item,
+          count,
+          value: payout,
+          coins: player.coins,
+          message: `Sold ${count} ${fish.label} for ${payout} coins.`,
+        });
+        writeJson(socket, { type: "currency", coins: player.coins });
+        writeJson(socket, { type: "inventory", items: inventoryItems(player.inventory) });
         return;
       }
 
@@ -691,6 +932,9 @@ export function createGameServer({
           removeItems(player.inventory, item, amount);
         }
         addItems(player.inventory, recipe.result, recipe.resultCount);
+        player.xp = (player.xp ?? 0) + 2;
+        player.level = (player.level ?? 0) + 2;
+        writeJson(socket, { type: "xp", xp: player.xp, level: player.level });
         writeJson(socket, { type: "inventory", items: inventoryItems(player.inventory) });
         return;
       }
@@ -748,7 +992,12 @@ export function createGameServer({
     rooms,
     players,
     bots,
-    listen() {
+    async listen() {
+      if (pool && !databaseInitialized) {
+        const savedRooms = await initializeDatabase(pool);
+        for (const room of savedRooms) rooms.set(room.id, room);
+        databaseInitialized = true;
+      }
       return new Promise((resolveListen, rejectListen) => {
         httpServer.once("error", rejectListen);
         httpServer.listen(port, host, () => {
@@ -757,13 +1006,15 @@ export function createGameServer({
         });
       });
     },
-    close() {
+    async close() {
       clearInterval(snapshotTimer);
       clearInterval(botTimer);
+      clearInterval(monsterTimer);
       for (const socket of webSocketServer.clients) socket.terminate();
-      return new Promise((resolveClose) => {
+      await new Promise((resolveClose) => {
         webSocketServer.close(() => httpServer.close(() => resolveClose()));
       });
+      await pool?.end();
     },
   };
 }
