@@ -192,7 +192,7 @@ test("players cannot move into solid blocks", async () => {
   }
 });
 
-test("surface monsters do not damage players underground", async () => {
+test("surface monsters do not damage players underground, at the harbor, or in the city", async () => {
   const server = createGameServer({ host: "127.0.0.1", port: 0, seed: 31 });
   const sockets = [];
   try {
@@ -236,7 +236,97 @@ test("surface monsters do not damage players underground", async () => {
     }));
     await new Promise((resolve) => setTimeout(resolve, 350));
     assert.equal(player.health, 92);
+
+    crab.x = 48;
+    crab.z = 0;
+    crab.targetX = 48;
+    crab.targetZ = 0;
+    crab.lastAttackAt = 0;
+    player.x = 48;
+    player.z = 0;
+    player.y = terrainHeightAt(48, 0, server.rooms.get(roomId).seed) + 2.65;
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    assert.equal(player.health, 92);
     assert.ok(server.rooms.has(roomId));
+  } finally {
+    for (const socket of sockets) socket.terminate();
+    await server.close();
+  }
+});
+
+test("tanks are drivable and their cannon requires a driver and a valid target", async () => {
+  const server = createGameServer({ host: "127.0.0.1", port: 0, seed: 49 });
+  const sockets = [];
+  try {
+    const address = await server.listen();
+    const connection = connect(`ws://127.0.0.1:${address.port}/ws`);
+    sockets.push(connection.socket);
+    const lobby = nextMessage(connection.socket, (message) => message.type === "lobby");
+    await connection.opened;
+    await lobby;
+    const created = nextMessage(connection.socket, (message) => message.type === "room_created");
+    connection.socket.send(JSON.stringify({ type: "create_room", roomName: "Tank Battle Test" }));
+    const roomId = (await created).room.id;
+    const started = nextMessage(connection.socket, (message) => message.type === "init");
+    connection.socket.send(JSON.stringify({ type: "start_room" }));
+    const init = await started;
+    const player = server.players.get(init.id);
+    const room = server.rooms.get(roomId);
+    const tank = room.vehicles.get("city-tank-1");
+    const crab = room.monsters.get("monster-crab");
+
+    assert.equal(tank.type, "tank");
+    assert.ok(init.vehicles.some((vehicle) => vehicle.id === "city-tank-2" && vehicle.type === "tank"));
+    crab.x = 0;
+    crab.z = 126;
+    crab.targetX = 0;
+    crab.targetZ = 126;
+
+    const rejectedFire = nextMessage(connection.socket, (message) => message.type === "attack_result");
+    connection.socket.send(JSON.stringify({ type: "tank_fire", targetId: crab.id }));
+    assert.equal((await rejectedFire).hit, false);
+    assert.equal(crab.health, crab.maxHealth);
+
+    const moveToTank = nextMessage(
+      connection.socket,
+      (message) => message.type === "snapshot" &&
+        message.players.some((entry) => entry.id === init.id && entry.z === tank.z),
+    );
+    connection.socket.send(JSON.stringify({
+      type: "move",
+      position: { x: tank.x, y: tank.y + 2.65, z: tank.z, yaw: 0 },
+    }));
+    await moveToTank;
+
+    const entered = nextMessage(connection.socket, (message) => message.type === "vehicle_result");
+    connection.socket.send(JSON.stringify({ type: "vehicle_enter", vehicleId: tank.id }));
+    assert.equal((await entered).vehicleType, "tank");
+    assert.equal(player.vehicleId, tank.id);
+
+    const fired = nextMessage(connection.socket, (message) => message.type === "attack_result");
+    connection.socket.send(JSON.stringify({ type: "tank_fire", targetId: crab.id }));
+    const result = await fired;
+    assert.equal(result.hit, true);
+    assert.equal(result.tank, true);
+    assert.equal(result.damage, 45);
+    assert.equal(crab.health, crab.maxHealth - 45);
+
+    const tankStartZ = tank.z;
+    const movedTank = nextMessage(
+      connection.socket,
+      (message) => message.type === "snapshot" &&
+        message.vehicles?.some((vehicle) => vehicle.id === tank.id && vehicle.z === tankStartZ + 1),
+    );
+    connection.socket.send(JSON.stringify({
+      type: "move",
+      position: {
+        x: tank.x,
+        y: terrainHeightAt(tank.x, tankStartZ + 1, room.seed) + 2.65,
+        z: tankStartZ + 1,
+        yaw: 0,
+      },
+    }));
+    assert.ok((await movedTank).vehicles.some((vehicle) => vehicle.id === tank.id && vehicle.occupantId === init.id));
   } finally {
     for (const socket of sockets) socket.terminate();
     await server.close();

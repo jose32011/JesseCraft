@@ -54,12 +54,9 @@
           </div>
         </div>
         <div class="session">
-          <label class="sr-only" for="player-name">Your name</label>
-          <input id="player-name" maxlength="16" value="Explorer" aria-label="Your name" />
           <button class="inventory-toggle" id="inventory-toggle" aria-expanded="false" aria-controls="inventory-panel">Bag</button>
           <button class="desktop-fly-button" id="desktop-fly-button" type="button" aria-pressed="false">Fly</button>
           <button class="game-menu-toggle" id="game-menu-toggle" aria-label="World settings" aria-expanded="false" aria-controls="game-menu">&#9881;</button>
-          <span class="connection"><i id="connection-dot"></i><span id="connection-status">Connecting…</span></span>
         </div>
       </header>
 
@@ -69,17 +66,26 @@
         <strong id="health-value">100</strong>
         <span class="xp-hud" id="xp-hud">XP 0 · Lv 0</span>
         <span class="coin-hud" id="coin-hud">Coins 0</span>
-        <button type="button" id="respawn-button" hidden>Respawn</button>
       </section>
 
       <div class="toast" id="toast" role="status"></div>
+      <section class="respawn-overlay" id="respawn-overlay" aria-labelledby="respawn-title" aria-live="assertive" hidden>
+        <div class="respawn-card">
+          <p class="eyebrow">ADVENTURE PAUSED</p>
+          <h2 id="respawn-title">You were defeated</h2>
+          <p>Return to the world when you're ready.</p>
+          <button type="button" id="respawn-button">Respawn</button>
+        </div>
+      </section>
 
       <section class="game-menu" id="game-menu" aria-label="World settings" hidden>
+        <span class="connection"><i id="connection-dot"></i><span id="connection-status">Connecting…</span></span>
         <button type="button" id="open-profile-button">Player profile</button>
         <button type="button" id="save-world-button">Save world</button>
         <button type="button" id="open-world-map-button">Open map</button>
         <button type="button" id="open-shop-button">Village market</button>
         <button type="button" id="go-home-button">Go to my home</button>
+        <button type="button" id="toggle-health-hud-button" aria-pressed="false">Hide health &amp; XP bar</button>
         <label class="game-menu-view-toggle"><input type="checkbox" id="autosave-toggle" checked /><span>Autosave every minute</span></label>
         <label class="game-menu-view-toggle"><input type="checkbox" id="third-person-toggle" /><span>Show my character</span></label>
         <label class="game-menu-view-toggle"><input type="checkbox" id="fly-toggle" /><span>Enable flight</span></label>

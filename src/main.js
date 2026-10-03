@@ -41,31 +41,33 @@ import {
   MODEL_ITEM_BY_ID,
 } from "../shared/models.js";
 import grassTextureUrl from "./assets/blocks/own/grass_top.png";
-import dirtTextureUrl from "./assets/blocks/own/dirt.png";
-import stoneTextureUrl from "./assets/blocks/own/stone.png";
-import planksTextureUrl from "./assets/blocks/own/oak_planks.png";
-import logTextureUrl from "./assets/blocks/own/oak_log_side.png";
+import dirtTextureUrl from "./assets/new/PixelTexturePack/Textures/Rocks/DIRT.png";
+import stoneTextureUrl from "./assets/new/PixelTexturePack/Textures/Rocks/GRAYROCKS.png";
+import planksTextureUrl from "./assets/new/PixelTexturePack/Textures/Wood/WOODA.png";
+import logTextureUrl from "./assets/new/PixelTexturePack/Textures/Wood/TRUNKS.png";
 import glassTextureUrl from "./assets/blocks/own/glass.png";
 import leavesTextureUrl from "./assets/blocks/own/oak_leaves.png";
-import sandTextureUrl from "./assets/blocks/own/sand.png";
+import sandTextureUrl from "./assets/new/PixelTexturePack/Textures/Elements/SAND.png";
 import obsidianTextureUrl from "./assets/blocks/own/obsidian.png";
-import snowTextureUrl from "./assets/blocks/own/snow.png";
+import snowTextureUrl from "./assets/new/PixelTexturePack/Textures/Elements/SNOW.png";
 import iceTextureUrl from "./assets/blocks/pixel-perfection/ice.png";
-import brickTextureUrl from "./assets/blocks/vibes/brick_red.png";
-import blackConcreteTextureUrl from "./assets/blocks/own/black_concrete.png";
-import whiteConcreteTextureUrl from "./assets/blocks/own/white_concrete.png";
-import blueConcreteTextureUrl from "./assets/blocks/own/blue_concrete.png";
+import brickTextureUrl from "./assets/new/PixelTexturePack/Textures/Bricks/REDBRICKS.png";
+import blackConcreteTextureUrl from "./assets/new/PixelTexturePack/Textures/Urban/PAVEMENT.png";
+import whiteConcreteTextureUrl from "./assets/new/PixelTexturePack/Textures/Urban/GRAYWALL.png";
+import blueConcreteTextureUrl from "./assets/new/PixelTexturePack/Textures/Tech/HIGHTECH.png";
 import redConcreteTextureUrl from "./assets/blocks/own/red_concrete.png";
 import craftingTableTextureUrl from "./assets/blocks/vibes/table.png";
-import waterTextureUrl from "./assets/blocks/own/water.png";
+import waterTextureUrl from "./assets/new/PixelTexturePack/Textures/Elements/WATER.png";
 import blockBitsTextureUrl from "./assets/Textures/block_bits_texture.png?url";
+import pirateShipUrl from "./assets/new/eclair_pirate_ships_boats_11_cc0_native_glb_v1/Models/GLB format/ship-pirate-small.glb?url";
+import rowboatUrl from "./assets/new/eclair_pirate_ships_boats_11_cc0_native_glb_v1/Models/GLB format/boat-row-small.glb?url";
+import pirateShipTextureUrl from "./assets/new/eclair_pirate_ships_boats_11_cc0_native_glb_v1/Models/GLB format/Textures/colormap.png?url";
 import "./style.css";
 
 const canvas = document.querySelector("#world");
 const statusText = document.querySelector("#connection-status");
 const statusDot = document.querySelector("#connection-dot");
 const toast = document.querySelector("#toast");
-const playerNameInput = document.querySelector("#player-name");
 const multiplayerMenu = document.querySelector("#multiplayer-menu");
 const lobbyPlayerNameInput = document.querySelector("#lobby-player-name");
 const lobbyStatus = document.querySelector("#lobby-status");
@@ -127,6 +129,9 @@ const healthProgress = document.querySelector("#health-progress");
 const healthValue = document.querySelector("#health-value");
 const xpHud = document.querySelector("#xp-hud");
 const coinHud = document.querySelector("#coin-hud");
+const healthHud = document.querySelector(".health-hud");
+const toggleHealthHudButton = document.querySelector("#toggle-health-hud-button");
+const respawnOverlay = document.querySelector("#respawn-overlay");
 const respawnButton = document.querySelector("#respawn-button");
 const attackButton = document.querySelector("#attack-button");
 const fishButton = document.querySelector("#fish-button");
@@ -136,6 +141,17 @@ const waterRiseButton = document.querySelector("#water-rise-button");
 const waterDiveButton = document.querySelector("#water-dive-button");
 const savedPlayerName = localStorage.getItem("player-name");
 const isCoarsePointer = window.matchMedia("(pointer: coarse)").matches;
+let healthHudHidden = localStorage.getItem("health-hud-visible") === "false";
+let lastSkyUpdateAt = 0;
+let lastUnderwaterUpdateAt = 0;
+
+function renderHealthHudVisibility() {
+  healthHud.hidden = healthHudHidden;
+  toggleHealthHudButton.textContent = healthHudHidden ? "Show health & XP bar" : "Hide health & XP bar";
+  toggleHealthHudButton.setAttribute("aria-pressed", String(healthHudHidden));
+}
+
+renderHealthHudVisibility();
 
 function createBrowserProfileId() {
   if (typeof globalThis.crypto?.randomUUID === "function") return globalThis.crypto.randomUUID();
@@ -158,8 +174,8 @@ document.documentElement.classList.toggle("first-person-view", !thirdPersonView)
 const activeRoomStorageKey = "active-room-id";
 let resumeRequested = false;
 if (savedPlayerName) {
-  playerNameInput.value = savedPlayerName;
   lobbyPlayerNameInput.value = savedPlayerName;
+  profileNameInput.value = savedPlayerName;
 }
 const blockChoices = [
   ["grass", "Grass", grassTextureUrl],
@@ -432,6 +448,7 @@ const blockBitsGltfSources = import.meta.glob("./assets/Assets/gltf/*.gltf", {
   query: "?raw",
   import: "default",
 });
+const harborAssetLoader = new GLTFLoader();
 const blockBitsBinaryUrls = import.meta.glob("./assets/Assets/gltf/*.bin", {
   query: "?url",
   import: "default",
@@ -464,6 +481,8 @@ let selfAvatar = null;
 const worldBlocks = new Map();
 const loadedChunks = new Map();
 const renderCandidatesByChunk = new Map();
+const pendingChunks = new Set();
+let chunkGeneration = 0;
 const raycaster = new THREE.Raycaster();
 const cameraRayOrigin = new THREE.Vector3();
 const cameraRaySample = new THREE.Vector3();
@@ -516,6 +535,7 @@ const state = {
 let lobbyRoom = null;
 let toastTimer;
 let worldRenderTimer;
+let chunkWorker = null;
 
 function notify(message) {
   toast.textContent = message;
@@ -701,7 +721,39 @@ function wrapPlanetChunkX(chunkX) {
 }
 
 function getChunkRenderCandidates(chunk) {
-  return new Set(chunk.keys());
+  const candidates = new Set();
+  for (const [key, type] of chunk) {
+    if (type === "water") {
+      const [x, y, z] = key.split(",").map(Number);
+      if (worldBlocks.get(blockKey(x, y + 1, z)) !== "water" && chunk.get(blockKey(x, y + 1, z)) !== "water") {
+        candidates.add(key);
+      }
+      continue;
+    }
+    if (type === "oak_door" || MODEL_ITEM_BY_ID.has(type) || type === "glass") {
+      candidates.add(key);
+      continue;
+    }
+    const [x, y, z] = key.split(",").map(Number);
+    const hasVisibleFace = [
+      [x, y + 1, z],
+      [x, y - 1, z],
+      [x + 1, y, z],
+      [x - 1, y, z],
+      [x, y, z + 1],
+      [x, y, z - 1],
+    ].some(([neighborX, neighborY, neighborZ]) => {
+      const neighbor = worldBlocks.get(blockKey(neighborX, neighborY, neighborZ))
+        ?? chunk.get(blockKey(neighborX, neighborY, neighborZ));
+      return !neighbor || neighbor === "glass" || neighbor === "water";
+    });
+    const localX = ((x % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+    const localZ = ((z % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+    const atChunkEdge = localX === 0 || localX === CHUNK_SIZE - 1 ||
+      localZ === 0 || localZ === CHUNK_SIZE - 1;
+    if (hasVisibleFace || atChunkEdge) candidates.add(key);
+  }
+  return candidates;
 }
 
 function addRenderCandidatesAround(x, y, z) {
@@ -722,19 +774,95 @@ function addRenderCandidatesAround(x, y, z) {
   }
 }
 
-function ensureChunkLoaded(chunkX, chunkZ) {
+function commitChunk(chunkX, chunkZ, chunk) {
   chunkX = wrapPlanetChunkX(chunkX);
   if (chunkZ < MIN_PLANET_CHUNK_Z || chunkZ > MAX_PLANET_CHUNK_Z) return;
   const key = chunkKey(chunkX, chunkZ);
-  if (loadedChunks.has(key)) return;
-
-  const chunk = createChunkBlocks(chunkX, chunkZ, state.seed);
+  if (loadedChunks.has(key)) return false;
   loadedChunks.set(key, chunk);
-  renderCandidatesByChunk.set(key, getChunkRenderCandidates(chunk));
   for (const [block, type] of chunk) worldBlocks.set(block, type);
+  renderCandidatesByChunk.set(key, getChunkRenderCandidates(chunk));
   if (state.socket?.readyState === WebSocket.OPEN) {
     state.socket.send(JSON.stringify({ type: "chunk", x: chunkX, z: chunkZ }));
   }
+  return true;
+}
+
+function initializeChunkWorker() {
+  if (chunkWorker || typeof Worker === "undefined") return;
+  try {
+    chunkWorker = new Worker(new URL("./chunk-worker.js", import.meta.url), { type: "module" });
+    chunkWorker.addEventListener("message", (event) => {
+      const { chunkX, chunkZ, generation, blocks, error } = event.data;
+      if (generation !== chunkGeneration) return;
+      const key = chunkKey(chunkX, chunkZ);
+      pendingChunks.delete(key);
+      if (error) {
+        console.error(`Unable to generate world chunk ${key}: ${error}`);
+        notify("A world region could not be generated.");
+        if (
+          chunkDistanceFromPlayer(chunkX, chunkZ) <= 2 &&
+          commitChunk(chunkX, chunkZ, createChunkBlocks(chunkX, chunkZ, state.seed))
+        ) {
+          scheduleWorldRender();
+        }
+        return;
+      }
+      if (!(blocks instanceof Map)) {
+        console.error(`World chunk ${key} returned invalid block data.`);
+        notify("A world region could not be generated.");
+        if (
+          chunkDistanceFromPlayer(chunkX, chunkZ) <= 2 &&
+          commitChunk(chunkX, chunkZ, createChunkBlocks(chunkX, chunkZ, state.seed))
+        ) {
+          scheduleWorldRender();
+        }
+        return;
+      }
+      if (chunkDistanceFromPlayer(chunkX, chunkZ) > 2) return;
+      if (commitChunk(chunkX, chunkZ, blocks)) scheduleWorldRender();
+    });
+    chunkWorker.addEventListener("error", (error) => {
+      console.error("The world-generation worker failed.", error);
+      notify("World generation encountered an error.");
+      chunkWorker?.terminate();
+      chunkWorker = null;
+      const queuedChunks = [...pendingChunks];
+      pendingChunks.clear();
+      for (const key of queuedChunks) {
+        const [chunkX, chunkZ] = key.split(",").map(Number);
+        if (chunkDistanceFromPlayer(chunkX, chunkZ) > 2) continue;
+        commitChunk(chunkX, chunkZ, createChunkBlocks(chunkX, chunkZ, state.seed));
+      }
+      scheduleWorldRender();
+    });
+  } catch (error) {
+    console.error("Unable to start the world-generation worker.", error);
+    chunkWorker = null;
+  }
+}
+
+function ensureChunkLoaded(chunkX, chunkZ) {
+  chunkX = wrapPlanetChunkX(chunkX);
+  if (chunkZ < MIN_PLANET_CHUNK_Z || chunkZ > MAX_PLANET_CHUNK_Z) return false;
+  const key = chunkKey(chunkX, chunkZ);
+  if (loadedChunks.has(key) || pendingChunks.has(key)) return false;
+
+  initializeChunkWorker();
+  if (chunkWorker) {
+    pendingChunks.add(key);
+    chunkWorker.postMessage({ chunkX, chunkZ, seed: state.seed, generation: chunkGeneration });
+    return true;
+  }
+
+  return commitChunk(chunkX, chunkZ, createChunkBlocks(chunkX, chunkZ, state.seed));
+}
+
+function chunkDistanceFromPlayer(chunkX, chunkZ) {
+  if (lastChunkX === null || lastChunkZ === null) return 0;
+  const deltaX = Math.abs(wrapPlanetChunkX(chunkX) - wrapPlanetChunkX(lastChunkX));
+  const wrappedDeltaX = Math.min(deltaX, MAX_PLANET_CHUNK_X - MIN_PLANET_CHUNK_X + 1 - deltaX);
+  return Math.max(wrappedDeltaX, Math.abs(chunkZ - lastChunkZ));
 }
 
 function updateChunkWindow(force = false) {
@@ -747,28 +875,37 @@ function updateChunkWindow(force = false) {
   const loadRadius = isCoarsePointer ? 1 : 2;
   const unloadRadius = loadRadius + 1;
   let changed = false;
+  let unloaded = false;
   for (const [key, chunk] of loadedChunks) {
     const [loadedX, loadedZ] = key.split(",").map(Number);
-    const deltaX = Math.abs(loadedX - chunkX);
-    const wrappedDeltaX = Math.min(deltaX, MAX_PLANET_CHUNK_X - MIN_PLANET_CHUNK_X + 1 - deltaX);
-    if (Math.max(wrappedDeltaX, Math.abs(loadedZ - chunkZ)) <= unloadRadius) continue;
+    if (chunkDistanceFromPlayer(loadedX, loadedZ) <= unloadRadius) continue;
     for (const block of chunk.keys()) worldBlocks.delete(block);
     loadedChunks.delete(key);
     renderCandidatesByChunk.delete(key);
     changed = true;
+    unloaded = true;
   }
 
+  const chunksToLoad = [];
   for (let x = chunkX - loadRadius; x <= chunkX + loadRadius; x += 1) {
     for (let z = chunkZ - loadRadius; z <= chunkZ + loadRadius; z += 1) {
       if (z < MIN_PLANET_CHUNK_Z || z > MAX_PLANET_CHUNK_Z) continue;
       const wrappedX = wrapPlanetChunkX(x);
-      if (!loadedChunks.has(chunkKey(wrappedX, z))) {
-        ensureChunkLoaded(x, z);
-        changed = true;
-      }
+      if (loadedChunks.has(chunkKey(wrappedX, z)) || pendingChunks.has(chunkKey(wrappedX, z))) continue;
+      chunksToLoad.push({ x: wrappedX, z });
     }
   }
-  return changed;
+  chunksToLoad.sort((a, b) =>
+    chunkDistanceFromPlayer(a.x, a.z) - chunkDistanceFromPlayer(b.x, b.z),
+  );
+  for (const chunk of chunksToLoad) {
+    if (ensureChunkLoaded(chunk.x, chunk.z)) changed = true;
+  }
+  if (!chunkWorker && changed) {
+    scheduleWorldRender();
+  }
+  if (unloaded && chunkWorker) scheduleWorldRender();
+  return false;
 }
 
 function loadPlacedAssetModel(assetKey) {
@@ -1727,15 +1864,52 @@ function makeVehicle(vehicle) {
     group.add(propeller);
     group.userData.propeller = propeller;
   } else {
-    addBox([1.85, 0.48, 3.2], [0, 0.55, 0], paint);
-    addBox([1.35, 0.66, 1.45], [0, 1.08, 0.22], glass);
-    addBox([1.95, 0.16, 1.25], [0, 0.88, -0.95], paint);
-    for (const x of [-0.98, 0.98]) {
-      for (const z of [-1.05, 1.08]) {
-        const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.22, 10), trim);
-        wheel.rotation.z = Math.PI / 2;
-        wheel.position.set(x, 0.34, z);
-        group.add(wheel);
+    if (vehicle.type === "tank") {
+      const hull = new THREE.MeshLambertMaterial({ color: "#687a45" });
+      const armor = new THREE.MeshLambertMaterial({ color: "#829458" });
+      const darkMetal = new THREE.MeshLambertMaterial({ color: "#303735" });
+      const track = new THREE.MeshLambertMaterial({ color: "#252c2b" });
+      const detail = new THREE.MeshLambertMaterial({ color: "#b18b4b" });
+      addBox([2.15, 0.62, 3.5], [0, 0.76, 0], hull);
+      addBox([1.62, 0.2, 2.2], [0, 1.16, 0.02], armor);
+      for (const side of [-1, 1]) {
+        addBox([0.48, 0.7, 3.75], [side * 1.14, 0.42, 0], track);
+        for (let index = 0; index < 6; index += 1) {
+          const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 0.52, 8), darkMetal);
+          wheel.rotation.z = Math.PI / 2;
+          wheel.position.set(side * 1.14, 0.38, -1.38 + index * 0.55);
+          group.add(wheel);
+        }
+        addBox([0.08, 0.46, 0.1], [side * 1.39, 0.44, -1.68], detail);
+      }
+      const turret = new THREE.Group();
+      turret.position.set(0, 1.25, -0.02);
+      group.add(turret);
+      const turretBody = new THREE.Mesh(new THREE.BoxGeometry(1.42, 0.58, 1.55), armor);
+      turret.add(turretBody);
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.105, 0.14, 1.95, 8), darkMetal);
+      barrel.rotation.x = Math.PI / 2;
+      barrel.position.set(0, 0.06, -1.48);
+      turret.add(barrel);
+      const muzzle = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.22, 8), detail);
+      muzzle.rotation.x = Math.PI / 2;
+      muzzle.position.set(0, 0.06, -2.48);
+      turret.add(muzzle);
+      const hatch = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.16, 8), hull);
+      hatch.position.set(0.32, 0.38, 0.25);
+      turret.add(hatch);
+      group.userData.turret = turret;
+    } else {
+      addBox([1.85, 0.48, 3.2], [0, 0.55, 0], paint);
+      addBox([1.35, 0.66, 1.45], [0, 1.08, 0.22], glass);
+      addBox([1.95, 0.16, 1.25], [0, 0.88, -0.95], paint);
+      for (const x of [-0.98, 0.98]) {
+        for (const z of [-1.05, 1.08]) {
+          const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.22, 10), trim);
+          wheel.rotation.z = Math.PI / 2;
+          wheel.position.set(x, 0.34, z);
+          group.add(wheel);
+        }
       }
     }
   }
@@ -1743,6 +1917,78 @@ function makeVehicle(vehicle) {
   group.userData.propeller = group.userData.propeller ?? null;
   scene.add(group);
   return group;
+}
+
+function rewriteGlbImageUrls(buffer, imageUrl) {
+  const source = new DataView(buffer);
+  if (
+    buffer.byteLength < 20 ||
+    source.getUint32(0, true) !== 0x46546c67 ||
+    source.getUint32(4, true) !== 2
+  ) {
+    throw new Error("The harbor model is not a valid GLB 2.0 file.");
+  }
+
+  const chunks = [];
+  for (let offset = 12; offset < buffer.byteLength;) {
+    const length = source.getUint32(offset, true);
+    const type = source.getUint32(offset + 4, true);
+    const start = offset + 8;
+    if (start + length > buffer.byteLength) throw new Error("The harbor model contains an invalid chunk.");
+    if (type === 0x4e4f534a) {
+      const document = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, start, length)).trim());
+      for (const image of document.images ?? []) {
+        if (image.uri) image.uri = imageUrl;
+      }
+      const json = new TextEncoder().encode(JSON.stringify(document));
+      const paddedLength = Math.ceil(json.length / 4) * 4;
+      const paddedJson = new Uint8Array(paddedLength).fill(0x20);
+      paddedJson.set(json);
+      chunks.push({ type, data: paddedJson });
+    } else {
+      chunks.push({ type, data: new Uint8Array(buffer.slice(start, start + length)) });
+    }
+    offset = start + length;
+  }
+
+  const totalLength = 12 + chunks.reduce((total, chunk) => total + 8 + chunk.data.length, 0);
+  const result = new ArrayBuffer(totalLength);
+  const output = new DataView(result);
+  output.setUint32(0, 0x46546c67, true);
+  output.setUint32(4, 2, true);
+  output.setUint32(8, totalLength, true);
+  let offset = 12;
+  for (const chunk of chunks) {
+    output.setUint32(offset, chunk.data.length, true);
+    output.setUint32(offset + 4, chunk.type, true);
+    new Uint8Array(result, offset + 8, chunk.data.length).set(chunk.data);
+    offset += 8 + chunk.data.length;
+  }
+  return result;
+}
+
+async function loadHarborDecoration(url, x, z, yaw, scale, height) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Harbor model request failed (${response.status}).`);
+  const buffer = await response.arrayBuffer();
+  const glb = rewriteGlbImageUrls(buffer, pirateShipTextureUrl);
+  const { scene: model } = await harborAssetLoader.parseAsync(glb, "");
+  model.scale.setScalar(scale);
+  const point = planetPointAt(x, height, z);
+  model.position.set(point.x, point.y, point.z);
+  model.quaternion.copy(surfaceQuaternionAt(x, z, yaw));
+  scene.add(model);
+}
+
+function loadHarborFleet() {
+  const assets = [
+    loadHarborDecoration(pirateShipUrl, -30, 158, Math.PI / 2, 0.58, 0.45),
+    loadHarborDecoration(rowboatUrl, 23, 156, Math.PI / 2, 1, 0.15),
+  ];
+  void Promise.all(assets).catch((error) => {
+    console.error("Unable to load the harbor boats.", error);
+    if (state.connected) notify("Some harbor models could not be loaded.");
+  });
 }
 
 function nearestAvailableVehicle() {
@@ -1768,11 +2014,13 @@ function updateVehicleButton() {
   const nearby = current ? null : nearestAvailableVehicle();
   vehicleButton.hidden = !current && !nearby;
   vehicleButton.textContent = current
-    ? "Exit vehicle"
+    ? `Exit ${current.type === "tank" ? "tank" : "vehicle"}`
     : nearby
-      ? `Enter ${nearby.type === "plane" ? "plane" : "car"}`
+      ? `Enter ${nearby.type === "plane" ? "plane" : nearby.type}`
       : "Vehicle";
   vehicleButton.setAttribute("aria-label", vehicleButton.textContent);
+  attackButton.textContent = state.vehicleType === "tank" ? "Fire" : "Punch";
+  attackButton.setAttribute("aria-label", state.vehicleType === "tank" ? "Fire tank cannon" : "Punch");
 }
 
 function updateVehicles(current = []) {
@@ -1790,12 +2038,16 @@ function updateVehicles(current = []) {
       mesh = makeVehicle(vehicle);
       vehicleMeshes.set(vehicle.id, mesh);
     }
-    const surfaceHeight = vehicle.y + (vehicle.type === "plane" ? 0.5 : 0.05);
-    const point = planetPointAt(vehicle.x, surfaceHeight, vehicle.z);
-    mesh.position.set(point.x, point.y, point.z);
-    mesh.quaternion.copy(surfaceQuaternionAt(vehicle.x, vehicle.z, vehicle.yaw));
+    updateVehicleMesh(vehicle, mesh);
   }
   updateVehicleButton();
+}
+
+function updateVehicleMesh(vehicle, mesh) {
+  const surfaceHeight = vehicle.y + (vehicle.type === "plane" ? 0.5 : 0.05);
+  const point = planetPointAt(vehicle.x, surfaceHeight, vehicle.z);
+  mesh.position.set(point.x, point.y, point.z);
+  mesh.quaternion.copy(surfaceQuaternionAt(vehicle.x, vehicle.z, vehicle.yaw));
 }
 
 function animateVehicles(delta) {
@@ -1945,7 +2197,7 @@ function updateHealth(health) {
   state.health = Math.max(0, Math.min(100, health ?? state.health));
   healthProgress.value = state.health;
   healthValue.textContent = String(state.health);
-  respawnButton.hidden = state.health > 0;
+  respawnOverlay.hidden = state.health > 0;
 }
 
 function updateXp(xp, level) {
@@ -1965,7 +2217,6 @@ function updateCoins(coins) {
 function renderPlayerProfile(profile) {
   profileNameInput.value = profile.name;
   profileColorInput.value = profile.color;
-  playerNameInput.value = profile.name;
   lobbyPlayerNameInput.value = profile.name;
   localStorage.setItem("player-name", profile.name);
   const statElements = {
@@ -2270,7 +2521,8 @@ function updatePlayerName() {
     showLobbyNotice("Enter a player name first.", Boolean(lobbyRoom));
     return false;
   }
-  playerNameInput.value = name;
+  profileNameInput.value = name;
+  renderCharacterProfile();
   localStorage.setItem("player-name", name);
   return sendLobbyMessage({ type: "name", name });
 }
@@ -2330,8 +2582,9 @@ function connect() {
       resumeRequested = false;
       showLobbyHome();
     } else if (message.type === "name_result") {
-      playerNameInput.value = message.name;
       lobbyPlayerNameInput.value = message.name;
+      profileNameInput.value = message.name;
+      renderCharacterProfile();
       localStorage.setItem("player-name", message.name);
       const activeRoomId = localStorage.getItem(activeRoomStorageKey);
       if (activeRoomId && !resumeRequested && !state.connected && !lobbyRoom) {
@@ -2391,8 +2644,8 @@ function connect() {
       if (message.hit && message.killed && message.reward) {
         updateXp(message.reward.xp, message.reward.level);
         updateCoins(message.reward.coins);
-        notify(`Monster defeated! +${message.reward.xpGained} XP · +${message.reward.coinsGained} coins.`);
-      } else if (message.hit) notify(`Hit for ${message.damage} damage.`);
+        notify(`${message.tank ? "Tank defeated a monster!" : "Monster defeated!"} +${message.reward.xpGained} XP · +${message.reward.coinsGained} coins.`);
+      } else if (message.hit) notify(`${message.tank ? "Cannon hit" : "Hit"} for ${message.damage} damage.`);
       else if (message.message) notify(message.message);
     } else if (message.type === "respawn_result") {
       playerPosition.x = message.position.x;
@@ -2451,6 +2704,8 @@ function connect() {
       worldBlocks.clear();
       loadedChunks.clear();
       renderCandidatesByChunk.clear();
+      pendingChunks.clear();
+      chunkGeneration += 1;
       lastChunkX = null;
       lastChunkZ = null;
       updateInventory(message.inventory ?? []);
@@ -2547,11 +2802,6 @@ function connect() {
 }
 connect();
 
-playerNameInput.addEventListener("change", () => {
-  lobbyPlayerNameInput.value = playerNameInput.value;
-  updatePlayerName();
-});
-
 lobbyPlayerNameInput.addEventListener("change", updatePlayerName);
 document.querySelector("#create-room-button").addEventListener("click", () => {
   if (updatePlayerName()) {
@@ -2585,6 +2835,11 @@ startRoomButton.addEventListener("click", () => sendLobbyMessage({ type: "start_
 gameMenuToggle.addEventListener("click", () => {
   gameMenu.hidden = !gameMenu.hidden;
   gameMenuToggle.setAttribute("aria-expanded", String(!gameMenu.hidden));
+});
+toggleHealthHudButton.addEventListener("click", () => {
+  healthHudHidden = !healthHudHidden;
+  localStorage.setItem("health-hud-visible", String(!healthHudHidden));
+  renderHealthHudVisibility();
 });
 document.querySelector("#save-world-button").addEventListener("click", () => {
   gameMenuStatus.textContent = "Saving…";
@@ -3161,11 +3416,12 @@ function targetBlock() {
 }
 
 function findCombatTarget() {
+  const tankCombat = state.vehicleType === "tank";
   const latitude = (playerPosition.z - PLANET_MIN_Z + 0.5) / PLANET_LATITUDE_BLOCKS * Math.PI - Math.PI / 2;
   const forwardEast = -Math.sin(look.yaw);
   const forwardNorth = Math.cos(look.yaw);
   let closest = null;
-  let closestDistance = 3.5;
+  let closestDistance = tankCombat ? 48 : 3.5;
   for (const candidate of [
     ...(state.roomMonsters ?? []),
     ...(state.roomPlayers ?? []).filter((player) => player.id !== state.id),
@@ -3188,6 +3444,10 @@ function attackPlayer() {
   const target = findCombatTarget();
   if (!target) {
     notify("No enemy in reach. Face a nearby monster or player to attack.");
+    return;
+  }
+  if (state.vehicleType === "tank") {
+    state.socket.send(JSON.stringify({ type: "tank_fire", targetId: target.id }));
     return;
   }
   const weapon = ["wooden_sword", "stone_sword", "iron_sword", "steel_sword"].includes(state.selected)
@@ -3556,23 +3816,26 @@ function deadzoneAxis(value, deadzone = 0.16) {
 }
 
 function gamepadOverlayControls() {
-  const overlay = profileDialog.open
-    ? profileDialog
-    : !inventoryPanel.hidden
-      ? inventoryPanel
-      : !shopPanel.hidden
-        ? shopPanel
-        : !worldMapPanel.hidden
-          ? worldMapPanel
-          : !gameMenu.hidden
-            ? gameMenu
-            : null;
+  const overlay = !respawnOverlay.hidden
+    ? respawnOverlay
+    : profileDialog.open
+      ? profileDialog
+      : !inventoryPanel.hidden
+        ? inventoryPanel
+        : !shopPanel.hidden
+          ? shopPanel
+          : !worldMapPanel.hidden
+            ? worldMapPanel
+            : !gameMenu.hidden
+              ? gameMenu
+              : null;
   return overlay
     ? [...overlay.querySelectorAll("button:not(:disabled), input:not(:disabled), select:not(:disabled)")]
     : [];
 }
 
 function closeGamepadOverlay() {
+  if (!respawnOverlay.hidden) return;
   if (profileDialog.open) profileDialog.close();
   else if (!inventoryPanel.hidden) toggleInventory(false);
   else if (!shopPanel.hidden) shopPanel.hidden = true;
@@ -3722,7 +3985,9 @@ function pollGamepad(delta) {
       else if (leftTrigger > 0.25) state.flyVerticalDirection = -1;
     }
   }
-  if (state.vehicleType !== "plane") {
+  if (state.vehicleType === "tank") {
+    if (rightTrigger > 0.5 && !previousGamepadButtons.has(7)) attackPlayer();
+  } else if (state.vehicleType !== "plane") {
     if (rightTrigger > 0.5 && !previousGamepadButtons.has(7)) sendEdit("remove");
     if (leftTrigger > 0.5 && !previousGamepadButtons.has(6)) sendEdit("place");
   }
@@ -3781,7 +4046,15 @@ function updateMovement(delta) {
     look.yaw -= strafeInput * delta * (activeVehicle.type === "plane" ? 1.6 : 2.1);
     strafeInput = 0;
   }
-  const speed = (activeVehicle?.type === "plane" ? 16 : activeVehicle?.type === "car" ? 9 : 4.2) * delta;
+  const speed = (
+    activeVehicle?.type === "plane"
+      ? 16
+      : activeVehicle?.type === "car"
+        ? 9
+        : activeVehicle?.type === "tank"
+          ? 7
+          : 4.2
+  ) * delta;
   const eastDistance = (-Math.sin(look.yaw) * forwardInput + Math.cos(look.yaw) * strafeInput) * speed;
   const northDistance = (Math.cos(look.yaw) * forwardInput + Math.sin(look.yaw) * strafeInput) * speed;
   const nextPosition = advancePlanetPosition(
@@ -3850,9 +4123,8 @@ function updateMovement(delta) {
     activeVehicle.y = playerPosition.y - 2.65;
     activeVehicle.z = playerPosition.z;
     activeVehicle.yaw = look.yaw;
-    updateVehicles(state.vehicles);
-  } else {
-    updateVehicleButton();
+    const activeVehicleMesh = vehicleMeshes.get(activeVehicle.id);
+    if (activeVehicleMesh) updateVehicleMesh(activeVehicle, activeVehicleMesh);
   }
 
   const waterSurfaceEyeY = waterSurfaceEyeAt(playerPosition.x, playerPosition.z);
@@ -3903,8 +4175,14 @@ function animate() {
   animateAnimals(delta);
   animateVehicles(delta);
   const now = performance.now();
-  updateSkyObjects(now);
-  updateUnderwaterLife(now);
+  if (now - lastSkyUpdateAt >= 50) {
+    updateSkyObjects(now);
+    lastSkyUpdateAt = now;
+  }
+  if (now - lastUnderwaterUpdateAt >= 66) {
+    updateUnderwaterLife(now);
+    lastUnderwaterUpdateAt = now;
+  }
   if (state.connected && now - state.lastSentAt > 70) {
     state.socket.send(
       JSON.stringify({
@@ -3939,4 +4217,6 @@ function animate() {
   }
   renderer.render(scene, camera);
 }
+
+loadHarborFleet();
 animate();

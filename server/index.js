@@ -13,6 +13,7 @@ import {
   canEditBlock,
   CHUNK_SIZE,
   CITY_BEACH_OUTER_RADIUS,
+  CITY_RADIUS,
   FISH_TYPES,
   FISH_TYPE_BY_ID,
   getBaseBlockAt,
@@ -57,6 +58,9 @@ const DEFAULT_PROFILE_STATS = {
 const PLAYER_ATTACK_DAMAGE = 20;
 const PLAYER_ATTACK_RANGE = 3.5;
 const PLAYER_ATTACK_COOLDOWN_MS = 650;
+const TANK_ATTACK_RANGE = 48;
+const TANK_ATTACK_COOLDOWN_MS = 1800;
+const TANK_ATTACK_DAMAGE = 45;
 const PLAYER_WEAPON_DAMAGE = new Map([
   ["wooden_sword", 24],
   ["stone_sword", 28],
@@ -75,6 +79,8 @@ const VEHICLE_SPAWNS = [
   { id: "starter-car", type: "car", x: -12, z: 0 },
   { id: "airport-plane", type: "plane", x: 70, z: -72 },
   { id: "airport-car", type: "car", x: 83, z: -62 },
+  { id: "city-tank-1", type: "tank", x: 0, z: 90 },
+  { id: "city-tank-2", type: "tank", x: 80, z: 0 },
 ];
 const MIME_TYPES = new Map([
   [".css", "text/css; charset=utf-8"],
@@ -944,7 +950,8 @@ export function createGameServer({
           const north = candidate.z - monster.z;
           const distance = Math.hypot(east, north);
           const surfaceY = terrainHeightAt(candidate.x, candidate.z, room.seed) + 2.65;
-          if (isNearHarbor(candidate.x, candidate.z) || candidate.y < surfaceY - 1.5) continue;
+          const insideCity = Math.hypot(wrapPlanetX(candidate.x), candidate.z) <= CITY_RADIUS;
+          if (insideCity || isNearHarbor(candidate.x, candidate.z) || candidate.y < surfaceY - 1.5) continue;
           if (distance < closestDistance) {
             closestPlayer = candidate;
             closestDistance = distance;
@@ -1371,8 +1378,10 @@ export function createGameServer({
         return;
       }
 
-      if (message.type === "attack") {
+      if (message.type === "attack" || message.type === "tank_fire") {
         const room = rooms.get(player.roomId);
+        const isTankAttack = message.type === "tank_fire";
+        const vehicle = room?.vehicles.get(player.vehicleId);
         const playerTarget = room?.started && room.members.has(message.targetId)
           ? players.get(message.targetId)
           : null;
@@ -1380,20 +1389,40 @@ export function createGameServer({
         const target = playerTarget ?? monsterTarget;
         const now = Date.now();
         if (
+          isTankAttack &&
+          (!vehicle || vehicle.type !== "tank" || vehicle.occupantId !== player.id)
+        ) {
+          writeJson(socket, {
+            type: "attack_result",
+            hit: false,
+            tank: true,
+            message: "You must be driving a tank to fire.",
+          });
+          return;
+        }
+        if (
           !room?.started ||
           player.health <= 0 ||
-          now - player.lastAttackAt < PLAYER_ATTACK_COOLDOWN_MS
+          now - player.lastAttackAt < (isTankAttack ? TANK_ATTACK_COOLDOWN_MS : PLAYER_ATTACK_COOLDOWN_MS)
         ) {
-          writeJson(socket, { type: "attack_result", hit: false });
+          writeJson(socket, { type: "attack_result", hit: false, tank: isTankAttack });
+          return;
+        }
+        if (!isTankAttack && vehicle?.type === "tank") {
+          writeJson(socket, {
+            type: "attack_result",
+            hit: false,
+            message: "Use the tank cannon while driving.",
+          });
           return;
         }
         player.lastAttackAt = now;
         if (!target || target.id === player.id || target.health <= 0) {
-          writeJson(socket, { type: "attack_result", hit: false });
+          writeJson(socket, { type: "attack_result", hit: false, tank: isTankAttack });
           return;
         }
 
-        const weapon = typeof message.weapon === "string" ? message.weapon : null;
+        const weapon = !isTankAttack && typeof message.weapon === "string" ? message.weapon : null;
         if (weapon && (!PLAYER_WEAPON_DAMAGE.has(weapon) || (player.inventory.get(weapon) ?? 0) < 1)) {
           writeJson(socket, { type: "attack_result", hit: false, message: "You do not have that weapon equipped." });
           return;
@@ -1404,14 +1433,21 @@ export function createGameServer({
         const north = target.z - player.z;
         const distance = Math.hypot(east, north);
         const facing = (east * -Math.sin(player.yaw) + north * Math.cos(player.yaw)) / Math.max(distance, 0.001);
-        if (distance > PLAYER_ATTACK_RANGE || facing < 0.2) {
-          writeJson(socket, { type: "attack_result", hit: false, message: "No target in reach." });
+        if (distance > (isTankAttack ? TANK_ATTACK_RANGE : PLAYER_ATTACK_RANGE) || facing < 0.2) {
+          writeJson(socket, {
+            type: "attack_result",
+            hit: false,
+            tank: isTankAttack,
+            message: "No target in reach.",
+          });
           return;
         }
 
-        const damage = weapon
-          ? PLAYER_WEAPON_DAMAGE.get(weapon) + (player.gearTier ?? 0) * 6
-          : getPlayerAttackPower(player);
+        const damage = isTankAttack
+          ? TANK_ATTACK_DAMAGE
+          : weapon
+            ? PLAYER_WEAPON_DAMAGE.get(weapon) + (player.gearTier ?? 0) * 6
+            : getPlayerAttackPower(player);
         target.health = Math.max(0, target.health - damage);
         let reward = null;
         if (monsterTarget && target.health === 0) {
@@ -1429,6 +1465,7 @@ export function createGameServer({
           damage,
           health: target.health,
           monster: Boolean(monsterTarget),
+          tank: isTankAttack,
           killed: Boolean(monsterTarget && target.health === 0),
           reward,
         });
