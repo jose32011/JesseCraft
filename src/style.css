@@ -136,6 +136,34 @@ button {
   background: rgba(185, 233, 137, 0.23);
 }
 
+.desktop-fly-button {
+  display: none;
+  min-height: 31px;
+  padding: 0 10px;
+  border: 1px solid rgba(130, 206, 255, 0.5);
+  border-radius: 8px;
+  background: rgba(32, 66, 94, 0.82);
+  color: #d3efff;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.desktop-fly-button[aria-pressed="true"] {
+  border-color: rgba(255, 221, 132, 0.78);
+  background: rgba(103, 77, 33, 0.96);
+  color: #ffe7a6;
+}
+
+@media (pointer: fine) {
+  .desktop-fly-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
 .world-seed {
   color: var(--muted);
   font-size: 9px;
@@ -340,6 +368,48 @@ kbd {
 .shop-balance {
   color: var(--lime);
   font-size: 12px;
+}
+
+.home-listing {
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid rgba(241, 246, 228, 0.12);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.home-listing-heading {
+  display: grid;
+  gap: 3px;
+  font-size: 12px;
+}
+
+.home-listing-heading span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.home-properties {
+  display: grid;
+  gap: 5px;
+  max-height: 200px;
+  overflow: auto;
+}
+
+.home-property {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+  font-size: 10px;
+}
+
+.home-property button {
+  flex: 0 0 auto;
 }
 
 .shop-panel input,
@@ -912,18 +982,20 @@ kbd {
 
   .action-buttons {
     display: grid;
-    gap: 9px;
+    grid-template-columns: repeat(2, minmax(66px, 1fr));
+    gap: 6px;
+    width: 148px;
     pointer-events: auto;
   }
 
   .action-button {
     min-width: 66px;
-    min-height: 48px;
+    min-height: 42px;
     border: 1px solid rgba(255, 255, 255, 0.36);
-    border-radius: 15px;
+    border-radius: 12px;
     background: var(--panel);
     box-shadow: 0 5px 15px rgba(17, 29, 24, 0.25);
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
     touch-action: manipulation;
     backdrop-filter: blur(10px);
@@ -942,6 +1014,23 @@ kbd {
     color: #c5e4ff;
   }
 
+  .fly-button {
+    border-color: rgba(130, 206, 255, 0.62);
+    background: rgba(32, 66, 94, 0.94);
+    color: #d3efff;
+  }
+
+  .fly-button[aria-pressed="true"] {
+    border-color: rgba(255, 221, 132, 0.78);
+    background: rgba(103, 77, 33, 0.96);
+    color: #ffe7a6;
+  }
+
+  .fly-down-button {
+    border-color: rgba(130, 206, 255, 0.62);
+    color: #d3efff;
+  }
+
   .attack-button {
     min-width: 76px;
     border-color: rgba(255, 132, 105, 0.72);
@@ -955,6 +1044,19 @@ kbd {
     border-color: rgba(101, 201, 216, 0.66);
     background: rgba(29, 73, 82, 0.94);
     color: #c8f4f2;
+  }
+
+  .profile-dialog {
+    padding: 14px;
+  }
+
+  .profile-character {
+    grid-template-columns: 104px minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .profile-character-stage {
+    min-height: 158px;
   }
 
   .hotbar {
@@ -994,6 +1096,30 @@ kbd {
   .block-choice kbd,
   .bottom-note {
     display: none;
+  }
+}
+
+@media (orientation: portrait) and (pointer: coarse) {
+  .world-map-panel.expanded {
+    inset: max(8px, env(safe-area-inset-top)) 8px auto;
+    height: 50dvh;
+    max-height: 50dvh;
+    grid-template-rows: auto minmax(0, 1fr) auto auto auto;
+    gap: 7px;
+    padding: 10px;
+  }
+
+  .world-map-panel.expanded .world-map-viewport {
+    min-height: 0;
+  }
+
+  .world-map-panel.expanded .world-map-selection,
+  .world-map-panel.expanded .world-map-legend {
+    font-size: 10px;
+  }
+
+  .world-map-panel.expanded .map-teleport-button {
+    min-height: 36px;
   }
 }
 
@@ -1547,6 +1673,176 @@ kbd {
   cursor: pointer;
 }
 
+.profile-character {
+  display: grid;
+  grid-template-columns: minmax(108px, 0.75fr) minmax(0, 1.25fr);
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.profile-character-stage {
+  display: grid;
+  min-height: 172px;
+  align-content: center;
+  justify-items: center;
+  gap: 8px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: radial-gradient(ellipse at 50% 75%, rgba(185, 233, 137, 0.2), transparent 66%), #26352c;
+}
+
+.profile-character-model {
+  position: relative;
+  width: 92px;
+  height: 120px;
+  --character-color: #7eaa80;
+}
+
+.profile-character-model span {
+  position: absolute;
+  display: block;
+  border: 1px solid rgba(18, 27, 22, 0.48);
+  box-shadow: inset -5px -5px 0 rgba(0, 0, 0, 0.14);
+}
+
+.profile-character-hair,
+.profile-character-head {
+  top: 8px;
+  left: 31px;
+  width: 32px;
+  height: 31px;
+  background: #ecd2b4;
+}
+
+.profile-character-hair {
+  top: 4px;
+  left: 29px;
+  width: 36px;
+  height: 12px;
+  border-bottom: 0 !important;
+  background: #594435;
+}
+
+.profile-character-helmet {
+  z-index: 2;
+  top: 2px;
+  left: 27px;
+  width: 40px;
+  height: 20px;
+  background: linear-gradient(#ddbc67 0 50%, #9d7834 51%);
+  visibility: hidden;
+}
+
+.profile-character-body {
+  top: 39px;
+  left: 25px;
+  width: 42px;
+  height: 43px;
+  background: var(--character-color);
+}
+
+.profile-character-armor {
+  z-index: 1;
+  top: 38px;
+  left: 22px;
+  width: 48px;
+  height: 47px;
+  background: linear-gradient(135deg, #bec4c8, #777f85);
+  visibility: hidden;
+}
+
+.profile-character-arm {
+  top: 41px;
+  width: 13px;
+  height: 42px;
+  background: var(--character-color);
+}
+
+.profile-character-arm-left {
+  left: 10px;
+}
+
+.profile-character-arm-right {
+  right: 10px;
+}
+
+.profile-character-leg {
+  top: 81px;
+  width: 17px;
+  height: 28px;
+  background: #76543e;
+}
+
+.profile-character-leg-left {
+  left: 26px;
+}
+
+.profile-character-leg-right {
+  right: 26px;
+}
+
+.profile-character-boot {
+  top: 105px;
+  width: 19px;
+  height: 11px;
+  background: #514d45;
+}
+
+.profile-character-boot-left {
+  left: 24px;
+}
+
+.profile-character-boot-right {
+  right: 24px;
+}
+
+.profile-character-model.wearing-armor .profile-character-armor {
+  visibility: visible;
+}
+
+.profile-character-model.wearing-steel .profile-character-armor {
+  background: linear-gradient(135deg, #b9d0da, #637d8b);
+}
+
+.profile-character-model.wearing-helmet .profile-character-helmet {
+  visibility: visible;
+}
+
+.profile-character-caption {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  font-size: 10px;
+}
+
+.profile-character-caption span {
+  color: var(--muted);
+}
+
+.profile-gear-list {
+  display: flex;
+  align-content: flex-start;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.profile-gear-item,
+.profile-gear-empty {
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.profile-gear-item {
+  border-color: rgba(185, 233, 137, 0.27);
+  color: var(--lime);
+}
+
 .profile-stats {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1612,10 +1908,41 @@ kbd {
   display: none;
 }
 
+.world-map-panel.expanded {
+  position: fixed;
+  inset: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right))
+    max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  width: auto;
+  padding: clamp(12px, 2vw, 24px);
+  border-radius: 16px;
+}
+
+.world-map-panel.expanded .world-map-viewport {
+  min-height: 0;
+  aspect-ratio: auto;
+}
+
+.world-map-panel.expanded .map-marker {
+  width: 32px;
+  height: 32px;
+}
+
+.world-map-panel.expanded .map-marker-dot {
+  width: 13px;
+  height: 13px;
+}
+
 .world-map-panel > header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+.world-map-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .world-map-panel h2 {
@@ -1624,13 +1951,21 @@ kbd {
 }
 
 .world-map-panel > header button {
-  width: 30px;
-  height: 30px;
+  display: grid;
+  min-width: 34px;
+  min-height: 34px;
+  place-items: center;
+  padding: 0 9px;
   border: 1px solid var(--line);
   border-radius: 7px;
   background: rgba(255, 255, 255, 0.06);
   color: var(--ink);
   cursor: pointer;
+}
+
+.world-map-panel > header button#close-world-map-button {
+  width: 30px;
+  height: 30px;
   font-size: 20px;
 }
 
@@ -1716,6 +2051,26 @@ kbd {
   display: block;
 }
 
+.world-map-selection {
+  min-height: 18px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.map-teleport-button {
+  min-height: 42px;
+  border: 1px solid rgba(185, 233, 137, 0.4);
+  border-radius: 8px;
+  background: rgba(185, 233, 137, 0.14);
+  color: var(--lime);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.map-teleport-button[hidden] {
+  display: none;
+}
+
 .world-map-legend {
   display: flex;
   gap: 15px;
@@ -1734,8 +2089,43 @@ kbd {
   height: 7px;
 }
 
-.mobile-crosshair {
+.aim-crosshair {
   display: none;
+  position: fixed;
+  z-index: 5;
+  width: 18px;
+  height: 18px;
+  transform: translate(-50%, -50%);
+  filter: drop-shadow(0 1px 2px #17231d);
+  pointer-events: none;
+}
+
+.aim-crosshair span {
+  position: absolute;
+  top: 8px;
+  left: 1px;
+  width: 16px;
+  height: 2px;
+  border-radius: 2px;
+  background: #fff;
+}
+
+.aim-crosshair span + span {
+  transform: rotate(90deg);
+}
+
+html.gamepad-aiming .aim-crosshair {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  display: block;
+  visibility: visible;
+}
+
+@media (pointer: fine) and (min-width: 701px) {
+  html.first-person-view .aim-crosshair.is-aiming {
+    display: block;
+  }
 }
 
 @media (pointer: coarse), (max-width: 700px) {
@@ -1744,35 +2134,26 @@ kbd {
     right: 12px;
   }
 
-  .mobile-crosshair {
+  html.first-person-view .aim-crosshair {
     position: absolute;
     z-index: 4;
     top: 50%;
     left: 50%;
     display: block;
-    width: 18px;
-    height: 18px;
-    transform: translate(-50%, -50%);
-    filter: drop-shadow(0 1px 2px #17231d);
-    pointer-events: none;
-  }
-
-  .mobile-crosshair span {
-    position: absolute;
-    top: 8px;
-    left: 1px;
-    width: 16px;
-    height: 2px;
-    border-radius: 2px;
-    background: #fff;
-  }
-
-  .mobile-crosshair span + span {
-    transform: rotate(90deg);
+    visibility: visible;
   }
 
   .game-menu {
     top: 58px;
     right: 12px;
   }
+}
+
+html.gamepad-aiming .aim-crosshair {
+  position: fixed;
+  z-index: 12;
+  top: 50%;
+  left: 50%;
+  display: block;
+  visibility: visible;
 }

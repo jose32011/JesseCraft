@@ -57,6 +57,7 @@
           <label class="sr-only" for="player-name">Your name</label>
           <input id="player-name" maxlength="16" value="Explorer" aria-label="Your name" />
           <button class="inventory-toggle" id="inventory-toggle" aria-expanded="false" aria-controls="inventory-panel">Bag</button>
+          <button class="desktop-fly-button" id="desktop-fly-button" type="button" aria-pressed="false">Fly</button>
           <button class="game-menu-toggle" id="game-menu-toggle" aria-label="World settings" aria-expanded="false" aria-controls="game-menu">&#9881;</button>
           <span class="connection"><i id="connection-dot"></i><span id="connection-status">Connecting…</span></span>
         </div>
@@ -78,8 +79,10 @@
         <button type="button" id="save-world-button">Save world</button>
         <button type="button" id="open-world-map-button">Open map</button>
         <button type="button" id="open-shop-button">Village market</button>
+        <button type="button" id="go-home-button">Go to my home</button>
         <label class="game-menu-view-toggle"><input type="checkbox" id="autosave-toggle" checked /><span>Autosave every minute</span></label>
         <label class="game-menu-view-toggle"><input type="checkbox" id="third-person-toggle" /><span>Show my character</span></label>
+        <label class="game-menu-view-toggle"><input type="checkbox" id="fly-toggle" /><span>Enable flight</span></label>
         <label class="game-menu-label" for="teleport-target">Teleport to player</label>
         <select id="teleport-target" aria-label="Choose a player to teleport to"><option value="">No other players</option></select>
         <button type="button" id="teleport-button" disabled>Teleport</button>
@@ -89,12 +92,19 @@
       </section>
 
       <section class="world-map-panel" id="world-map-panel" aria-label="World map" hidden>
-        <header><div><span class="eyebrow">LIVE WORLD</span><h2>World map</h2></div><button type="button" id="close-world-map-button" aria-label="Close map">×</button></header>
+        <header>
+          <div><span class="eyebrow">LIVE WORLD</span><h2>World map</h2></div>
+          <div class="world-map-header-actions">
+            <button type="button" id="expand-world-map-button" aria-pressed="false">Expand map</button>
+            <button type="button" id="close-world-map-button" aria-label="Close map">×</button>
+          </div>
+        </header>
         <div class="world-map-viewport" id="world-map-viewport">
           <canvas id="world-map-canvas" aria-hidden="true"></canvas>
           <div class="world-map-markers" id="world-map-markers"></div>
         </div>
-        <button type="button" class="map-teleport-button" id="map-teleport-button" disabled>Teleport to selection</button>
+        <div class="world-map-selection" id="world-map-selection" role="status">Select a location marker to choose a destination.</div>
+        <button type="button" class="map-teleport-button" id="map-teleport-button" hidden>Teleport</button>
         <div class="world-map-legend"><span><i class="map-self-dot"></i>You</span><span><i></i>Players</span><span><i class="map-location-dot"></i>Locations</span></div>
       </section>
 
@@ -105,6 +115,25 @@
         </header>
         <label class="profile-field">Player name<input id="profile-name" maxlength="16" autocomplete="nickname" /></label>
         <label class="profile-field profile-color-field">Character color<input id="profile-color" type="color" value="#7eaa80" /></label>
+        <section class="profile-character" aria-label="Character appearance">
+          <div class="profile-character-stage">
+            <div class="profile-character-model" id="profile-character-model" aria-hidden="true">
+              <span class="profile-character-hair"></span>
+              <span class="profile-character-head"></span>
+              <span class="profile-character-helmet"></span>
+              <span class="profile-character-body"></span>
+              <span class="profile-character-armor"></span>
+              <span class="profile-character-arm profile-character-arm-left"></span>
+              <span class="profile-character-arm profile-character-arm-right"></span>
+              <span class="profile-character-leg profile-character-leg-left"></span>
+              <span class="profile-character-leg profile-character-leg-right"></span>
+              <span class="profile-character-boot profile-character-boot-left"></span>
+              <span class="profile-character-boot profile-character-boot-right"></span>
+            </div>
+            <div class="profile-character-caption"><strong id="profile-character-name">Explorer</strong><span id="profile-character-level">Level 0</span></div>
+          </div>
+          <div class="profile-gear-list" id="profile-gear-list" aria-label="Armor and carried gear"></div>
+        </section>
         <section class="profile-stats" aria-label="Player statistics">
           <h3>Statistics</h3>
           <div><span>Blocks mined</span><strong id="profile-blocks-mined">0</strong></div>
@@ -123,8 +152,10 @@
         <p><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Space</kbd> jump · <kbd>F</kbd> punch · drag to look</p>
         <p>While swimming: hold <kbd>Space</kbd> to rise or <kbd>Shift</kbd> to dive.</p>
         <p><kbd>R</kbd> fish from the harbor pier.</p>
+        <p>Enable flight in world settings or tap <b>Fly</b>. Hold <kbd>Space</kbd> to rise and <kbd>Shift</kbd> to descend (<b>Up</b>/<b>Down</b> on touch).</p>
         <p>Tap <b>Break</b> or click to mine · <b>Place</b> or right-click to build</p>
         <p><kbd>I</kbd> inventory · mine blocks to collect materials and open your bag to craft.</p>
+        <p>Controller: left stick moves or navigates menus · right stick aims from the center crosshair · A jumps/hold to rise or activates the focused item · B attacks/hold to descend while flying · X interacts · Y toggles flight · triggers mine/place at the crosshair · bumpers change hotbar. Use the D-pad or left stick to move through menus.</p>
         <p>Choose a block below. The little villagers are wandering bots.</p>
       </section>
       <button class="help-toggle" id="help-toggle" aria-label="Show controls">?</button>
@@ -155,24 +186,32 @@
         </header>
         <p class="shop-hint">Buy a model, add it to your hotbar, then place it in your home. Visit the village to purchase.</p>
         <strong class="shop-balance" id="shop-coins">Coins 0</strong>
-        <input id="shop-search" type="search" placeholder="Search 1,000 models" aria-label="Search models" />
+        <section class="home-listing" aria-label="Glass City homes">
+          <div class="home-listing-heading"><strong>City homes</strong><span>Buy near the entrance; return to any home you own.</span></div>
+          <div class="home-properties" id="home-properties"></div>
+          <p class="shop-notice" id="home-notice" role="status"></p>
+        </section>
+        <input id="shop-search" type="search" placeholder="Search 1,043 models" aria-label="Search models" />
         <select id="shop-category" aria-label="Filter models by category"></select>
         <div class="shop-items" id="shop-items"></div>
         <p class="shop-notice" id="shop-notice" role="status"></p>
       </section>
 
       <section class="hotbar" id="hotbar" aria-label="Choose a block"></section>
-      <div class="mobile-crosshair" aria-hidden="true"><span></span><span></span></div>
+      <div class="aim-crosshair" aria-hidden="true"><span></span><span></span></div>
       <div class="mobile-controls" aria-label="Touch controls">
         <div class="joystick" id="joystick" aria-label="Movement joystick">
           <span class="joystick-knob" id="joystick-knob"></span>
         </div>
         <div class="action-buttons">
           <button class="action-button jump-button" id="jump-button" aria-label="Jump">Jump</button>
+          <button class="action-button fly-button" id="fly-button" type="button" aria-pressed="false">Fly</button>
+          <button class="action-button fly-down-button" id="fly-down-button" type="button" aria-label="Descend while flying" hidden>Down</button>
           <button class="action-button break-button" id="break-button">Break</button>
           <button class="action-button place-button" id="place-button">Place</button>
           <button class="action-button attack-button" id="attack-button">Punch</button>
           <button class="action-button fish-button" id="fish-button">Fish</button>
+          <button class="action-button vehicle-button" id="vehicle-button" hidden>Vehicle</button>
         </div>
       </div>
       <div class="water-controls" id="water-controls" aria-label="Swimming controls" hidden>

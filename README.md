@@ -30,17 +30,22 @@ For local development, set `DATABASE_URL` in the shell before starting the serve
 
 ## Controls
 
-- Desktop: `W`/`A`/`S`/`D` to move, `Space` to jump, drag the view to look, click to break, right-click to place.
+- Desktop: `W`/`A`/`S`/`D` to move, `Space` to jump, `G` or the **Fly** button to toggle flight, and hold `Space`/`Shift` to rise/descend while flying. Drag the view to look, and point with the mouse crosshair to break or place blocks (left-click/right-click).
 - Mobile: use the on-screen joystick to move, drag the view to look, and use **Jump**, **Break**, and **Place**.
+- Controller: connect a standard Gamepad API-compatible controller. The left stick moves (and navigates open menus), right stick aims from the centered crosshair, A jumps or (while flying) rises and activates the focused menu control, B attacks or (while flying) descends, X interacts, Y toggles flight, triggers break/place at the crosshair (or climb/descend in a plane), bumpers cycle hotbar items, Back opens inventory, and Start opens settings. D-pad navigates open panels; use left/right to change focused selections.
 - In water, hold `Space` to rise or `Shift` to dive; touch players can use the **Rise** and **Dive** buttons that appear in the water.
-- Select a block from the hotbar or use number keys `1`–`9`. `Q` breaks and `E` places.
+- Use `E` near a parked car or plane (or tap the vehicle button on touch) to enter; press `E` again to exit. Drive with `W`/`S`, steer with `A`/`D`, and use `Space`/`Shift` to climb or descend in the plane.
+- Glass City buildings include floors, stair runs, windows, and walk-through doors. Open the Village Market near a building entrance to buy an available residence; use **Go to my home** or a home's **Go home** button to return there. Ownership is saved with the world.
+- Select a block from the hotbar or use number keys `1`–`9`. `Q` breaks and `E` places when not beside a vehicle.
 - Press `I` or tap **Bag** to open inventory. Mining collects blocks, dropped items can be picked up by walking close, and inventory rows let you drop items.
+- Item counts beyond 64 are split into separate 64-item stacks in the bag.
 - Drag an inventory item onto a hotbar slot to assign it. On touch screens, tap the inventory item, then tap a hotbar slot.
 - Craft planks from logs, glass from sand and stone, and campfires from logs and stone. Crafted/placeable blocks appear in the hotbar with their inventory counts.
-- Defeat monsters for 50 XP and 25 coins. Open **World settings → Village market** near the spawn village to browse 1,000 procedural models across furniture, plants, animals, monsters, dragons, armor, weapons, tools, crystals, and decor. Buy or add a model, assign it from your inventory to the hotbar, and place it to decorate your home.
+- Defeat monsters for 50 XP and 25 coins. Open **World settings → Village market** near the spawn village to browse 1,000 procedural models, 40 supplied Block Bits models, and three Kenney blasters across furniture, plants, animals, monsters, dragons, armor, weapons, tools, crystals, and decor. Imported assets appear first in the market list and can be isolated with the **Imported assets** filter. Buy or add a model, assign it from your inventory to the hotbar, and place it to decorate your home. The Kenney blasters can also be selected as held weapons.
+- Open **World settings → Open map** and choose **Expand map** for a full-screen view. Select a location marker, then use **Teleport** to travel there.
 - Edit your displayed player name in the top bar.
 
-The shared starter world is generated from a random 32-bit seed shown in the top bar. The seed deterministically generates terrain, forested foothills, mountain ranges, and a flat spawn village as players explore; chunks are generated around each player and unloaded behind them. Set `WORLD_SEED` to a number from `0` to `4294967295` when starting the server to generate the same terrain again. Mining works underground down to the unbreakable bedrock layer, with gravity and landing on exposed blocks. The world includes a small house, buildable blocks, inventory, crafting, dropped items, three server-simulated wandering bots, and a generated creature catalogue with 256 species variants each for the village, coast, ocean, forest, and highlands (1,280 variants total). A small habitat-specific selection roams each region at once; names, animal model forms, colors, and sizes vary by world seed. Players can fight monsters, earn XP and coins, and spend coins on placeable procedural models at the village market. World edits and player inventory/progression are included in world saves and autosaves; without saving, data is held in server memory. Browser profiles are not authenticated accounts.
+The shared starter world is generated from a random 32-bit seed shown in the top bar. The seed deterministically generates terrain, forested foothills, mountain ranges, and a flat spawn village as players explore; chunks are generated around each player and unloaded behind them. Set `WORLD_SEED` to a number from `0` to `4294967295` when starting the server to generate the same terrain again. Mining works underground down to the unbreakable bedrock layer, with gravity and landing on exposed blocks. The world includes a small house, buildable blocks, inventory, crafting, dropped items, and three server-simulated village bots that wander locally, approach nearby players, and steer around solid blocks. It also has a generated creature catalogue with 256 species variants each for the village, coast, ocean, forest, and highlands (1,280 variants total). A small habitat-specific selection roams each region at once; names, animal model forms, colors, and sizes vary by world seed. Players can fight monsters, earn XP and coins, and spend coins on placeable procedural models at the village market. World edits and player inventory/progression are included in world saves and autosaves; without saving, data is held in server memory. Browser profiles are not authenticated accounts.
 
 ## Minecraft mod compatibility
 
@@ -54,5 +59,9 @@ Voxelize's README attributes Pixel Perfection by XSSheep, modified, under [CC BY
 
 The Voxland client/server code and generated campfire texture are original and separate from the Voxelize runtime. Check individual licenses before reusing other third-party assets or code.
 
-Animal models are from Quaternius' [Ultimate Animated Animal Pack](https://quaternius.com/packs/ultimateanimatedanimals.html), released under [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/). The bundled cow, alpaca, fox, and wolf models include idle and walking animations.
+In-game animals and fish use block-form meshes with species-specific colors and shapes. The repository also retains animal GLTF source files from Quaternius' [Ultimate Animated Animal Pack](https://quaternius.com/packs/ultimateanimatedanimals.html), released under [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/); these source models are not loaded by the game.
+
+The supplied Block Bits glTF models in `src/assets/Assets/gltf/` use the supplied texture atlas in `src/assets/Textures/`. No source or license metadata was included with those files; verify their redistribution terms before publishing the game or its assets.
+
+Three weapon models (blaster-a, blaster-b, and blaster-c) are from Kenney's [Blaster Kit](https://kenney.nl/assets/blaster-kit), licensed CC0 1.0. The pack's license is included at `src/assets/kenney-blaster-kit/License.txt`.
 # JesseCraft

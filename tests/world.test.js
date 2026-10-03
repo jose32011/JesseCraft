@@ -6,6 +6,7 @@ import {
   blockKey,
   canCraft,
   canEditBlock,
+  cityPropertyNear,
   createChunkBlocks,
   getBaseBlockAt,
   isValidBlockPosition,
@@ -19,17 +20,23 @@ import {
   PLANET_RADIUS,
   planetPointAt,
   isNearHarbor,
+  listCityProperties,
   RECIPES,
   terrainHeightAt,
   wrapPlanetX,
+  WORLD_LOCATIONS,
 } from "../server/world.js";
-import { MODEL_CATALOG, MODEL_ITEM_BY_ID } from "../shared/models.js";
+import { MODEL_CATALOG, MODEL_CATEGORIES_LIST, MODEL_ITEM_BY_ID } from "../shared/models.js";
 
-test("provides a thousand distinct procedural catalog models", () => {
-  assert.equal(MODEL_CATALOG.length, 1000);
-  assert.equal(MODEL_ITEM_BY_ID.size, 1000);
-  assert.equal(new Set(MODEL_CATALOG.map(({ id }) => id)).size, 1000);
-  assert.equal(new Set(MODEL_CATALOG.map(({ category }) => category)).size, 10);
+test("provides a thousand procedural models plus supplied and CC0 asset models", () => {
+  assert.equal(MODEL_CATALOG.length, 1043);
+  assert.equal(MODEL_ITEM_BY_ID.size, 1043);
+  assert.equal(new Set(MODEL_CATALOG.map(({ id }) => id)).size, 1043);
+  assert.equal(new Set(MODEL_CATALOG.map(({ category }) => category)).size, 11);
+  assert.equal(MODEL_CATALOG.filter(({ assetKey }) => assetKey?.startsWith("block-bits/")).length, 40);
+  assert.equal(MODEL_CATALOG.filter(({ assetKey }) => assetKey?.startsWith("kenney-blaster-kit/")).length, 3);
+  assert.equal(MODEL_CATEGORIES_LIST[0].id, "imported");
+  assert.ok(MODEL_CATALOG.slice(0, 43).every(({ assetKey }) => assetKey));
   for (const model of MODEL_CATALOG) {
     assert.ok(model.name);
     assert.ok(model.price > 0);
@@ -85,11 +92,15 @@ test("allows mining and placing underground while protecting bedrock", () => {
   const seed = 27;
   const underground = { x: 20, y: -10, z: 20 };
   const bedrock = { x: 20, y: BEDROCK_Y, z: 20 };
+  const chunk = createChunkBlocks(1, 1, seed);
 
   assert.equal(getBaseBlockAt(underground.x, underground.y, underground.z, seed), "stone");
   assert.equal(canEditBlock(underground, "stone", "remove", edits, seed), true);
   edits.set(blockKey(underground.x, underground.y, underground.z), null);
   assert.equal(canEditBlock(underground, "stone", "place", edits, seed), true);
+  assert.equal(chunk.get(blockKey(20, BEDROCK_Y, 20)), "stone");
+  assert.equal(isValidBlockPosition({ ...bedrock, y: BEDROCK_Y - 1 }), false);
+  assert.equal(isValidBlockPosition({ ...bedrock, y: BEDROCK_Y + 1 }), true);
   assert.equal(canEditBlock(bedrock, "stone", "remove", edits, seed), false);
 });
 
@@ -124,7 +135,7 @@ test("keeps block coordinates inside the finite planet", () => {
 test("preserves the starter house in the spawn chunk", () => {
   const blocks = createChunkBlocks(0, 0, 12345);
   assert.equal(blocks.get(blockKey(4, 0, 4)), "oak_planks");
-  assert.equal(blocks.has(blockKey(5, 1, 2)), false);
+  assert.equal(blocks.get(blockKey(5, 1, 2)), "oak_door");
   assert.equal(blocks.get(blockKey(5, 3, 2)), "oak_log");
   assert.equal(blocks.get(blockKey(4, 2, 6)), "glass");
 });
@@ -143,6 +154,39 @@ test("generates a seeded city building and road blocks", () => {
   const [key, type] = facade;
   const [x, y, z] = key.split(",").map(Number);
   assert.ok(canEditBlock({ x, y, z }, type, "remove", cityChunk, 12345));
+});
+
+test("generates city residences with floor plates, stair access, and entrance openings", () => {
+  const seed = 12345;
+  const property = listCityProperties(seed)[0];
+  assert.ok(property);
+  assert.equal(cityPropertyNear(property.entranceX, property.entranceZ, seed)?.id, property.id);
+
+  const blocks = createChunkBlocks(Math.floor(property.x / 16), Math.floor(property.z / 16), seed);
+  assert.equal(blocks.get(blockKey(property.x, 4, property.z)), "oak_planks");
+  assert.equal(getBaseBlockAt(property.x - 2, 1, property.z - 2, seed), "oak_planks");
+  assert.equal(getBaseBlockAt(property.x - 1, 2, property.z - 2, seed), "oak_planks");
+  assert.equal(getBaseBlockAt(property.entranceX, 1, property.entranceZ + 1, seed), "oak_door");
+  assert.equal(getBaseBlockAt(property.entranceX, 2, property.entranceZ + 1, seed), "oak_door");
+});
+
+test("generates a named airport location with runway and terminal", () => {
+  const airport = WORLD_LOCATIONS.find(({ id }) => id === "airport");
+  assert.deepEqual(airport, {
+    id: "airport",
+    name: "Glass City Airport",
+    x: 72,
+    z: -72,
+    yaw: Math.PI,
+    type: "airport",
+  });
+
+  const airportChunk = createChunkBlocks(4, -5, 12345);
+  const terminalChunk = createChunkBlocks(5, -6, 12345);
+  assert.equal(airportChunk.get(blockKey(72, 0, -72)), "black_concrete");
+  assert.equal(airportChunk.get(blockKey(72, 1, -72)), "white_concrete");
+  assert.equal(terminalChunk.get(blockKey(83, 0, -84)), "white_concrete");
+  assert.equal(terminalChunk.get(blockKey(83, 6, -84)), "black_concrete");
 });
 
 test("generates a sandy city beach, city sidewalk trees, and surrounding forest", () => {

@@ -5,6 +5,7 @@ export const BLOCK_TYPES = new Set([
   "dirt",
   "stone",
   "oak_planks",
+  "oak_door",
   "oak_log",
   "glass",
   "leaves",
@@ -29,8 +30,35 @@ export const BLOCK_TYPES = new Set([
   "copper_ingot",
   "iron_ore",
   "iron_ingot",
+  "paper",
+  "silver_ore",
+  "silver_ingot",
+  "steel_ingot",
+  "coal",
+  "ruby",
+  "emerald",
+  "torch",
+  "lantern",
   "wooden_sword",
   "stone_sword",
+  "stone_pickaxe",
+  "iron_pickaxe",
+  "iron_axe",
+  "iron_sword",
+  "steel_pickaxe",
+  "steel_axe",
+  "steel_sword",
+  "shield",
+  "bucket",
+  "compass",
+  "spyglass",
+  "map",
+  "health_potion",
+  "strength_potion",
+  "iron_armor",
+  "steel_armor",
+  "guardian_helm",
+  "boss_key",
 ]);
 
 export const CHUNK_SIZE = 16;
@@ -46,15 +74,90 @@ export const HARBOR_WATER_OUTER_RADIUS = 190;
 export const HARBOR_BUILD_RADIUS = 170;
 export const FOREST_OUTER_RADIUS = 228;
 export const CITY_BLOCK_SIZE = 32;
-export const MAX_CITY_BUILDING_HEIGHT = 26;
+export const MAX_CITY_BUILDING_HEIGHT = 40;
 export const WORLD_LOCATIONS = [
-  { id: "village", name: "Starter Village", x: 0, z: 0, yaw: 0 },
-  { id: "city", name: "Glass City", x: 48, z: 0, yaw: Math.PI },
-  { id: "beach", name: "Sandy Beach", x: 0, z: 124, yaw: 0 },
-  { id: "harbor", name: "Harbor Pier", x: 0, z: 140, yaw: 0 },
-  { id: "forest", name: "Pine Forest", x: 0, z: 210, yaw: 0 },
-  { id: "highlands", name: "Highlands", x: 40, z: 284, yaw: 0 },
+  { id: "village", name: "Starter Village", x: 0, z: 0, yaw: 0, type: "village" },
+  { id: "north-village", name: "Northwatch Village", x: -72, z: -46, yaw: 0, type: "village" },
+  { id: "east-village", name: "Amber Fields", x: 104, z: 22, yaw: 0, type: "village" },
+  { id: "city", name: "Glass City", x: 48, z: 0, yaw: Math.PI, type: "city" },
+  { id: "airport", name: "Glass City Airport", x: 72, z: -72, yaw: Math.PI, type: "airport" },
+  { id: "beach", name: "Sandy Beach", x: 0, z: 124, yaw: 0, type: "beach" },
+  { id: "harbor", name: "Harbor Pier", x: 0, z: 140, yaw: 0, type: "harbor" },
+  { id: "forest", name: "Pine Forest", x: 0, z: 210, yaw: 0, type: "forest" },
+  { id: "highlands", name: "Highlands", x: 40, z: 284, yaw: 0, type: "highlands" },
+  { id: "mine", name: "Copper Mine", x: -120, z: -170, yaw: 0, type: "mine" },
+  { id: "dungeon", name: "Moonstone Dungeon", x: -150, z: 110, yaw: 0, type: "dungeon" },
+  { id: "castle", name: "Sunspire Castle", x: 160, z: -120, yaw: 0, type: "castle" },
+  { id: "ruins", name: "Ancient Ruins", x: 128, z: 184, yaw: 0, type: "ruins" },
+  { id: "dragon-peak", name: "Dragon Peak", x: -180, z: 250, yaw: 0, type: "boss" },
 ];
+
+export const VILLAGE_TRAVEL_NETWORK = [
+  { from: "village", to: "north-village", route: "North Road", distance: "short" },
+  { from: "village", to: "city", route: "Market Lane", distance: "short" },
+  { from: "city", to: "east-village", route: "East Road", distance: "moderate" },
+  { from: "city", to: "harbor", route: "Harbor Walk", distance: "moderate" },
+  { from: "harbor", to: "forest", route: "Forest Trail", distance: "moderate" },
+  { from: "forest", to: "highlands", route: "Highland Pass", distance: "long" },
+  { from: "village", to: "mine", route: "Mine Way", distance: "long" },
+  { from: "north-village", to: "dungeon", route: "Watch Path", distance: "moderate" },
+  { from: "east-village", to: "castle", route: "Castle Road", distance: "long" },
+  { from: "forest", to: "ruins", route: "Moon Trail", distance: "long" },
+  { from: "highlands", to: "dragon-peak", route: "Dragon Spur", distance: "long" },
+];
+
+export function findTravelRoute(fromId, toId) {
+  if (!fromId || !toId) return null;
+  const start = String(fromId);
+  const target = String(toId);
+  if (start === target) return { from: start, to: target, path: [start], legs: [], route: "Here" };
+
+  const adjacency = new Map();
+  for (const leg of VILLAGE_TRAVEL_NETWORK) {
+    const from = String(leg.from);
+    const to = String(leg.to);
+    if (!adjacency.has(from)) adjacency.set(from, []);
+    if (!adjacency.has(to)) adjacency.set(to, []);
+    adjacency.get(from).push({ ...leg, from, to });
+    adjacency.get(to).push({ ...leg, from: to, to: from });
+  }
+
+  const queue = [start];
+  const previous = new Map([[start, null]]);
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (current === target) break;
+    for (const leg of adjacency.get(current) ?? []) {
+      if (previous.has(leg.to)) continue;
+      previous.set(leg.to, current);
+      queue.push(leg.to);
+    }
+  }
+
+  if (!previous.has(target)) return null;
+  const path = [];
+  const legs = [];
+  let cursor = target;
+  while (cursor) {
+    path.unshift(cursor);
+    const prev = previous.get(cursor);
+    if (prev) {
+      const connection = (adjacency.get(prev) ?? []).find((leg) => leg.to === cursor);
+      if (connection) legs.unshift(connection);
+      cursor = prev;
+    } else {
+      cursor = null;
+    }
+  }
+
+  return {
+    from: start,
+    to: target,
+    path,
+    legs,
+    route: legs.map((leg) => leg.route).join(" → ") || "Direct travel",
+  };
+}
 export const HARBOR_SEABED_Y = -4;
 export const HARBOR_DOCK_MIN_Z = 120;
 export const HARBOR_DOCK_MAX_Z = 164;
@@ -142,10 +245,10 @@ export const RECIPES = [
     resultCount: 1,
   },
   {
-    id: "copper_ingot",
-    label: "Copper ingot ×1",
-    ingredients: { copper_ore: 2, campfire: 1 },
-    result: "copper_ingot",
+    id: "stone_pickaxe",
+    label: "Stone pickaxe ×1",
+    ingredients: { stone: 3, oak_planks: 2 },
+    result: "stone_pickaxe",
     resultCount: 1,
   },
   {
@@ -153,6 +256,146 @@ export const RECIPES = [
     label: "Iron ingot ×1",
     ingredients: { iron_ore: 2, campfire: 1 },
     result: "iron_ingot",
+    resultCount: 1,
+  },
+  {
+    id: "steel_ingot",
+    label: "Steel ingot ×1",
+    ingredients: { iron_ingot: 2, coal: 1 },
+    result: "steel_ingot",
+    resultCount: 1,
+  },
+  {
+    id: "health_potion",
+    label: "Health potion ×1",
+    ingredients: { glass: 1, ruby: 1, water: 1 },
+    result: "health_potion",
+    resultCount: 1,
+  },
+  {
+    id: "strength_potion",
+    label: "Strength potion ×1",
+    ingredients: { glass: 1, emerald: 1, coal: 1 },
+    result: "strength_potion",
+    resultCount: 1,
+  },
+  {
+    id: "iron_armor",
+    label: "Iron armor ×1",
+    ingredients: { iron_ingot: 4, oak_planks: 1 },
+    result: "iron_armor",
+    resultCount: 1,
+  },
+  {
+    id: "steel_armor",
+    label: "Steel armor ×1",
+    ingredients: { steel_ingot: 3, ruby: 1 },
+    result: "steel_armor",
+    resultCount: 1,
+  },
+  {
+    id: "guardian_helm",
+    label: "Guardian helm ×1",
+    ingredients: { iron_ingot: 2, emerald: 1, glass: 1 },
+    result: "guardian_helm",
+    resultCount: 1,
+  },
+  {
+    id: "boss_key",
+    label: "Boss key ×1",
+    ingredients: { ruby: 2, steel_ingot: 1 },
+    result: "boss_key",
+    resultCount: 1,
+  },
+  {
+    id: "iron_pickaxe",
+    label: "Iron pickaxe ×1",
+    ingredients: { iron_ingot: 3, oak_planks: 2 },
+    result: "iron_pickaxe",
+    resultCount: 1,
+  },
+  {
+    id: "iron_axe",
+    label: "Iron axe ×1",
+    ingredients: { iron_ingot: 3, oak_planks: 1 },
+    result: "iron_axe",
+    resultCount: 1,
+  },
+  {
+    id: "iron_sword",
+    label: "Iron sword ×1",
+    ingredients: { iron_ingot: 2, oak_planks: 1 },
+    result: "iron_sword",
+    resultCount: 1,
+  },
+  {
+    id: "steel_pickaxe",
+    label: "Steel pickaxe ×1",
+    ingredients: { steel_ingot: 3, oak_planks: 2 },
+    result: "steel_pickaxe",
+    resultCount: 1,
+  },
+  {
+    id: "steel_axe",
+    label: "Steel axe ×1",
+    ingredients: { steel_ingot: 3, oak_planks: 1 },
+    result: "steel_axe",
+    resultCount: 1,
+  },
+  {
+    id: "steel_sword",
+    label: "Steel sword ×1",
+    ingredients: { steel_ingot: 2, oak_planks: 1 },
+    result: "steel_sword",
+    resultCount: 1,
+  },
+  {
+    id: "torch",
+    label: "Torch ×4",
+    ingredients: { coal: 1, oak_log: 1 },
+    result: "torch",
+    resultCount: 4,
+  },
+  {
+    id: "lantern",
+    label: "Lantern ×1",
+    ingredients: { iron_ingot: 2, glass: 1, torch: 1 },
+    result: "lantern",
+    resultCount: 1,
+  },
+  {
+    id: "shield",
+    label: "Shield ×1",
+    ingredients: { steel_ingot: 2, oak_planks: 2 },
+    result: "shield",
+    resultCount: 1,
+  },
+  {
+    id: "compass",
+    label: "Compass ×1",
+    ingredients: { iron_ingot: 2, red_concrete: 1 },
+    result: "compass",
+    resultCount: 1,
+  },
+  {
+    id: "spyglass",
+    label: "Spyglass ×1",
+    ingredients: { glass: 2, iron_ingot: 1, oak_planks: 1 },
+    result: "spyglass",
+    resultCount: 1,
+  },
+  {
+    id: "map",
+    label: "Map ×1",
+    ingredients: { paper: 2, red_concrete: 1 },
+    result: "map",
+    resultCount: 1,
+  },
+  {
+    id: "copper_ingot",
+    label: "Copper ingot ×1",
+    ingredients: { copper_ore: 2, campfire: 1 },
+    result: "copper_ingot",
     resultCount: 1,
   },
 ];
@@ -251,6 +494,81 @@ export function harborSeabedAt(x, z, seed = 1) {
   return -Math.max(2, Math.min(8, radialDepth + channel));
 }
 
+function structureBlockAt(x, y, z, seed = 1) {
+  const worldSeed = normalizeSeed(seed);
+  const mine = WORLD_LOCATIONS.find((entry) => entry.id === "mine");
+  const dungeon = WORLD_LOCATIONS.find((entry) => entry.id === "dungeon");
+  const castle = WORLD_LOCATIONS.find((entry) => entry.id === "castle");
+  const airport = WORLD_LOCATIONS.find((entry) => entry.id === "airport");
+
+  if (airport) {
+    const airportX = x - airport.x;
+    const airportZ = z - airport.z;
+    if (Math.abs(airportX) <= 5 && Math.abs(airportZ) <= 25) {
+      if (y === 0) return "black_concrete";
+      if (y === 1 && airportX === 0 && Math.abs(airportZ) % 8 <= 2) return "white_concrete";
+    }
+    if (airportX >= 8 && airportX <= 19 && airportZ >= -17 && airportZ <= -5) {
+      if (y === 0) return "white_concrete";
+      if (y >= 1 && y <= 5) {
+        if (airportX === 8 || airportX === 19 || airportZ === -17 || airportZ === -5) {
+          if (airportX === 13 && airportZ === -17 && y <= 2) return null;
+          if (y === 2 && (airportX === 11 || airportX === 16)) return "glass";
+          return "white_concrete";
+        }
+        return null;
+      }
+      if (y === 6) return "black_concrete";
+    }
+  }
+
+  if (mine && Math.hypot(x - mine.x, z - mine.z) <= 12) {
+    const offsetX = x - mine.x;
+    const offsetZ = z - mine.z;
+    const depth = y;
+    if (y === 0 && Math.abs(offsetX) <= 4 && Math.abs(offsetZ) <= 4) return "stone";
+    if (y > 0 && y <= 12 && Math.abs(offsetX) <= 3 && Math.abs(offsetZ) <= 3) {
+      if (y % 3 === 0 && (offsetX !== 0 || offsetZ !== 0)) return "iron_ore";
+      if (y % 2 === 0 && (Math.abs(offsetX) + Math.abs(offsetZ) > 0)) return "coal";
+      return "stone";
+    }
+    if (y >= 2 && y <= 8 && Math.abs(offsetX) <= 1 && Math.abs(offsetZ) <= 1 && (offsetX === 0 || offsetZ === 0)) {
+      return (depth + (offsetX + offsetZ + worldSeed) % 3) % 3 === 0 ? "copper_ore" : "stone";
+    }
+    if (y === 1 && Math.abs(offsetX) <= 5 && Math.abs(offsetZ) <= 5) return "oak_log";
+  }
+
+  if (dungeon && Math.hypot(x - dungeon.x, z - dungeon.z) <= 14) {
+    const offsetX = x - dungeon.x;
+    const offsetZ = z - dungeon.z;
+    if (y === 0 && Math.abs(offsetX) <= 6 && Math.abs(offsetZ) <= 6) return "stone";
+    if (y > 0 && y <= 6 && Math.abs(offsetX) <= 5 && Math.abs(offsetZ) <= 5) {
+      const wall = (Math.abs(offsetX) === 5 || Math.abs(offsetZ) === 5) && y >= 1 && y <= 5;
+      if (wall) return (x + z + worldSeed) % 3 === 0 ? "obsidian" : "stone";
+      if ((x + z + worldSeed) % 7 === 0) return "torch";
+      return "stone";
+    }
+    if (y === 3 && Math.abs(offsetX) <= 2 && Math.abs(offsetZ) <= 2) return "red_concrete";
+  }
+
+  if (castle && Math.hypot(x - castle.x, z - castle.z) <= 19) {
+    const offsetX = x - castle.x;
+    const offsetZ = z - castle.z;
+    if (y === 0 && Math.abs(offsetX) <= 8 && Math.abs(offsetZ) <= 8) return "brick";
+    if (y >= 1 && y <= 8 && Math.abs(offsetX) <= 8 && Math.abs(offsetZ) <= 8) {
+      const wall = Math.abs(offsetX) === 8 || Math.abs(offsetZ) === 8 || (Math.abs(offsetX) <= 2 && Math.abs(offsetZ) <= 2 && y >= 2);
+      if (wall) return (x + z + y + worldSeed) % 4 === 0 ? "black_concrete" : "brick";
+      if ((x + z + y) % 9 === 0 && y <= 5) return "lantern";
+      if (y === 2 && ((Math.abs(offsetX) <= 2 && Math.abs(offsetZ) <= 2) || (Math.abs(offsetX) <= 1 && Math.abs(offsetZ) <= 1))) {
+        return "glass";
+      }
+      return "stone";
+    }
+  }
+
+  return null;
+}
+
 export function terrainHeightAt(x, z, seed = 1) {
   x = wrapPlanetX(x);
   z = Math.max(PLANET_MIN_Z, Math.min(PLANET_MAX_Z, z));
@@ -328,8 +646,8 @@ function cityColumnAt(x, z, seed) {
   const cellZ = Math.floor((z + CITY_BLOCK_SIZE / 2) / CITY_BLOCK_SIZE);
   const localX = x - cellX * CITY_BLOCK_SIZE;
   const localZ = z - cellZ * CITY_BLOCK_SIZE;
-  const onStreet = Math.abs(localX) >= 12 || Math.abs(localZ) >= 12;
-  if (onStreet) return {
+  const roadEdge = Math.abs(localX) >= 12 || Math.abs(localZ) >= 12;
+  if (roadEdge) return {
     height: 0,
     street: true,
     type: Math.abs(localX) === 12 || Math.abs(localX) === 13 || Math.abs(localZ) === 12 || Math.abs(localZ) === 13
@@ -338,37 +656,104 @@ function cityColumnAt(x, z, seed) {
   };
 
   if (Math.hypot(cellX * CITY_BLOCK_SIZE, cellZ * CITY_BLOCK_SIZE) < 18) return null;
-  const width = 14 + Math.floor(seededValue(cellX + 17, cellZ - 3, seed) * 6);
-  const depth = 14 + Math.floor(seededValue(cellX - 9, cellZ + 21, seed) * 6);
+  const width = 10 + Math.floor(seededValue(cellX + 11, cellZ - 7, seed) * 12);
+  const depth = 10 + Math.floor(seededValue(cellX - 5, cellZ + 15, seed) * 12);
   if (Math.abs(localX) > Math.floor(width / 2) || Math.abs(localZ) > Math.floor(depth / 2)) return null;
 
-  const height = 9 + Math.floor(seededValue(cellX, cellZ, seed) * 18);
-  const palette = ["white_concrete", "black_concrete"];
-  const facade = palette[Math.floor(seededValue(cellX + 5, cellZ + 11, seed) * palette.length)];
+  const fortified = Math.hypot(cellX * CITY_BLOCK_SIZE, cellZ * CITY_BLOCK_SIZE) < 80 && (Math.abs(cellX) + Math.abs(cellZ)) % 2 === 0;
+  const height = fortified
+    ? 18 + Math.floor(seededValue(cellX, cellZ, seed) * 18)
+    : 12 + Math.floor(seededValue(cellX, cellZ, seed) * 28);
+  const palette = ["white_concrete", "black_concrete", "brick", "red_concrete"];
+  const facade = palette[Math.floor(seededValue(cellX + 8, cellZ + 4, seed) * palette.length)];
+  const accent = seededValue(cellX - 19, cellZ + 27, seed) > 0.73
+    ? "red_concrete"
+    : seededValue(cellX + 13, cellZ - 11, seed) > 0.83
+      ? "brick"
+      : "white_concrete";
   const wall = Math.abs(localX) === Math.floor(width / 2) || Math.abs(localZ) === Math.floor(depth / 2);
   return {
     height,
     facade,
+    accent,
+    fortified,
     wall,
+    localX,
+    localZ,
+    width,
+    depth,
     corner: Math.abs(localX) === Math.floor(width / 2) && Math.abs(localZ) === Math.floor(depth / 2),
-    window: Math.abs(localX + localZ + cellX + cellZ) % 4 === 0,
+    window: (Math.abs(localX + localZ + cellX + cellZ) % 3) === 0,
   };
 }
 
 function cityColumnBlockAt(column, y) {
   if (!column) return null;
   if (column.street) return y === 0 ? column.type : null;
-  const { height, facade, wall, corner, window } = column;
+  const { height, facade, accent, fortified, wall, corner, window, localX = 0, localZ = 0, depth = 12 } = column;
   if (y === 0) return "white_concrete";
   if (y < 0 || y > height) return null;
-  if (y === height) return "black_concrete";
-  if (y % 5 === 0) return wall ? facade : "white_concrete";
-  if (!wall) return null;
-  if (y % 5 === 2 && window) return "glass";
-  if (y % 5 === 1 && corner) {
-    return "black_concrete";
+  const entrance = localX === 0 && localZ === -Math.floor(depth / 2);
+  if (entrance && y <= 2) return "oak_door";
+  if (
+    y > 0 &&
+    localZ === -2 &&
+    localX >= -2 &&
+    localX <= 1 &&
+    y % 4 === (localX + 3) % 4
+  ) {
+    return "oak_planks";
   }
-  return facade;
+  if (y % 4 === 0 && y < height && !wall) {
+    if (localZ === -2 && localX >= -2 && localX <= 1) return null;
+    return "oak_planks";
+  }
+  if (fortified && y > height - 4 && wall) return "brick";
+  if (y === height) return accent;
+  if (y >= height - 2 && wall) return accent;
+  if (y > 0 && y < height && !wall) return null;
+  if (y % 4 === 0) return wall ? facade : "white_concrete";
+  if (y % 4 === 1 && corner) return "black_concrete";
+  if ((y + Math.abs(localX) + Math.abs(localZ)) % 5 === 0 && wall) return accent;
+  if (wall && y % 4 === 2 && window) return "glass";
+  return wall ? facade : null;
+}
+
+export function listCityProperties(seed = 1) {
+  const properties = [];
+  const worldSeed = normalizeSeed(seed);
+  for (let cellX = -4; cellX <= 4; cellX += 1) {
+    for (let cellZ = -4; cellZ <= 4; cellZ += 1) {
+      const x = cellX * CITY_BLOCK_SIZE;
+      const z = cellZ * CITY_BLOCK_SIZE;
+      const column = cityColumnAt(x, z, worldSeed);
+      if (!column || column.street) continue;
+      properties.push({
+        id: `city-home-${cellX}-${cellZ}`,
+        name: `Glass City Residence ${properties.length + 1}`,
+        x,
+        z,
+        entranceX: x,
+        entranceZ: z - Math.floor(column.depth / 2) - 1,
+        price: 250 + column.height * 25,
+        height: column.height,
+      });
+    }
+  }
+  return properties;
+}
+
+export function cityPropertyNear(x, z, seed = 1, maxDistance = 5) {
+  let nearest = null;
+  let nearestDistance = maxDistance;
+  for (const property of listCityProperties(seed)) {
+    const distance = Math.hypot(wrapPlanetX(x - property.entranceX), z - property.entranceZ);
+    if (distance <= nearestDistance) {
+      nearest = property;
+      nearestDistance = distance;
+    }
+  }
+  return nearest;
 }
 
 function cityBlockAt(x, y, z, seed) {
@@ -438,7 +823,7 @@ function houseBlockAt(x, y, z) {
   if (x >= 2 && x <= 8 && z >= 1 && z <= 7 && y === 4) return "oak_planks";
   if (y < 1 || y > 3 || x < 3 || x > 7 || z < 2 || z > 6) return null;
   if (z === 2 || z === 6) {
-    if (z === 2 && x === 5 && y <= 2) return null;
+    if (z === 2 && x === 5 && y <= 2) return "oak_door";
     if (y === 2 && ((z === 6 && (x === 4 || x === 6)) || (z === 2 && x === 4))) {
       return "glass";
     }
@@ -469,6 +854,8 @@ export function getBaseBlockAt(x, y, z, seed = 1) {
   if (cityBlock) return cityBlock;
   const harbor = harborBlockAt(x, y, z, seed);
   if (harbor) return harbor;
+  const structure = structureBlockAt(x, y, z, seed);
+  if (structure) return structure;
   const beach = Math.hypot(wrapPlanetX(x), z) > CITY_RADIUS && Math.hypot(wrapPlanetX(x), z) <= CITY_BEACH_OUTER_RADIUS;
   if (beach && y === 0) return "sand";
   const water = Math.hypot(wrapPlanetX(x), z);
@@ -590,6 +977,15 @@ export function createChunkBlocks(chunkX, chunkZ, seed = 1) {
             if (leafDistance <= radius * 2) blocks.set(blockKey(treeX, y, treeZ), "leaves");
           }
         }
+      }
+    }
+  }
+
+  for (let x = startX; x < startX + CHUNK_SIZE; x += 1) {
+    for (let z = startZ; z < startZ + CHUNK_SIZE; z += 1) {
+      for (let y = BEDROCK_Y + 1; y <= MAX_BUILD_HEIGHT; y += 1) {
+        const structure = structureBlockAt(x, y, z, seed);
+        if (structure) blocks.set(blockKey(x, y, z), structure);
       }
     }
   }

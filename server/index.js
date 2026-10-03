@@ -23,6 +23,8 @@ import {
   MIN_PLANET_CHUNK_Z,
   MAX_STACK_SIZE,
   MAX_BUILD_HEIGHT,
+  cityPropertyNear,
+  listCityProperties,
   PLANET_MAX_X,
   PLANET_MAX_Z,
   PLANET_LATITUDE_BLOCKS,
@@ -55,6 +57,12 @@ const DEFAULT_PROFILE_STATS = {
 const PLAYER_ATTACK_DAMAGE = 20;
 const PLAYER_ATTACK_RANGE = 3.5;
 const PLAYER_ATTACK_COOLDOWN_MS = 650;
+const PLAYER_WEAPON_DAMAGE = new Map([
+  ["wooden_sword", 24],
+  ["stone_sword", 28],
+  ["iron_sword", 34],
+  ["steel_sword", 42],
+]);
 const MONSTER_KILL_XP = 50;
 const MONSTER_KILL_COINS = 25;
 const XP_PER_LEVEL = 100;
@@ -62,6 +70,12 @@ const MONSTER_ATTACK_RANGE = 2;
 const MONSTER_ATTACK_DAMAGE = 8;
 const MONSTER_ATTACK_COOLDOWN_MS = 1400;
 const MONSTER_RESPAWN_MS = 8000;
+const MAX_PLAYER_MAGIC_POTION_STACK = 3;
+const VEHICLE_SPAWNS = [
+  { id: "starter-car", type: "car", x: -12, z: 0 },
+  { id: "airport-plane", type: "plane", x: 70, z: -72 },
+  { id: "airport-car", type: "car", x: 83, z: -62 },
+];
 const MIME_TYPES = new Map([
   [".css", "text/css; charset=utf-8"],
   [".html", "text/html; charset=utf-8"],
@@ -78,10 +92,68 @@ function writeJson(socket, message) {
 
 function createBots() {
   return new Map([
-    ["bot-moss", { id: "bot-moss", name: "Moss", x: -4, z: -2, yaw: 0, color: "#76b86d", targetX: -4, targetZ: -2 }],
-    ["bot-pebble", { id: "bot-pebble", name: "Pebble", x: 1, z: -5, yaw: 0, color: "#d3a36e", targetX: 1, targetZ: -5 }],
-    ["bot-fern", { id: "bot-fern", name: "Fern", x: 8, z: 1, yaw: 0, color: "#8f8ed3", targetX: 8, targetZ: 1 }],
+    ["bot-moss", { id: "bot-moss", name: "Moss", x: -4, z: -2, homeX: -4, homeZ: -2, yaw: 0, color: "#76b86d", targetX: -4, targetZ: -2, behavior: "idle", walking: false, nextDecisionAt: 0, stuckTicks: 0 }],
+    ["bot-pebble", { id: "bot-pebble", name: "Pebble", x: 1, z: -5, homeX: 1, homeZ: -5, yaw: 0, color: "#d3a36e", targetX: 1, targetZ: -5, behavior: "idle", walking: false, nextDecisionAt: 0, stuckTicks: 0 }],
+    ["bot-fern", { id: "bot-fern", name: "Fern", x: 8, z: 1, homeX: 8, homeZ: 1, yaw: 0, color: "#8f8ed3", targetX: 8, targetZ: 1, behavior: "idle", walking: false, nextDecisionAt: 0, stuckTicks: 0 }],
   ]);
+}
+
+function createVehicles(seed = 1) {
+  const spawns = [...VEHICLE_SPAWNS];
+  const cityRoadCandidates = [];
+  for (let x = -100; x <= 100; x += 4) {
+    for (let z = -100; z <= 100; z += 4) {
+      const radius = Math.hypot(x, z);
+      if (
+        radius < 24 ||
+        radius > 103 ||
+        Math.hypot(x - 72, z + 72) < 32 ||
+        getBaseBlockAt(x, 0, z, seed) === null ||
+        getBaseBlockAt(x, 1, z, seed) !== null ||
+        getBaseBlockAt(x, 2, z, seed) !== null
+      ) continue;
+      cityRoadCandidates.push({ x, z });
+    }
+  }
+  for (let index = 0; index < Math.min(20, cityRoadCandidates.length); index += 1) {
+    const candidate = cityRoadCandidates[Math.floor((index + 0.5) * cityRoadCandidates.length / 20)];
+    if (!candidate) continue;
+    spawns.push({ id: `city-car-${index + 1}`, type: "car", ...candidate });
+  }
+  return new Map(spawns.map(({ id, type, x, z }) => [
+    id,
+    {
+      id,
+      type,
+      x,
+      y: terrainHeightAt(x, z, seed),
+      z,
+      yaw: 0,
+      occupantId: null,
+    },
+  ]));
+}
+
+function restoreVehicles(savedVehicles, seed) {
+  const vehicles = createVehicles(seed);
+  if (!Array.isArray(savedVehicles)) return vehicles;
+  for (const savedVehicle of savedVehicles) {
+    if (
+      !savedVehicle ||
+      typeof savedVehicle.id !== "string" ||
+      !vehicles.has(savedVehicle.id) ||
+      !Number.isFinite(savedVehicle.x) ||
+      !Number.isFinite(savedVehicle.z)
+    ) continue;
+    const existing = vehicles.get(savedVehicle.id);
+    vehicles.set(savedVehicle.id, {
+      ...existing,
+      ...savedVehicle,
+      y: Number.isFinite(savedVehicle.y) ? savedVehicle.y : existing.y,
+      occupantId: null,
+    });
+  }
+  return vehicles;
 }
 
 function createAnimals(seed = 1) {
@@ -103,7 +175,7 @@ function createAnimals(seed = 1) {
         scale: species.scale,
         pattern: species.pattern,
         x,
-        y: species.aquatic ? ground + 3 : ground + 0.08,
+        y: species.aquatic ? ground + 3 : ground + 1,
         z,
         yaw: 0,
         homeX: x,
@@ -140,23 +212,35 @@ function createMonsters() {
   return new Map([
     ["monster-crab", {
       id: "monster-crab", name: "Dune Crab", species: "crab", x: 0, z: 126, yaw: 0, color: "#e58154",
-      homeX: 0, homeZ: 126, targetX: 0, targetZ: 126, health: 60, maxHealth: 60, lastAttackAt: 0, respawnAt: 0,
+      homeX: 0, homeZ: 126, targetX: 0, targetZ: 126, health: 60, maxHealth: 60, lastAttackAt: 0, respawnAt: 0, boss: false, active: true,
     }],
     ["monster-slime", {
       id: "monster-slime", name: "Moss Slime", species: "slime", x: 4, z: 210, yaw: 0, color: "#79c66f",
-      homeX: 4, homeZ: 210, targetX: 4, targetZ: 210, health: 60, maxHealth: 60, lastAttackAt: 0, respawnAt: 0,
+      homeX: 4, homeZ: 210, targetX: 4, targetZ: 210, health: 60, maxHealth: 60, lastAttackAt: 0, respawnAt: 0, boss: false, active: true,
     }],
     ["monster-wisp", {
       id: "monster-wisp", name: "Highland Wisp", species: "wisp", x: 44, z: 284, yaw: 0, color: "#76cbd1",
-      homeX: 44, homeZ: 284, targetX: 44, targetZ: 284, health: 60, maxHealth: 60, lastAttackAt: 0, respawnAt: 0,
+      homeX: 44, homeZ: 284, targetX: 44, targetZ: 284, health: 60, maxHealth: 60, lastAttackAt: 0, respawnAt: 0, boss: false, active: true,
+    }],
+    ["monster-skeleton", {
+      id: "monster-skeleton", name: "Crypt Skeleton", species: "skeleton", x: -150, z: 112, yaw: 0, color: "#d0dae8",
+      homeX: -150, homeZ: 112, targetX: -150, targetZ: 112, health: 90, maxHealth: 90, lastAttackAt: 0, respawnAt: 0, boss: false, active: false,
+    }],
+    ["monster-warden", {
+      id: "monster-warden", name: "Mine Warden", species: "warden", x: -120, z: -171, yaw: 0, color: "#a9e0b3",
+      homeX: -120, homeZ: -171, targetX: -120, targetZ: -171, health: 120, maxHealth: 120, lastAttackAt: 0, respawnAt: 0, boss: false, active: false,
+    }],
+    ["boss-ashen-king", {
+      id: "boss-ashen-king", name: "Ashen King", species: "boss", x: 160, z: -120, yaw: 0, color: "#ffb166",
+      homeX: 160, homeZ: -120, targetX: 160, targetZ: -120, health: 220, maxHealth: 220, lastAttackAt: 0, respawnAt: 0, boss: true, active: false,
     }],
   ]);
 }
 
 function serializeMonsters(room) {
   return [...room.monsters.values()]
-    .filter((monster) => monster.health > 0)
-    .map(({ id, name, species, x, z, yaw, color, health, maxHealth }) => ({
+    .filter((monster) => monster.health > 0 && monster.active !== false)
+    .map(({ id, name, species, x, z, yaw, color, health, maxHealth, boss }) => ({
       id,
       name,
       species,
@@ -166,6 +250,7 @@ function serializeMonsters(room) {
       color,
       health,
       maxHealth,
+      boss: Boolean(boss),
     }));
 }
 
@@ -200,7 +285,6 @@ function createInventory(mode = "survival") {
 
 function addItems(inventory, item, amount) {
   const current = inventory.get(item) ?? 0;
-  if (current + amount > MAX_STACK_SIZE) return false;
   inventory.set(item, current + amount);
   return true;
 }
@@ -217,34 +301,126 @@ function inventoryItems(inventory) {
   return [...inventory].sort(([left], [right]) => left.localeCompare(right));
 }
 
+function getPlayerAttackPower(player) {
+  const base = PLAYER_ATTACK_DAMAGE + (player.gearTier ?? 0) * 6;
+  if ((player.buffs ?? {}).strengthPotion) return base + 12;
+  return base;
+}
+
+function applyPotionEffect(player, potionId) {
+  if (potionId === "health_potion") {
+    player.health = Math.min(MAX_PLAYER_HEALTH + (player.gearTier ?? 0) * 8, (player.health ?? 0) + 24);
+    return { type: "health", amount: 24, message: "You feel your wounds close." };
+  }
+  if (potionId === "strength_potion") {
+    player.buffs = { ...(player.buffs ?? {}), strengthPotion: Date.now() + 25_000 };
+    return { type: "strength", amount: 12, message: "Your strength surges for a short time." };
+  }
+  return { type: "none", amount: 0, message: "That item does not work as a potion." };
+}
+
+function entityCanOccupy(room, x, z, feetY, radius = 0.3) {
+  for (const offsetX of [-radius, 0, radius]) {
+    for (const offsetZ of [-radius, 0, radius]) {
+      const blockX = Math.round(x + offsetX);
+      const blockZ = Math.round(z + offsetZ);
+      for (const blockY of [feetY, feetY + 1]) {
+        const key = blockKey(blockX, blockY, blockZ);
+        const type = room.blocks.has(key)
+          ? room.blocks.get(key)
+          : getBaseBlockAt(blockX, blockY, blockZ, room.seed);
+        if (type && type !== "water" && type !== "oak_door") return false;
+      }
+    }
+  }
+  return true;
+}
+
 function botCanMove(room, bot, x, z) {
   const blockX = Math.round(x);
   const blockZ = Math.round(z);
   const nextGround = terrainHeightAt(blockX, blockZ, room.seed);
   const currentGround = terrainHeightAt(Math.round(bot.x), Math.round(bot.z), room.seed);
   if (nextGround > currentGround + 1.05) return false;
-  for (const blockY of [nextGround + 1, nextGround + 2]) {
-    const key = blockKey(blockX, blockY, blockZ);
-    const type = room.blocks.has(key)
-      ? room.blocks.get(key)
-      : getBaseBlockAt(blockX, blockY, blockZ, room.seed);
-    if (type && type !== "water") return false;
+  return entityCanOccupy(room, x, z, nextGround + 1, bot.aquatic ? 0.2 : 0.35);
+}
+
+function findNearbyPlayer(room, players, bot, range) {
+  let nearest = null;
+  let nearestDistance = range;
+  for (const id of room.members) {
+    const candidate = players.get(id);
+    if (!candidate || candidate.health <= 0) continue;
+    const distance = Math.hypot(candidate.x - bot.x, candidate.z - bot.z);
+    if (distance < nearestDistance) {
+      nearest = candidate;
+      nearestDistance = distance;
+    }
   }
-  return true;
+  return nearest ? { player: nearest, distance: nearestDistance } : null;
+}
+
+function chooseBotStep(room, bot, step) {
+  const targetX = bot.targetX - bot.x;
+  const targetZ = bot.targetZ - bot.z;
+  const distance = Math.hypot(targetX, targetZ);
+  if (distance < 0.001) return null;
+  const desiredAngle = Math.atan2(targetZ, targetX);
+  const direction = Math.sign((bot.id.charCodeAt(bot.id.length - 1) || 0) % 2 ? 1 : -1);
+  const offsets = [0, direction * Math.PI / 6, -direction * Math.PI / 6, direction * Math.PI / 3, -direction * Math.PI / 3, direction * Math.PI / 2, -direction * Math.PI / 2, Math.PI];
+  let best = null;
+  let bestScore = -Infinity;
+  for (const offset of offsets) {
+    const angle = desiredAngle + offset;
+    const probeX = bot.x + Math.cos(angle) * Math.max(step * 2, 0.8);
+    const probeZ = bot.z + Math.sin(angle) * Math.max(step * 2, 0.8);
+    if (!botCanMove(room, bot, probeX, probeZ)) continue;
+    const nextX = bot.x + Math.cos(angle) * step;
+    const nextZ = bot.z + Math.sin(angle) * step;
+    if (!botCanMove(room, bot, nextX, nextZ)) continue;
+    let separationScore = 0;
+    let collidesWithBot = false;
+    for (const other of room.bots.values()) {
+      if (other.id === bot.id) continue;
+      const currentDistance = Math.hypot(bot.x - other.x, bot.z - other.z);
+      const nextDistance = Math.hypot(nextX - other.x, nextZ - other.z);
+      if (nextDistance < 1.15 && nextDistance <= currentDistance) {
+        collidesWithBot = true;
+        break;
+      }
+      separationScore += Math.min(nextDistance, 4) * 0.08;
+    }
+    if (collidesWithBot) continue;
+    const alignment = Math.cos(offset);
+    const score = alignment - Math.abs(offset) * 0.06 + separationScore;
+    if (score > bestScore) {
+      best = { x: nextX, z: nextZ, angle };
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
+function chooseBotWanderTarget(room, bot) {
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const angle = Math.random() * Math.PI * 2;
+    const radius = 3 + Math.random() * 9;
+    const x = bot.homeX + Math.cos(angle) * radius;
+    const z = bot.homeZ + Math.sin(angle) * radius;
+    if (botCanMove(room, bot, x, z)) return { x, z };
+  }
+  return { x: bot.homeX, z: bot.homeZ };
 }
 
 function playerCanOccupy(room, x, eyeY, z) {
-  const blockX = Math.round(x);
-  const blockZ = Math.round(z);
   const feetY = Math.floor(eyeY - 1.65 + 0.05);
-  for (const blockY of [feetY + 1, feetY + 2]) {
-    const key = blockKey(blockX, blockY, blockZ);
-    const type = room.blocks.has(key)
-      ? room.blocks.get(key)
-      : getBaseBlockAt(blockX, blockY, blockZ, room.seed);
-    if (type && type !== "water") return false;
-  }
-  return true;
+  return entityCanOccupy(room, x, z, feetY, 0);
+}
+
+function releaseVehicle(room, player) {
+  const vehicle = room?.vehicles.get(player.vehicleId);
+  if (vehicle?.occupantId === player.id) vehicle.occupantId = null;
+  player.vehicleId = null;
 }
 
 function restoreSavedRoom(saved) {
@@ -269,6 +445,15 @@ function restoreSavedRoom(saved) {
     blocks: new Map(blockChanges),
     blockChanges,
     droppedItems: new Map(Array.isArray(saved.droppedItems) ? saved.droppedItems : []),
+    vehicles: restoreVehicles(
+      saved.vehicles,
+      Number.isSafeInteger(saved.seed) ? saved.seed : 1,
+    ),
+    properties: new Map(
+      Array.isArray(saved.properties)
+        ? saved.properties.filter(([id, property]) => typeof id === "string" && property && typeof property.ownerId === "string")
+        : [],
+    ),
     savedPlayers,
     bots: createBots(),
     animals: createAnimals(Number.isSafeInteger(saved.seed) ? saved.seed : 1),
@@ -324,6 +509,8 @@ function roomSaveData(room, players) {
     autosaveEnabled: room.autosaveEnabled !== false,
     blockChanges: [...room.blockChanges],
     droppedItems: [...room.droppedItems],
+    vehicles: [...room.vehicles.values()].map(({ occupantId, ...vehicle }) => vehicle),
+    properties: [...(room.properties ?? new Map())],
     players: [...savedPlayers.values()],
   };
 }
@@ -534,7 +721,7 @@ export function createGameServer({
 
   const roomSnapshot = (room) => ({
     type: "snapshot",
-    players: [...room.members].map((id) => players.get(id)).filter(Boolean).map(({ id, name, x, y, z, yaw, color, health }) => ({
+    players: [...room.members].map((id) => players.get(id)).filter(Boolean).map(({ id, name, x, y, z, yaw, color, health, vehicleId }) => ({
       id,
       name,
       x,
@@ -543,6 +730,7 @@ export function createGameServer({
       yaw,
       color,
       health,
+      vehicleId: vehicleId ?? null,
     })),
     bots: [...room.bots.values()],
     animals: serializeAnimals(room),
@@ -554,6 +742,8 @@ export function createGameServer({
       x,
       z,
     })),
+    vehicles: [...room.vehicles.values()],
+    properties: [...(room.properties ?? new Map()).entries()].map(([id, property]) => ({ id, ...property })),
   });
 
   const broadcastToRoom = (room, message) => {
@@ -571,7 +761,7 @@ export function createGameServer({
     mode: room.mode,
     autosaveEnabled: room.autosaveEnabled !== false,
     chunkSize: CHUNK_SIZE,
-    players: [...room.members].map((id) => players.get(id)).filter(Boolean).map(({ id, name, x, y, z, yaw, color, health }) => ({
+    players: [...room.members].map((id) => players.get(id)).filter(Boolean).map(({ id, name, x, y, z, yaw, color, health, vehicleId }) => ({
       id,
       name,
       x,
@@ -580,14 +770,18 @@ export function createGameServer({
       yaw,
       color,
       health,
+      vehicleId: vehicleId ?? null,
     })),
     bots: [...room.bots.values()],
     animals: serializeAnimals(room),
     monsters: serializeMonsters(room),
     drops: [...room.droppedItems.values()].map(({ id, item, count, x, z }) => ({ id, item, count, x, z })),
+    vehicles: [...room.vehicles.values()],
+    properties: [...(room.properties ?? new Map()).entries()].map(([id, property]) => ({ id, ...property })),
     position: { x: player.x, y: player.y, z: player.z, yaw: player.yaw },
     inventory: inventoryItems(player.inventory),
     health: player.health,
+    flying: Boolean(player.flightEnabled),
     xp: player.xp ?? 0,
     level: player.level ?? 0,
     coins: player.coins ?? 0,
@@ -619,29 +813,56 @@ export function createGameServer({
     }
   }, autosaveIntervalMs);
   const botTimer = setInterval(() => {
+    const now = Date.now();
     for (const room of rooms.values()) {
       if (!room.started) continue;
       for (const bot of room.bots.values()) {
+        if (now >= bot.nextDecisionAt) {
+          const nearby = findNearbyPlayer(room, players, bot, 10);
+          if (nearby) {
+            bot.targetX = nearby.distance > 2.2 ? nearby.player.x : bot.x;
+            bot.targetZ = nearby.distance > 2.2 ? nearby.player.z : bot.z;
+            bot.behavior = "follow";
+          } else if (bot.behavior === "follow" || bot.behavior === "idle"
+            || Math.hypot(bot.targetX - bot.x, bot.targetZ - bot.z) < 1) {
+            const target = chooseBotWanderTarget(room, bot);
+            bot.targetX = target.x;
+            bot.targetZ = target.z;
+            bot.behavior = "wander";
+          }
+          bot.nextDecisionAt = now + 700;
+        }
+
         const deltaX = bot.targetX - bot.x;
         const deltaZ = bot.targetZ - bot.z;
         const distance = Math.hypot(deltaX, deltaZ);
-
-        if (distance < 0.3) {
-          bot.targetX = Math.round((Math.random() * 80 - 40) * 2) / 2;
-          bot.targetZ = Math.round((Math.random() * 80 - 40) * 2) / 2;
+        const nearby = bot.behavior === "follow" ? findNearbyPlayer(room, players, bot, 10) : null;
+        const stopDistance = nearby ? 2.2 : 0.45;
+        if (distance <= stopDistance) {
+          bot.walking = false;
+          bot.stuckTicks = 0;
           continue;
         }
 
-        const step = Math.min(0.12, distance);
-        const nextX = bot.x + deltaX / distance * step;
-        const nextZ = bot.z + deltaZ / distance * step;
-        if (botCanMove(room, bot, nextX, nextZ)) {
-          bot.x = nextX;
-          bot.z = nextZ;
-          bot.yaw = Math.atan2(-deltaX, -deltaZ);
+        const step = Math.min(0.32, distance - stopDistance);
+        const movement = chooseBotStep(room, bot, step);
+        if (movement) {
+          bot.x = movement.x;
+          bot.z = movement.z;
+          bot.yaw = Math.atan2(-Math.cos(movement.angle), Math.sin(movement.angle));
+          bot.walking = true;
+          bot.stuckTicks = 0;
         } else {
-          bot.targetX = bot.x + Math.round((Math.random() * 12 - 6) * 2) / 2;
-          bot.targetZ = bot.z + Math.round((Math.random() * 12 - 6) * 2) / 2;
+          bot.walking = false;
+          bot.stuckTicks += 1;
+          if (bot.stuckTicks >= 4) {
+            const target = chooseBotWanderTarget(room, bot);
+            bot.targetX = target.x;
+            bot.targetZ = target.z;
+            bot.behavior = "wander";
+            bot.nextDecisionAt = now + 700;
+            bot.stuckTicks = 0;
+          }
         }
       }
       for (const animal of room.animals.values()) {
@@ -672,8 +893,8 @@ export function createGameServer({
           animal.z = nextZ;
           animal.y = animal.aquatic
             ? terrainHeightAt(nextX, nextZ, room.seed) + 3
-            : terrainHeightAt(nextX, nextZ, room.seed) + 0.08;
-          animal.yaw = Math.atan2(-deltaX, -deltaZ);
+            : terrainHeightAt(nextX, nextZ, room.seed) + 1;
+          animal.yaw = Math.atan2(-deltaX, deltaZ);
           animal.walking = true;
         } else {
           const wanderRange = animal.aquatic ? 7 : 5;
@@ -688,8 +909,19 @@ export function createGameServer({
     const now = Date.now();
     for (const room of rooms.values()) {
       if (!room.started) continue;
+      for (const monster of room.monsters.values()) {
+        if (monster.active === false) {
+          const playerNearSpawn = [...room.members].some((id) => {
+            const player = players.get(id);
+            if (!player || player.health <= 0) return false;
+            return Math.hypot(wrapPlanetX(player.x - monster.homeX), player.z - monster.homeZ) <= (monster.boss ? 40 : 28);
+          });
+          if (playerNearSpawn) monster.active = true;
+        }
+      }
       let changed = false;
       for (const monster of room.monsters.values()) {
+        if (monster.active === false) continue;
         if (monster.health <= 0) {
           if (now < monster.respawnAt) continue;
           monster.x = monster.homeX;
@@ -711,7 +943,7 @@ export function createGameServer({
           const east = wrapPlanetX(candidate.x - monster.x) * Math.cos(latitude);
           const north = candidate.z - monster.z;
           const distance = Math.hypot(east, north);
-          const surfaceY = terrainHeightAt(candidate.x, candidate.z, room.seed) + 1.65;
+          const surfaceY = terrainHeightAt(candidate.x, candidate.z, room.seed) + 2.65;
           if (isNearHarbor(candidate.x, candidate.z) || candidate.y < surfaceY - 1.5) continue;
           if (distance < closestDistance) {
             closestPlayer = candidate;
@@ -743,7 +975,7 @@ export function createGameServer({
           const step = Math.min(closestPlayer ? 0.28 : 0.1, distance);
           monster.x = wrapPlanetX(monster.x + deltaX / distance * step);
           monster.z += deltaZ / distance * step;
-          monster.yaw = Math.atan2(-deltaX, -deltaZ);
+          monster.yaw = Math.atan2(-deltaX, deltaZ);
           changed = true;
         }
       }
@@ -758,7 +990,7 @@ export function createGameServer({
       id,
       name: `Guest-${id.slice(0, 4)}`,
       x: 0,
-      y: terrainHeightAt(0, 0, seed) + 1.65,
+      y: terrainHeightAt(0, 0, seed) + 2.65,
       z: 0,
       yaw: 0,
       health: MAX_PLAYER_HEALTH,
@@ -769,10 +1001,13 @@ export function createGameServer({
       profileStats: { ...DEFAULT_PROFILE_STATS },
       lastAttackAt: 0,
       lastFishAt: 0,
+      flightEnabled: false,
       color: colors[Math.floor(Math.random() * colors.length)],
       inventory: createInventory(),
       socket,
       roomId: null,
+      gearTier: 0,
+      buffs: {},
     };
     players.set(id, player);
     writeJson(socket, { type: "lobby", playerId: id, rooms: lobbyRooms() });
@@ -816,6 +1051,8 @@ export function createGameServer({
           blocks: new Map(),
           blockChanges: new Map(),
           droppedItems: new Map(),
+          vehicles: createVehicles(seed),
+          properties: new Map(),
           savedPlayers: new Map(),
           bots: new Map([...bots].map(([botId, bot]) => [botId, { ...bot }])),
           animals: createAnimals(seed),
@@ -856,9 +1093,13 @@ export function createGameServer({
           : createInventory(room.mode);
         if (savedPlayer) {
           player.x = savedPlayer.x;
+          const currentSurfaceEyeY = terrainHeightAt(savedPlayer.x, savedPlayer.z, room.seed) + 2.65;
+          const previousSurfaceEyeY = currentSurfaceEyeY - 0.5;
           player.y = Number.isFinite(savedPlayer.y)
-            ? savedPlayer.y
-            : terrainHeightAt(savedPlayer.x, savedPlayer.z, room.seed) + 1.65;
+            ? Math.abs(savedPlayer.y - previousSurfaceEyeY) < 0.001
+              ? currentSurfaceEyeY
+              : savedPlayer.y
+            : currentSurfaceEyeY;
           player.z = savedPlayer.z;
           player.yaw = savedPlayer.yaw;
           player.xp = Number.isFinite(Number(savedPlayer.xp)) ? Number(savedPlayer.xp) : 0;
@@ -880,6 +1121,7 @@ export function createGameServer({
       if (message.type === "leave_room") {
         const room = rooms.get(player.roomId);
         if (room) {
+          releaseVehicle(room, player);
           room.members.delete(player.id);
           player.roomId = null;
           if (room.members.size === 0 && !room.saved) {
@@ -974,15 +1216,21 @@ export function createGameServer({
           writeJson(socket, { type: "error", message: "Enter a valid name and character color." });
           return;
         }
+        const previousName = player.name;
         player.name = name;
         player.color = message.color;
+        const room = rooms.get(player.roomId);
+        for (const property of room?.properties.values() ?? []) {
+          if (property.ownerId === (player.profileId || previousName.toLowerCase())) {
+            property.ownerName = player.name;
+          }
+        }
         try {
           await persistPlayerProfile(player, profiles, pool);
           writeJson(socket, {
             type: "profile_data",
             profile: { name: player.name, color: player.color, stats: player.profileStats },
           });
-          const room = rooms.get(player.roomId);
           if (room) {
             sendRoomState(room);
             if (room.started) broadcastToRoom(room, roomSnapshot(room));
@@ -1032,9 +1280,10 @@ export function createGameServer({
           });
           return;
         }
+        releaseVehicle(room, player);
         player.x = location ? location.x : wrapPlanetX(target.x + 2);
         player.z = location ? location.z : target.z;
-        player.y = terrainHeightAt(player.x, player.z, room.seed) + 1.65;
+        player.y = terrainHeightAt(player.x, player.z, room.seed) + 2.65;
         player.yaw = location ? location.yaw : target.yaw;
         writeJson(socket, {
           type: "teleport_result",
@@ -1042,6 +1291,81 @@ export function createGameServer({
           targetId: target?.id ?? null,
           locationId: location?.id ?? null,
           locationName: location?.name ?? null,
+        });
+        broadcastToRoom(room, roomSnapshot(room));
+        return;
+      }
+
+      if (message.type === "buy_home") {
+        const room = rooms.get(player.roomId);
+        if (!room?.started || player.health <= 0) return;
+        const property = cityPropertyNear(player.x, player.z, room.seed);
+        if (!property) {
+          writeJson(socket, {
+            type: "home_result",
+            success: false,
+            message: "Stand by a Glass City building entrance to buy it.",
+          });
+          return;
+        }
+        if (room.properties.has(property.id)) {
+          writeJson(socket, {
+            type: "home_result",
+            success: false,
+            message: "That residence already has an owner.",
+            properties: [...room.properties.entries()].map(([id, entry]) => ({ id, ...entry })),
+          });
+          return;
+        }
+        if (room.mode !== "design" && player.coins < property.price) {
+          writeJson(socket, {
+            type: "home_result",
+            success: false,
+            message: `You need ${property.price} coins to buy this residence.`,
+            properties: [...room.properties.entries()].map(([id, entry]) => ({ id, ...entry })),
+          });
+          return;
+        }
+        if (room.mode !== "design") player.coins -= property.price;
+        const ownerId = player.profileId || player.name.toLowerCase();
+        room.properties.set(property.id, { ownerId, ownerName: player.name });
+        const properties = [...room.properties.entries()].map(([id, entry]) => ({ id, ...entry }));
+        writeJson(socket, {
+          type: "home_result",
+          success: true,
+          message: `You now own ${property.name}.`,
+          coins: player.coins,
+          properties,
+        });
+        broadcastToRoom(room, roomSnapshot(room));
+        return;
+      }
+
+      if (message.type === "home_teleport") {
+        const room = rooms.get(player.roomId);
+        if (!room?.started || player.health <= 0) return;
+        const ownerId = player.profileId || player.name.toLowerCase();
+        const property = listCityProperties(room.seed).find(({ id }) =>
+          id === message.propertyId && room.properties.get(id)?.ownerId === ownerId,
+        );
+        if (!property) {
+          writeJson(socket, {
+            type: "home_result",
+            success: false,
+            message: "You do not own that residence in this world.",
+          });
+          return;
+        }
+        releaseVehicle(room, player);
+        player.x = property.entranceX;
+        player.z = property.entranceZ;
+        player.y = terrainHeightAt(player.x, player.z, room.seed) + 2.65;
+        player.yaw = 0;
+        writeJson(socket, {
+          type: "home_result",
+          success: true,
+          message: `Welcome home to ${property.name}.`,
+          position: { x: player.x, y: player.y, z: player.z, yaw: player.yaw },
         });
         broadcastToRoom(room, roomSnapshot(room));
         return;
@@ -1069,6 +1393,12 @@ export function createGameServer({
           return;
         }
 
+        const weapon = typeof message.weapon === "string" ? message.weapon : null;
+        if (weapon && (!PLAYER_WEAPON_DAMAGE.has(weapon) || (player.inventory.get(weapon) ?? 0) < 1)) {
+          writeJson(socket, { type: "attack_result", hit: false, message: "You do not have that weapon equipped." });
+          return;
+        }
+
         const latitude = (player.z - PLANET_MIN_Z + 0.5) / PLANET_LATITUDE_BLOCKS * Math.PI - Math.PI / 2;
         const east = wrapPlanetX(target.x - player.x) * Math.cos(latitude);
         const north = target.z - player.z;
@@ -1079,7 +1409,10 @@ export function createGameServer({
           return;
         }
 
-        target.health = Math.max(0, target.health - PLAYER_ATTACK_DAMAGE);
+        const damage = weapon
+          ? PLAYER_WEAPON_DAMAGE.get(weapon) + (player.gearTier ?? 0) * 6
+          : getPlayerAttackPower(player);
+        target.health = Math.max(0, target.health - damage);
         let reward = null;
         if (monsterTarget && target.health === 0) {
           target.respawnAt = now + MONSTER_RESPAWN_MS;
@@ -1093,7 +1426,7 @@ export function createGameServer({
           type: "attack_result",
           hit: true,
           targetId: target.id,
-          damage: PLAYER_ATTACK_DAMAGE,
+          damage,
           health: target.health,
           monster: Boolean(monsterTarget),
           killed: Boolean(monsterTarget && target.health === 0),
@@ -1120,10 +1453,6 @@ export function createGameServer({
           return;
         }
         const fish = rollFishReward();
-        if ((player.inventory.get(fish.id) ?? 0) >= MAX_STACK_SIZE) {
-          writeJson(socket, { type: "fish_result", caught: false, message: "That fish stack is full." });
-          return;
-        }
         player.lastFishAt = now;
         addItems(player.inventory, fish.id, 1);
         writeJson(socket, {
@@ -1175,10 +1504,6 @@ export function createGameServer({
           writeJson(socket, { type: "error", message: "Visit the village market to shop." });
           return;
         }
-        if ((player.inventory.get(model.id) ?? 0) >= MAX_STACK_SIZE) {
-          writeJson(socket, { type: "error", message: "That item stack is full." });
-          return;
-        }
         if (room.mode !== "design" && player.coins < model.price) {
           writeJson(socket, { type: "error", message: `You need ${model.price} coins to buy ${model.name}.` });
           return;
@@ -1196,13 +1521,70 @@ export function createGameServer({
         return;
       }
 
+      if (message.type === "use_potion") {
+        const room = rooms.get(player.roomId);
+        if (!room?.started || player.health <= 0) return;
+        const potionId = typeof message.item === "string" ? message.item : "";
+        if (!potionId || !(potionId === "health_potion" || potionId === "strength_potion")) {
+          writeJson(socket, { type: "error", message: "That is not a usable potion." });
+          return;
+        }
+        if ((player.inventory.get(potionId) ?? 0) < 1) {
+          writeJson(socket, { type: "error", message: `You need a ${potionId.replace("_", " ")} to use that.` });
+          return;
+        }
+        removeItems(player.inventory, potionId, 1);
+        const effect = applyPotionEffect(player, potionId);
+        writeJson(socket, {
+          type: "potion_result",
+          item: potionId,
+          health: player.health,
+          message: effect.message,
+        });
+        writeJson(socket, { type: "inventory", items: inventoryItems(player.inventory) });
+        return;
+      }
+
+      if (message.type === "upgrade_gear") {
+        const room = rooms.get(player.roomId);
+        if (!room?.started || player.health <= 0) return;
+        const gearTier = Math.min((player.gearTier ?? 0) + 1, 4);
+        const requirements = new Map([
+          [1, { iron_ingot: 3, emerald: 1 }],
+          [2, { steel_ingot: 3, ruby: 1 }],
+          [3, { steel_armor: 1, guardian_helm: 1 }],
+          [4, { boss_key: 1, strength_potion: 1 }],
+        ]);
+        const needed = requirements.get(gearTier);
+        if (!needed) {
+          writeJson(socket, { type: "error", message: "You already have the strongest gear tier." });
+          return;
+        }
+        if (!Object.entries(needed).every(([item, amount]) => (player.inventory.get(item) ?? 0) >= amount)) {
+          writeJson(socket, { type: "error", message: "You are missing items to upgrade your gear." });
+          return;
+        }
+        for (const [item, amount] of Object.entries(needed)) removeItems(player.inventory, item, amount);
+        player.gearTier = gearTier;
+        player.health = Math.min(MAX_PLAYER_HEALTH + gearTier * 10, player.health + 12);
+        writeJson(socket, {
+          type: "upgrade_result",
+          gearTier,
+          health: player.health,
+          message: `Your gear is now tier ${gearTier}.`,
+        });
+        writeJson(socket, { type: "inventory", items: inventoryItems(player.inventory) });
+        return;
+      }
+
       if (message.type === "respawn") {
         const room = rooms.get(player.roomId);
         if (!room?.started || player.health > 0) return;
+        releaseVehicle(room, player);
         player.health = MAX_PLAYER_HEALTH;
         player.x = 0;
         player.z = 0;
-        player.y = terrainHeightAt(player.x, player.z, room.seed) + 1.65;
+        player.y = terrainHeightAt(player.x, player.z, room.seed) + 2.65;
         player.yaw = 0;
         writeJson(socket, {
           type: "respawn_result",
@@ -1220,15 +1602,90 @@ export function createGameServer({
           return;
         }
         const room = rooms.get(player.roomId);
-        if (!room || !playerCanOccupy(room, message.position.x, message.position.y ?? player.y, message.position.z)) {
+        const vehicle = room?.vehicles.get(player.vehicleId);
+        if (player.vehicleId && vehicle?.occupantId !== player.id) return;
+        if (
+          !room ||
+          !playerCanOccupy(
+            room,
+            message.position.x,
+            message.position.y ?? player.y,
+            message.position.z,
+          )
+        ) {
+          writeJson(socket, {
+            type: "move_rejected",
+            position: { x: player.x, y: player.y, z: player.z, yaw: player.yaw },
+          });
           return;
         }
         player.x = message.position.x;
         player.z = message.position.z;
         player.y = Number.isFinite(message.position.y)
           ? message.position.y
-          : terrainHeightAt(player.x, player.z, room.seed) + 1.65;
+          : terrainHeightAt(player.x, player.z, room.seed) + 2.65;
         player.yaw = message.position.yaw;
+        if (vehicle) {
+          vehicle.x = player.x;
+          vehicle.y = player.y - 2.65;
+          vehicle.z = player.z;
+          vehicle.yaw = player.yaw;
+        }
+        broadcastToRoom(room, roomSnapshot(room));
+        return;
+      }
+
+      if (message.type === "vehicle_enter" || message.type === "vehicle_exit") {
+        const room = rooms.get(player.roomId);
+        if (!room?.started || player.health <= 0) return;
+        if (message.type === "vehicle_exit") {
+          releaseVehicle(room, player);
+          writeJson(socket, { type: "vehicle_result", vehicleId: null, message: "You left the vehicle." });
+          broadcastToRoom(room, roomSnapshot(room));
+          return;
+        }
+        const vehicle = room.vehicles.get(message.vehicleId);
+        if (
+          !vehicle ||
+          (vehicle.occupantId && vehicle.occupantId !== player.id) ||
+          Math.hypot(wrapPlanetX(vehicle.x - player.x), vehicle.z - player.z) > 4
+        ) {
+          writeJson(socket, { type: "vehicle_result", vehicleId: null, message: "Move closer to an available vehicle." });
+          return;
+        }
+        releaseVehicle(room, player);
+        if (!playerCanOccupy(room, vehicle.x, vehicle.y + 2.65, vehicle.z)) {
+          writeJson(socket, { type: "vehicle_result", vehicleId: null, message: "There is not enough room to enter that vehicle." });
+          return;
+        }
+        vehicle.occupantId = player.id;
+        player.vehicleId = vehicle.id;
+        player.x = vehicle.x;
+        player.z = vehicle.z;
+        player.y = vehicle.y + 2.65;
+        player.yaw = vehicle.yaw;
+        writeJson(socket, {
+          type: "vehicle_result",
+          vehicleId: vehicle.id,
+          vehicleType: vehicle.type,
+          message: `Entered ${vehicle.type}. Press E to exit.`,
+        });
+        broadcastToRoom(room, roomSnapshot(room));
+        return;
+      }
+
+      if (message.type === "fly_toggle") {
+        const room = rooms.get(player.roomId);
+        if (!room?.started || player.health <= 0 || typeof message.enabled !== "boolean") {
+          writeJson(socket, { type: "fly_result", enabled: false, message: "Flight is unavailable right now." });
+          return;
+        }
+        player.flightEnabled = message.enabled;
+        writeJson(socket, {
+          type: "fly_result",
+          enabled: player.flightEnabled,
+          message: player.flightEnabled ? "Flight enabled." : "Flight disabled.",
+        });
         broadcastToRoom(room, roomSnapshot(room));
         return;
       }
@@ -1302,8 +1759,7 @@ export function createGameServer({
         }
         if (!closest) return;
 
-        const available = MAX_STACK_SIZE - (player.inventory.get(closest.item) ?? 0);
-        const amount = Math.min(available, closest.count);
+        const amount = closest.count;
         if (amount < 1) return;
         addItems(player.inventory, closest.item, amount);
         closest.count -= amount;
@@ -1317,11 +1773,6 @@ export function createGameServer({
         const recipe = RECIPES.find((candidate) => candidate.id === message.recipe);
         if (!recipe || !canCraft(player.inventory, recipe)) {
           writeJson(socket, { type: "error", message: "You do not have the materials for that recipe." });
-          return;
-        }
-        const currentOutput = player.inventory.get(recipe.result) ?? 0;
-        if (currentOutput + recipe.resultCount > MAX_STACK_SIZE) {
-          writeJson(socket, { type: "error", message: "That item stack is full." });
           return;
         }
         for (const [item, amount] of Object.entries(recipe.ingredients)) {
@@ -1350,10 +1801,6 @@ export function createGameServer({
           : getBaseBlockAt(position.x, position.y, position.z, room.seed);
         const changedBlock = action === "remove" ? currentBlock : block;
         if (action === "remove") {
-          if ((player.inventory.get(changedBlock) ?? 0) >= MAX_STACK_SIZE) {
-            writeJson(socket, { type: "error", message: "That item stack is full." });
-            return;
-          }
           room.blocks.set(key, null);
           addItems(player.inventory, changedBlock, 1);
         } else {
@@ -1373,6 +1820,7 @@ export function createGameServer({
     socket.on("close", () => {
       const room = rooms.get(player.roomId);
       if (room) {
+        releaseVehicle(room, player);
         room.savedPlayers.set(player.name.toLowerCase(), {
           name: player.name,
           x: player.x,

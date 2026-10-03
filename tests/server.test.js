@@ -1,12 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createGameServer } from "../server/index.js";
-import { BLOCK_TYPES, FISH_ITEMS } from "../server/world.js";
+import { BLOCK_TYPES, FISH_ITEMS, MAX_STACK_SIZE } from "../server/world.js";
 import { WebSocket } from "ws";
 import { MODEL_ITEM_BY_ID } from "../shared/models.js";
+import { getBaseBlockAt, listCityProperties, terrainHeightAt } from "../shared/world.js";
 
 function nextMessage(socket, predicate = () => true, timeoutMs = 5000) {
   return new Promise((resolve, reject) => {
@@ -85,7 +86,7 @@ test("loads and saves persistent player profile appearance and statistics", asyn
   }
 });
 
-test("bots retarget instead of walking through walls", async () => {
+test("bots approach nearby players and navigate around walls", async () => {
   const server = createGameServer({ host: "127.0.0.1", port: 0, seed: 31 });
   const sockets = [];
   try {
@@ -110,17 +111,29 @@ test("bots retarget instead of walking through walls", async () => {
 
     const room = server.rooms.get(roomId);
     const bot = room.bots.get("bot-moss");
+    const animal = room.animals.get("animal-village-0");
     const animalPositions = [...room.animals.values()].map(({ x, z }) => ({ x, z }));
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    assert.equal(bot.behavior, "follow");
+
     bot.x = -3.6;
     bot.z = -2;
     bot.targetX = 0;
     bot.targetZ = -2;
+    bot.behavior = "wander";
+    bot.nextDecisionAt = Date.now() + 5000;
+    bot.walking = false;
+    animal.x = -3.6;
+    animal.z = -2;
+    animal.homeX = -3.6;
+    animal.homeZ = -2;
+    animal.targetX = 0;
+    animal.targetZ = -2;
     room.blocks.set("-3,1,-2", "stone");
-    room.blocks.set("-3,2,-2", "stone");
-    await new Promise((resolve) => setTimeout(resolve, 320));
-
-    assert.equal(bot.x, -3.6);
-    assert.notEqual(bot.targetX, 0);
+    await new Promise((resolve) => setTimeout(resolve, 2600));
+    assert.ok(bot.z < -2.5 || bot.z > -1.5, `bot did not steer around the wall at z=${bot.z}`);
+    assert.ok(bot.x > -2.5, `bot did not continue toward its target at x=${bot.x}`);
+    assert.ok(animal.x < -3.5, `animal crossed the wall to x=${animal.x}`);
     await new Promise((resolve) => setTimeout(resolve, 800));
     assert.ok([...room.animals.values()].some((animal, index) =>
       Math.hypot(animal.x - animalPositions[index].x, animal.z - animalPositions[index].z) > 0.01));
@@ -146,21 +159,21 @@ test("players cannot move into solid blocks", async () => {
     const started = nextMessage(connection.socket, (message) => message.type === "init");
     connection.socket.send(JSON.stringify({ type: "start_room" }));
     const initial = await started;
+    assert.equal(initial.position.y, 2.65);
     const room = server.rooms.get(roomId);
     const player = server.players.get(initial.id);
 
     connection.socket.send(JSON.stringify({
       type: "move",
-      position: { x: 0.2, y: 1.65, z: 0, yaw: 0 },
+      position: { x: 0.2, y: 2.65, z: 0, yaw: 0 },
     }));
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.equal(player.x, 0.2);
 
     room.blocks.set("1,1,0", "stone");
-    room.blocks.set("1,2,0", "stone");
     connection.socket.send(JSON.stringify({
       type: "move",
-      position: { x: 1, y: 1.65, z: 0, yaw: 0 },
+      position: { x: 1, y: 2.65, z: 0, yaw: 0 },
     }));
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.equal(player.x, 0.2);
@@ -169,7 +182,7 @@ test("players cannot move into solid blocks", async () => {
     room.blocks.set("2,2,0", "water");
     connection.socket.send(JSON.stringify({
       type: "move",
-      position: { x: 2, y: 1.65, z: 0, yaw: 0 },
+      position: { x: 2, y: 2.65, z: 0, yaw: 0 },
     }));
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.equal(player.x, 2);
@@ -206,7 +219,7 @@ test("surface monsters do not damage players underground", async () => {
 
     connection.socket.send(JSON.stringify({
       type: "move",
-      position: { x: 1, y: 1.65, z: 126, yaw: 0 },
+      position: { x: 1, y: 2.65, z: 126, yaw: 0 },
     }));
     await new Promise((resolve) => setTimeout(resolve, 350));
     assert.equal(player.health, 92);
@@ -219,7 +232,7 @@ test("surface monsters do not damage players underground", async () => {
     crab.lastAttackAt = 0;
     connection.socket.send(JSON.stringify({
       type: "move",
-      position: { x: 0, y: 1.65, z: 140, yaw: 0 },
+      position: { x: 0, y: 2.65, z: 140, yaw: 0 },
     }));
     await new Promise((resolve) => setTimeout(resolve, 350));
     assert.equal(player.health, 92);
@@ -317,7 +330,19 @@ test("automatically saves started worlds without a manual save request", async (
     const roomId = (await created).room.id;
     const initial = nextMessage(connection.socket, (message) => message.type === "init");
     connection.socket.send(JSON.stringify({ type: "start_room" }));
-    await initial;
+    const init = await initial;
+    const player = server.players.get(init.id);
+    const property = listCityProperties(init.seed)[0];
+    player.x = property.entranceX;
+    player.y = 2.65;
+    player.z = property.entranceZ;
+    player.coins = property.price;
+    const purchasedHome = nextMessage(connection.socket, (message) => message.type === "home_result");
+    connection.socket.send(JSON.stringify({ type: "buy_home" }));
+    assert.equal((await purchasedHome).success, true);
+    const saved = nextMessage(connection.socket, (message) => message.type === "save_result");
+    connection.socket.send(JSON.stringify({ type: "save_room" }));
+    assert.equal((await saved).saved, true);
     const savePath = join(saveDirectory, `${roomId}.json`);
     const deadline = Date.now() + 1000;
     while (!existsSync(savePath) && Date.now() < deadline) {
@@ -328,6 +353,8 @@ test("automatically saves started worlds without a manual save request", async (
     const savedWorld = JSON.parse(readFileSync(savePath, "utf8"));
     assert.equal(savedWorld.id, roomId);
     assert.equal(savedWorld.autosaveEnabled, true);
+    assert.equal(savedWorld.properties[0][0], property.id);
+    assert.equal(savedWorld.properties[0][1].ownerName, player.name);
   } finally {
     for (const socket of sockets) socket.terminate();
     await server.close();
@@ -366,6 +393,119 @@ test("generates seeded terrain and shares chunk edits with joining players", asy
     assert.equal(initial.inventory.length, BLOCK_TYPES.size);
     assert.ok(initial.inventory.every(([, count]) => count === 1));
     assert.equal(initial.bots.length, 3);
+    assert.ok(initial.vehicles.some((vehicle) => vehicle.id === "airport-plane"));
+    assert.ok(initial.vehicles.some((vehicle) => vehicle.id === "airport-car"));
+    assert.ok(initial.vehicles.filter((vehicle) => vehicle.id.startsWith("city-car-")).length > 5);
+    assert.deepEqual(initial.properties, []);
+
+    const property = listCityProperties(initial.seed)[0];
+    const player = server.players.get(initial.id);
+    player.x = property.entranceX;
+    player.y = terrainHeightAt(property.entranceX, property.entranceZ, initial.seed) + 2.65;
+    player.z = property.entranceZ;
+    const purchasedHome = nextMessage(firstPlayer, (message) => message.type === "home_result");
+    firstPlayer.send(JSON.stringify({ type: "buy_home" }));
+    const purchaseResult = await purchasedHome;
+    assert.equal(purchaseResult.success, true);
+    assert.equal(purchaseResult.properties[0].id, property.id);
+    assert.equal(purchaseResult.properties[0].ownerName, player.name);
+
+    player.x = 0;
+    player.y = 2.65;
+    player.z = 0;
+    const returnedHome = nextMessage(firstPlayer, (message) => message.type === "home_result");
+    firstPlayer.send(JSON.stringify({ type: "home_teleport", propertyId: property.id }));
+    const homeResult = await returnedHome;
+    assert.equal(homeResult.success, true);
+    assert.equal(homeResult.position.x, property.entranceX);
+    assert.equal(homeResult.position.z, property.entranceZ);
+    const enteredHome = nextMessage(
+      firstPlayer,
+      (message) => message.type === "snapshot" &&
+        message.players.some((entry) =>
+          entry.id === initial.id &&
+          entry.x === property.entranceX &&
+          entry.z === property.entranceZ + 1,
+        ),
+    );
+    firstPlayer.send(JSON.stringify({
+      type: "move",
+      position: { x: property.entranceX, y: 2.65, z: property.entranceZ + 1, yaw: 0 },
+    }));
+    assert.ok((await enteredHome).players.some((entry) => entry.id === initial.id));
+
+    const walkingPosition = nextMessage(
+      firstPlayer,
+      (message) => message.type === "snapshot" &&
+        message.players.some((player) => player.id === initial.id && player.x === 1 && player.y === 2.65),
+    );
+    firstPlayer.send(JSON.stringify({
+      type: "move",
+      position: { x: 1, y: 2.65, z: 0, yaw: 0 },
+    }));
+    assert.ok((await walkingPosition).players.some((player) => player.id === initial.id && player.x === 1));
+    firstPlayer.send(JSON.stringify({
+      type: "move",
+      position: { x: 0, y: terrainHeightAt(0, 0, initial.seed) + 2.65, z: 0, yaw: 0 },
+    }));
+
+    const flightEnabled = nextMessage(firstPlayer, (message) => message.type === "fly_result");
+    firstPlayer.send(JSON.stringify({ type: "fly_toggle", enabled: true }));
+    assert.equal((await flightEnabled).enabled, true);
+    const flownPosition = nextMessage(
+      firstPlayer,
+      (message) => message.type === "snapshot" &&
+        message.players.some((player) => player.id === initial.id && player.x === 10 && player.y === 20),
+    );
+    firstPlayer.send(JSON.stringify({
+      type: "move",
+      position: { x: 10, y: 20, z: 10, yaw: 0 },
+    }));
+    assert.ok((await flownPosition).players.some((player) => player.id === initial.id && player.x === 10 && player.y === 20));
+    const flightCollision = nextMessage(firstPlayer, (message) => message.type === "move_rejected");
+    server.rooms.get(roomId).blocks.set("11,18,10", "stone");
+    firstPlayer.send(JSON.stringify({
+      type: "move",
+      position: { x: 11, y: 20, z: 10, yaw: 0 },
+    }));
+    const rejectedMove = await flightCollision;
+    assert.deepEqual(rejectedMove.position, { x: 10, y: 20, z: 10, yaw: 0 });
+    server.rooms.get(roomId).blocks.delete("11,18,10");
+    firstPlayer.send(JSON.stringify({
+      type: "move",
+      position: { x: 0, y: terrainHeightAt(0, 0, initial.seed) + 2.65, z: 0, yaw: 0 },
+    }));
+    const carHeight = terrainHeightAt(-12, 0, initial.seed) + 2.65;
+    const carApproach = nextMessage(
+      firstPlayer,
+      (message) => message.type === "snapshot" &&
+        message.players.some((player) => player.id === initial.id && player.x === -12),
+    );
+    firstPlayer.send(JSON.stringify({
+      type: "move",
+      position: { x: -12, y: carHeight, z: 0, yaw: 0 },
+    }));
+    await carApproach;
+    const enteredCar = nextMessage(firstPlayer, (message) => message.type === "vehicle_result");
+    firstPlayer.send(JSON.stringify({ type: "vehicle_enter", vehicleId: "starter-car" }));
+    assert.equal((await enteredCar).vehicleType, "car");
+    const drivenCar = nextMessage(
+      firstPlayer,
+      (message) => message.type === "snapshot" &&
+        message.vehicles?.some((vehicle) => vehicle.id === "starter-car" && vehicle.x === -11),
+    );
+    firstPlayer.send(JSON.stringify({
+      type: "move",
+      position: { x: -11, y: carHeight, z: 0, yaw: 0 },
+    }));
+    assert.ok((await drivenCar).vehicles.some((vehicle) => vehicle.id === "starter-car" && vehicle.occupantId === initial.id));
+    const exitedCar = nextMessage(firstPlayer, (message) => message.type === "vehicle_result");
+    firstPlayer.send(JSON.stringify({ type: "vehicle_exit" }));
+    assert.equal((await exitedCar).vehicleId, null);
+    firstPlayer.send(JSON.stringify({
+      type: "move",
+      position: { x: 0, y: terrainHeightAt(0, 0, initial.seed) + 2.65, z: 0, yaw: 0 },
+    }));
 
     const initialChunkMessage = nextMessage(firstPlayer, (message) => message.type === "chunk");
     firstPlayer.send(JSON.stringify({ type: "chunk", x: 0, z: 0 }));
@@ -391,6 +531,19 @@ test("generates seeded terrain and shares chunk edits with joining players", asy
     );
     assert.equal((await minedBlock).action, "remove");
     assert.equal((await minedInventory).items.find(([item]) => item === "dirt")[1], 2);
+
+    assert.equal(getBaseBlockAt(0, -2, 0, initial.seed), "dirt");
+    server.players.get(initial.id).inventory.set("dirt", MAX_STACK_SIZE);
+    const overflowBlock = nextMessage(firstPlayer, (message) => message.type === "block");
+    const overflowInventory = nextMessage(firstPlayer, (message) => message.type === "inventory");
+    firstPlayer.send(JSON.stringify({
+      type: "edit",
+      action: "remove",
+      position: { x: 0, y: -2, z: 0 },
+      block: "dirt",
+    }));
+    assert.equal((await overflowBlock).action, "remove");
+    assert.equal((await overflowInventory).items.find(([item]) => item === "dirt")[1], MAX_STACK_SIZE + 1);
 
     const editPosition = { x: 0, y: 15, z: 0 };
     const editBroadcast = nextMessage(firstPlayer, (message) => message.type === "block");
@@ -442,9 +595,10 @@ test("generates seeded terrain and shares chunk edits with joining players", asy
     secondPlayer.send(JSON.stringify({ type: "chunk", x: 0, z: 0 }));
     assert.deepEqual((await joinedChunkChanges).blockChanges, [
       [[undergroundPosition.x, undergroundPosition.y, undergroundPosition.z], null],
+      [[0, -2, 0], null],
       [[editPosition.x, editPosition.y, editPosition.z], "stone"],
     ]);
-    assert.equal(server.rooms.get(roomId).blockChanges.size, 2);
+    assert.equal(server.rooms.get(roomId).blockChanges.size, 3);
 
     const renamedResult = nextMessage(secondPlayer, (message) => message.type === "name_result");
     const renamedSnapshot = nextMessage(
@@ -466,7 +620,16 @@ test("generates seeded terrain and shares chunk edits with joining players", asy
     firstPlayer.send(JSON.stringify({ type: "teleport", locationId: "beach" }));
     const beachTeleport = await beachTeleportResult;
     assert.equal(beachTeleport.locationId, "beach");
-    assert.deepEqual(beachTeleport.position, { x: 0, y: 1.65, z: 124, yaw: 0 });
+    assert.deepEqual(beachTeleport.position, { x: 0, y: 2.65, z: 124, yaw: 0 });
+    const airportTeleportResult = nextMessage(firstPlayer, (message) => message.type === "teleport_result");
+    firstPlayer.send(JSON.stringify({ type: "teleport", locationId: "airport" }));
+    const airportTeleport = await airportTeleportResult;
+    assert.equal(airportTeleport.locationId, "airport");
+    assert.equal(airportTeleport.locationName, "Glass City Airport");
+    assert.deepEqual(airportTeleport.position, { x: 72, y: 2.65, z: -72, yaw: Math.PI });
+    const returnToBeach = nextMessage(firstPlayer, (message) => message.type === "teleport_result");
+    firstPlayer.send(JSON.stringify({ type: "teleport", locationId: "beach" }));
+    await returnToBeach;
     const crab = server.rooms.get(roomId).monsters.get("monster-crab");
     crab.health = 20;
     const monsterAttack = nextMessage(firstPlayer, (message) => message.type === "attack_result");
@@ -480,6 +643,23 @@ test("generates seeded terrain and shares chunk edits with joining players", asy
     assert.equal(monsterHit.reward.coinsGained, 25);
     assert.equal(server.players.get(initial.id).xp, 52);
     assert.equal(server.players.get(initial.id).coins, 25);
+
+    crab.health = 60;
+    server.players.get(initial.id).lastAttackAt = 0;
+    const weaponAttack = nextMessage(firstPlayer, (message) => message.type === "attack_result");
+    firstPlayer.send(JSON.stringify({ type: "attack", targetId: "monster-crab", weapon: "steel_sword" }));
+    const weaponHit = await weaponAttack;
+    assert.equal(weaponHit.hit, true);
+    assert.equal(weaponHit.damage, 42);
+    assert.equal(weaponHit.health, 18);
+
+    server.players.get(initial.id).lastAttackAt = 0;
+    server.players.get(initial.id).inventory.delete("steel_sword");
+    const rejectedWeaponAttack = nextMessage(firstPlayer, (message) => message.type === "attack_result");
+    firstPlayer.send(JSON.stringify({ type: "attack", targetId: "monster-crab", weapon: "steel_sword" }));
+    const rejectedWeaponHit = await rejectedWeaponAttack;
+    assert.equal(rejectedWeaponHit.hit, false);
+    assert.match(rejectedWeaponHit.message, /do not have that weapon/i);
 
     const isolatedConnection = connect(url);
     const isolatedPlayer = isolatedConnection.socket;
@@ -530,6 +710,7 @@ test("rejoins an active world with player state after a disconnect", async () =>
     const player = server.players.get(initial.id);
     player.x = 24;
     player.z = 37;
+    player.y = terrainHeightAt(player.x, player.z, 9876) + 2.15;
     player.yaw = 1.25;
     player.inventory.set("oak_planks", 7);
 
@@ -550,7 +731,12 @@ test("rejoins an active world with player state after a disconnect", async () =>
     const restored = await resumedInit;
 
     assert.equal(restored.seed, 9876);
-    assert.deepEqual(restored.position, { x: 24, y: 1.65, z: 37, yaw: 1.25 });
+    assert.deepEqual(restored.position, {
+      x: 24,
+      y: terrainHeightAt(24, 37, 9876) + 2.65,
+      z: 37,
+      yaw: 1.25,
+    });
     assert.equal(restored.inventory.find(([item]) => item === "oak_planks")[1], 7);
     assert.equal(server.rooms.get(roomId).members.size, 1);
   } finally {
@@ -649,6 +835,10 @@ test("saves a world and restores its terrain, mode, seed, and player inventory",
     const savedMessage = nextMessage(connection.socket, (message) => message.type === "save_result");
     connection.socket.send(JSON.stringify({ type: "save_room" }));
     assert.equal((await savedMessage).saved, true);
+    const savePath = join(saveDirectory, `${roomId}.json`);
+    const legacySave = JSON.parse(readFileSync(savePath, "utf8"));
+    legacySave.vehicles = legacySave.vehicles.filter((vehicle) => vehicle.id === "starter-car");
+    writeFileSync(savePath, JSON.stringify(legacySave));
     await server.close();
     sockets.length = 0;
 
@@ -670,6 +860,8 @@ test("saves a world and restores its terrain, mode, seed, and player inventory",
     assert.equal(restored.seed, 7654);
     assert.equal(restored.mode, "survival");
     assert.equal(restored.inventory.find(([item]) => item === "dirt")[1], 1);
+    assert.ok(restored.vehicles.some((vehicle) => vehicle.id === "airport-plane"));
+    assert.ok(restored.vehicles.some((vehicle) => vehicle.id === "airport-car"));
     const restoredChunk = nextMessage(restoredConnection.socket, (message) => message.type === "chunk");
     restoredConnection.socket.send(JSON.stringify({ type: "chunk", x: 0, z: 0 }));
     assert.ok((await restoredChunk).blockChanges.some(([[x, y, z], type]) => x === 0 && y === -1 && z === 0 && type === null));

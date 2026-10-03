@@ -1,12 +1,12 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-import { clone as cloneSkeleton } from "three/addons/utils/SkeletonUtils.js";
 import {
   BEDROCK_Y,
   advancePlanetPosition,
   blockKey,
   canCraft,
   CHUNK_SIZE,
+  cityPropertyNear,
   CITY_BEACH_OUTER_RADIUS,
   CITY_RADIUS,
   createChunkBlocks,
@@ -15,7 +15,9 @@ import {
   HARBOR_DOCK_MIN_Z,
   HARBOR_WATER_OUTER_RADIUS,
   isNearHarbor,
-  MAX_CITY_BUILDING_HEIGHT,
+  listCityProperties,
+  MAX_BUILD_HEIGHT,
+  MAX_STACK_SIZE,
   MAX_PLANET_CHUNK_X,
   MAX_PLANET_CHUNK_Z,
   MIN_PLANET_CHUNK_X,
@@ -56,10 +58,7 @@ import blueConcreteTextureUrl from "./assets/blocks/own/blue_concrete.png";
 import redConcreteTextureUrl from "./assets/blocks/own/red_concrete.png";
 import craftingTableTextureUrl from "./assets/blocks/vibes/table.png";
 import waterTextureUrl from "./assets/blocks/own/water.png";
-import alpacaModelUrl from "./assets/animals/Alpaca.gltf?url";
-import cowModelUrl from "./assets/animals/Cow.gltf?url";
-import foxModelUrl from "./assets/animals/Fox.gltf?url";
-import wolfModelUrl from "./assets/animals/Wolf.gltf?url";
+import blockBitsTextureUrl from "./assets/Textures/block_bits_texture.png?url";
 import "./style.css";
 
 const canvas = document.querySelector("#world");
@@ -90,19 +89,34 @@ const shopCategory = document.querySelector("#shop-category");
 const shopSearch = document.querySelector("#shop-search");
 const shopNotice = document.querySelector("#shop-notice");
 const shopCoins = document.querySelector("#shop-coins");
+const homeProperties = document.querySelector("#home-properties");
+const homeNotice = document.querySelector("#home-notice");
 const thirdPersonToggle = document.querySelector("#third-person-toggle");
+const flyToggle = document.querySelector("#fly-toggle");
+const flyButton = document.querySelector("#fly-button");
+const desktopFlyButton = document.querySelector("#desktop-fly-button");
+const flyDownButton = document.querySelector("#fly-down-button");
 const autosaveToggle = document.querySelector("#autosave-toggle");
 const profileDialog = document.querySelector("#profile-dialog");
 const profileNameInput = document.querySelector("#profile-name");
 const profileColorInput = document.querySelector("#profile-color");
 const profileStatus = document.querySelector("#profile-status");
+const profileCharacterModel = document.querySelector("#profile-character-model");
+const profileCharacterName = document.querySelector("#profile-character-name");
+const profileCharacterLevel = document.querySelector("#profile-character-level");
+const profileGearList = document.querySelector("#profile-gear-list");
 const worldMapPanel = document.querySelector("#world-map-panel");
 const worldMapCanvas = document.querySelector("#world-map-canvas");
 const worldMapMarkers = document.querySelector("#world-map-markers");
+const worldMapSelection = document.querySelector("#world-map-selection");
+const mapTeleportButton = document.querySelector("#map-teleport-button");
+const expandWorldMapButton = document.querySelector("#expand-world-map-button");
+const aimCrosshair = document.querySelector(".aim-crosshair");
 const teleportTarget = document.querySelector("#teleport-target");
 const teleportButton = document.querySelector("#teleport-button");
 const mapTargetOptions = new Map();
 const mapMarkerElements = new Map();
+let selectedMapTarget = null;
 const hotbar = document.querySelector("#hotbar");
 const inventoryPanel = document.querySelector("#inventory-panel");
 const inventoryList = document.querySelector("#inventory-list");
@@ -116,10 +130,12 @@ const coinHud = document.querySelector("#coin-hud");
 const respawnButton = document.querySelector("#respawn-button");
 const attackButton = document.querySelector("#attack-button");
 const fishButton = document.querySelector("#fish-button");
+const vehicleButton = document.querySelector("#vehicle-button");
 const waterControls = document.querySelector("#water-controls");
 const waterRiseButton = document.querySelector("#water-rise-button");
 const waterDiveButton = document.querySelector("#water-dive-button");
 const savedPlayerName = localStorage.getItem("player-name");
+const isCoarsePointer = window.matchMedia("(pointer: coarse)").matches;
 
 function createBrowserProfileId() {
   if (typeof globalThis.crypto?.randomUUID === "function") return globalThis.crypto.randomUUID();
@@ -131,7 +147,6 @@ function createBrowserProfileId() {
   const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
-
 let playerProfileId = localStorage.getItem("player-profile-id");
 if (!playerProfileId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(playerProfileId)) {
   playerProfileId = createBrowserProfileId();
@@ -139,6 +154,7 @@ if (!playerProfileId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-
 }
 let thirdPersonView = localStorage.getItem("camera-view-mode") === "third-person";
 thirdPersonToggle.checked = thirdPersonView;
+document.documentElement.classList.toggle("first-person-view", !thirdPersonView);
 const activeRoomStorageKey = "active-room-id";
 let resumeRequested = false;
 if (savedPlayerName) {
@@ -150,6 +166,7 @@ const blockChoices = [
   ["dirt", "Dirt", dirtTextureUrl],
   ["stone", "Stone", stoneTextureUrl],
   ["oak_planks", "Planks", planksTextureUrl],
+  ["oak_door", "Door", planksTextureUrl],
   ["oak_log", "Log", logTextureUrl],
   ["glass", "Glass", glassTextureUrl],
   ["leaves", "Leaves", leavesTextureUrl],
@@ -170,6 +187,19 @@ const blockChoices = [
   ["sunfish", "Sunfish", null],
   ["gold_fish", "Goldfish", null],
   ["salmon", "Salmon", null],
+  ["stone_pickaxe", "Stone Pickaxe", null],
+  ["iron_pickaxe", "Iron Pickaxe", null],
+  ["iron_axe", "Iron Axe", null],
+  ["iron_sword", "Iron Sword", null],
+  ["steel_pickaxe", "Steel Pickaxe", null],
+  ["steel_axe", "Steel Axe", null],
+  ["steel_sword", "Steel Sword", null],
+  ["lantern", "Lantern", null],
+  ["torch", "Torch", null],
+  ["shield", "Shield", null],
+  ["compass", "Compass", null],
+  ["map", "Map", null],
+  ["spyglass", "Spyglass", null],
 ];
 const blockNames = new Map(blockChoices.map(([id, name]) => [id, name]));
 const blockChoiceById = new Map(blockChoices.map((choice) => [choice[0], choice]));
@@ -258,10 +288,15 @@ function createFishingRodTexture() {
   return texture;
 }
 
+const fishingRodTexture = createFishingRodTexture();
+const fishingRodIconUrl = fishingRodTexture.image.toDataURL();
+
 for (const [id, name, url] of blockChoices) {
   const texture = url
     ? textureLoader.load(url)
-    : id === "raw_fish"
+    : id === "fishing_rod"
+      ? fishingRodTexture
+      : id === "raw_fish"
       ? createFishTexture("#91d8db")
       : id === "sunfish"
         ? createFishTexture("#f5c76a")
@@ -269,9 +304,7 @@ for (const [id, name, url] of blockChoices) {
           ? createFishTexture("#e4c15d")
           : id === "salmon"
             ? createFishTexture("#ff8a5b")
-            : id === "fishing_rod"
-              ? createFishingRodTexture()
-              : createCampfireTexture();
+            : createCampfireTexture();
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.magFilter = THREE.NearestFilter;
   texture.minFilter = THREE.NearestFilter;
@@ -279,6 +312,7 @@ for (const [id, name, url] of blockChoices) {
     id,
     new THREE.MeshLambertMaterial({
       map: texture,
+      side: id === "glass" || id === "water" ? THREE.FrontSide : THREE.DoubleSide,
       transparent: id === "glass" || id === "water",
       opacity: id === "glass" ? 0.58 : id === "water" ? 0.62 : 1,
       depthWrite: id !== "glass" && id !== "water",
@@ -288,15 +322,34 @@ for (const [id, name, url] of blockChoices) {
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color("#a9d8ed");
-scene.fog = new THREE.Fog("#a9d8ed", 34, 70);
+const renderDistance = isCoarsePointer ? 27 : 43;
+scene.fog = new THREE.Fog("#a9d8ed", renderDistance * 0.58, renderDistance);
 const camera = new THREE.PerspectiveCamera(74, 1, 0.1, 90);
+camera.far = renderDistance + 8;
+camera.updateProjectionMatrix();
 camera.rotation.order = "YXZ";
 camera.position.set(0, 1.65, 0);
+const cameraAssetWeapon = new THREE.Group();
+cameraAssetWeapon.position.set(0.34, -0.3, -0.68);
+cameraAssetWeapon.rotation.set(-0.1, -0.15, 0.1);
+cameraAssetWeapon.visible = false;
+camera.add(cameraAssetWeapon);
+const cameraFishingRod = createFishingRodModel();
+cameraFishingRod.position.set(0.38, -0.32, -0.72);
+cameraFishingRod.rotation.set(-0.12, -0.2, 0.42);
+cameraFishingRod.visible = false;
+camera.add(cameraFishingRod);
+const cameraSword = createSwordModel();
+cameraSword.position.set(0.38, -0.36, -0.72);
+cameraSword.rotation.set(-0.12, -0.2, 0.42);
+cameraSword.visible = false;
+camera.add(cameraSword);
+scene.add(camera);
 let rendererAvailable = true;
 let renderer;
 try {
-  renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: "high-performance" });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.25));
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: "low-power" });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, isCoarsePointer ? 0.9 : 1.15));
 } catch (error) {
   rendererAvailable = false;
   console.error("WebGL is unavailable; the multiplayer lobby will run without 3D rendering.", error);
@@ -360,21 +413,47 @@ const skyClouds = Array.from({ length: 7 }, (_, index) => {
 });
 
 const cubeGeometry = new THREE.BoxGeometry(1, 1, 1);
+const doorGeometry = new THREE.BoxGeometry(1, 1, 0.12);
+const waterSurfaceGeometry = new THREE.PlaneGeometry(1, 1);
+const waterSurfaceMaterial = new THREE.MeshLambertMaterial({
+  color: "#5ca9c4",
+  transparent: true,
+  opacity: 0.72,
+  depthWrite: false,
+  side: THREE.DoubleSide,
+});
 const blockMeshes = [];
 const remotePlayers = new Map();
 const botAvatars = new Map();
 const monsterAvatars = new Map();
 const animalAvatars = new Map();
-const animalModels = new Map();
-const animalModelLoads = new Map();
-let animalModelRefreshPending = false;
-const animalModelLoader = new GLTFLoader();
-const animalModelUrls = new Map([
-  ["alpaca", alpacaModelUrl],
-  ["cow", cowModelUrl],
-  ["fox", foxModelUrl],
-  ["wolf", wolfModelUrl],
-]);
+const vehicleMeshes = new Map();
+const blockBitsGltfSources = import.meta.glob("./assets/Assets/gltf/*.gltf", {
+  query: "?raw",
+  import: "default",
+});
+const blockBitsBinaryUrls = import.meta.glob("./assets/Assets/gltf/*.bin", {
+  query: "?url",
+  import: "default",
+  eager: true,
+});
+const kenneyBlasterUrls = import.meta.glob("./assets/kenney-blaster-kit/*.glb", {
+  query: "?url",
+  import: "default",
+  eager: true,
+});
+const placedAssetModels = new Map();
+const placedAssetModelLoads = new Map();
+const placedAssetModelLoader = new GLTFLoader();
+const assetModelFiles = new Map(
+  Object.keys(blockBitsGltfSources).map((path) => [
+    `block-bits/${path.split("/").at(-1).replace(/\.gltf$/, "")}`,
+    path,
+  ]),
+);
+for (const path of Object.keys(kenneyBlasterUrls)) {
+  assetModelFiles.set(`kenney-blaster-kit/${path.split("/").at(-1)}`, path);
+}
 const droppedItemMeshes = new Map();
 const marinePlantMeshes = [];
 const ambientFish = [];
@@ -386,14 +465,25 @@ const worldBlocks = new Map();
 const loadedChunks = new Map();
 const renderCandidatesByChunk = new Map();
 const raycaster = new THREE.Raycaster();
+const cameraRayOrigin = new THREE.Vector3();
+const cameraRaySample = new THREE.Vector3();
+const cameraRayOffset = new THREE.Vector3();
+const cameraRayRelative = new THREE.Vector3();
+const cameraRayEast = new THREE.Vector3();
+const cameraRayNorth = new THREE.Vector3();
 const center = new THREE.Vector2(0, 0);
 const clock = new THREE.Clock();
 const moveKeys = new Set();
 const joystickVector = new THREE.Vector2();
+const gamepadMoveVector = new THREE.Vector2();
 const playerPosition = new THREE.Vector3(0, 1.65, 0);
 const look = { yaw: 0, pitch: 0 };
+const previousGamepadButtons = new Set();
+let activeGamepadIndex = null;
 let lastChunkX = null;
 let lastChunkZ = null;
+let gamepadNavigationDirection = 0;
+let gamepadNavigationRepeatAt = 0;
 const state = {
   id: null,
   seed: 1,
@@ -405,6 +495,8 @@ const state = {
   xp: 0,
   level: 0,
   coins: 0,
+  playerName: "",
+  properties: [],
   lastSentAt: 0,
   lastPickupAt: 0,
   jumpVelocity: 0,
@@ -412,8 +504,14 @@ const state = {
   isSwimming: false,
   inventory: new Map(),
   roomAnimals: [],
+  roomMonsters: [],
+  vehicles: [],
+  vehicleId: null,
+  vehicleType: null,
   pendingHotbarItem: null,
   fishingCast: null,
+  isFlying: false,
+  flyVerticalDirection: 0,
 };
 let lobbyRoom = null;
 let toastTimer;
@@ -424,32 +522,6 @@ function notify(message) {
   toast.classList.add("visible");
   window.clearTimeout(toastTimer);
   toastTimer = window.setTimeout(() => toast.classList.remove("visible"), 2400);
-}
-
-function loadAnimalModels(animals) {
-  const pending = [];
-  for (const modelType of new Set(animals.map((animal) => animal.model))) {
-    const url = animalModelUrls.get(modelType);
-    if (!url || animalModels.has(modelType)) continue;
-    let loading = animalModelLoads.get(modelType);
-    if (!loading) {
-      loading = animalModelLoader.loadAsync(url)
-        .then((model) => animalModels.set(modelType, model))
-        .catch((error) => {
-          console.error(`Unable to load the ${modelType} animal model.`, error);
-          if (state.connected) notify(`The ${modelType} model couldn't load.`);
-        });
-      animalModelLoads.set(modelType, loading);
-    }
-    pending.push(loading);
-  }
-  if (pending.length && !animalModelRefreshPending) {
-    animalModelRefreshPending = true;
-    void Promise.all(pending).then(() => {
-      animalModelRefreshPending = false;
-      refreshAnimalModels();
-    });
-  }
 }
 
 function updateCamera() {
@@ -464,6 +536,33 @@ function updateCamera() {
   if (thirdPersonView) {
     const target = planetPointAt(playerPosition.x, playerPosition.y + 0.2, playerPosition.z);
     camera.position.set(target.x, target.y, target.z).addScaledVector(forward, -4.5).addScaledVector(up, 1.7);
+    cameraRayOrigin.set(target.x, target.y, target.z);
+    cameraRayOffset.subVectors(camera.position, cameraRayOrigin);
+    const cameraDistance = cameraRayOffset.length();
+    cameraRayOffset.normalize();
+    cameraRayEast.set(frame.east.x, frame.east.y, frame.east.z);
+    cameraRayNorth.set(frame.north.x, frame.north.y, frame.north.z);
+    for (let distance = 0.2; distance < cameraDistance; distance += 0.15) {
+      cameraRaySample.copy(cameraRayOrigin).addScaledVector(cameraRayOffset, distance);
+      cameraRayRelative.subVectors(cameraRaySample, cameraRayOrigin);
+      const mapPosition = advancePlanetPosition(
+        playerPosition.x,
+        playerPosition.z,
+        cameraRayRelative.dot(cameraRayEast),
+        cameraRayRelative.dot(cameraRayNorth),
+      );
+      const blockY = Math.floor(cameraRaySample.length() - PLANET_RADIUS);
+      const block = worldBlocks.get(blockKey(
+        Math.round(mapPosition.x),
+        blockY,
+        Math.round(mapPosition.z),
+      ));
+      if (block !== undefined && block !== null && block !== "water") {
+        camera.position.copy(cameraRayOrigin)
+          .addScaledVector(cameraRayOffset, Math.max(0.2, distance - 0.25));
+        break;
+      }
+    }
     camera.lookAt(target.x, target.y, target.z);
   } else {
     camera.position.set(point.x, point.y, point.z);
@@ -537,7 +636,7 @@ function createUnderwaterLife(seed) {
         blade.rotation.z = (random() - 0.5) * 0.28;
         plant.add(blade);
       }
-      const point = planetPointAt(x, seabed + 0.55, z);
+      const point = planetPointAt(x, seabed + 1.05, z);
       plant.position.set(point.x, point.y, point.z);
       plant.quaternion.copy(surfaceQuaternionAt(x, z));
       scene.add(plant);
@@ -555,11 +654,9 @@ function createUnderwaterLife(seed) {
     const fish = new THREE.Group();
     const color = fishColors[Math.floor(random() * fishColors.length)];
     const material = new THREE.MeshLambertMaterial({ color });
-    const body = new THREE.Mesh(new THREE.SphereGeometry(0.34, 10, 7), material);
-    body.scale.set(0.78, 0.34, 0.38);
-    const tail = new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.34, 3), material);
-    tail.position.x = -0.34;
-    tail.rotation.z = Math.PI / 2;
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.26, 0.3), material);
+    const tail = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.4, 0.12), material);
+    tail.position.x = -0.38;
     fish.add(body, tail);
     scene.add(fish);
     ambientFish.push({
@@ -603,34 +700,8 @@ function wrapPlanetChunkX(chunkX) {
   return ((chunkX - MIN_PLANET_CHUNK_X) % chunkCount + chunkCount) % chunkCount + MIN_PLANET_CHUNK_X;
 }
 
-function getChunkRenderCandidates(chunkX, chunkZ, chunk) {
-  const candidates = new Set();
-  const startX = chunkX * CHUNK_SIZE;
-  const startZ = chunkZ * CHUNK_SIZE;
-  for (let x = startX; x < startX + CHUNK_SIZE; x += 1) {
-    for (let z = startZ; z < startZ + CHUNK_SIZE; z += 1) {
-      const surface = terrainHeightAt(x, z, state.seed);
-      const lowestNeighbor = Math.min(
-        terrainHeightAt(x - 1, z, state.seed),
-        terrainHeightAt(x + 1, z, state.seed),
-        terrainHeightAt(x, z - 1, state.seed),
-        terrainHeightAt(x, z + 1, state.seed),
-      );
-      const isChunkEdge =
-        x === startX || x === startX + CHUNK_SIZE - 1 || z === startZ || z === startZ + CHUNK_SIZE - 1;
-      const firstVisibleY = isChunkEdge
-        ? BEDROCK_Y + 1
-        : Math.min(surface, lowestNeighbor + 1);
-      const renderTopY = Math.hypot(x, z) <= CITY_RADIUS
-        ? MAX_CITY_BUILDING_HEIGHT
-        : surface + 7;
-      for (let y = firstVisibleY; y <= renderTopY; y += 1) {
-        const key = blockKey(x, y, z);
-        if (chunk.has(key)) candidates.add(key);
-      }
-    }
-  }
-  return candidates;
+function getChunkRenderCandidates(chunk) {
+  return new Set(chunk.keys());
 }
 
 function addRenderCandidatesAround(x, y, z) {
@@ -659,7 +730,7 @@ function ensureChunkLoaded(chunkX, chunkZ) {
 
   const chunk = createChunkBlocks(chunkX, chunkZ, state.seed);
   loadedChunks.set(key, chunk);
-  renderCandidatesByChunk.set(key, getChunkRenderCandidates(chunkX, chunkZ, chunk));
+  renderCandidatesByChunk.set(key, getChunkRenderCandidates(chunk));
   for (const [block, type] of chunk) worldBlocks.set(block, type);
   if (state.socket?.readyState === WebSocket.OPEN) {
     state.socket.send(JSON.stringify({ type: "chunk", x: chunkX, z: chunkZ }));
@@ -673,7 +744,7 @@ function updateChunkWindow(force = false) {
   lastChunkX = chunkX;
   lastChunkZ = chunkZ;
 
-  const loadRadius = 2;
+  const loadRadius = isCoarsePointer ? 1 : 2;
   const unloadRadius = loadRadius + 1;
   let changed = false;
   for (const [key, chunk] of loadedChunks) {
@@ -700,7 +771,154 @@ function updateChunkWindow(force = false) {
   return changed;
 }
 
+function loadPlacedAssetModel(assetKey) {
+  const loaded = placedAssetModels.get(assetKey);
+  if (loaded) return Promise.resolve(loaded);
+  const pending = placedAssetModelLoads.get(assetKey);
+  if (pending) return pending;
+
+  const sourcePath = assetModelFiles.get(assetKey);
+  if (!sourcePath) {
+    const error = new Error(`Unknown placed asset model: ${assetKey}`);
+    console.error(error);
+    if (state.connected) notify("That asset model is unavailable.");
+    return Promise.resolve(null);
+  }
+
+  const loading = (async () => {
+    let scene;
+    if (assetKey.startsWith("block-bits/")) {
+      const loadSource = blockBitsGltfSources[sourcePath];
+      const modelName = sourcePath.split("/").at(-1).replace(/\.gltf$/, "");
+      const binaryUrl = blockBitsBinaryUrls[`./assets/Assets/gltf/${modelName}.bin`];
+      if (!loadSource || typeof binaryUrl !== "string") {
+        throw new Error(`The Block Bits files for ${modelName} are incomplete.`);
+      }
+      const document = JSON.parse(await loadSource());
+      if (!Array.isArray(document.buffers) || !Array.isArray(document.images)) {
+        throw new Error(`The Block Bits model ${modelName} has missing geometry or texture data.`);
+      }
+      for (const buffer of document.buffers) buffer.uri = binaryUrl;
+      for (const image of document.images) image.uri = blockBitsTextureUrl;
+      const gltf = await placedAssetModelLoader.parseAsync(JSON.stringify(document), "");
+      scene = gltf.scene;
+    } else {
+      const url = kenneyBlasterUrls[sourcePath];
+      if (typeof url !== "string") {
+        throw new Error(`The Kenney model for ${assetKey} is unavailable.`);
+      }
+      const gltf = await placedAssetModelLoader.loadAsync(url);
+      scene = gltf.scene;
+    }
+
+    placedAssetModels.set(assetKey, scene);
+    scheduleWorldRender();
+    return scene;
+  })().catch((error) => {
+    console.error(`Unable to load placed asset model "${assetKey}".`, error);
+    const itemName = MODEL_CATALOG.find((item) => item.assetKey === assetKey)?.name ?? "asset";
+    if (state.connected) notify(`The ${itemName} model couldn't load.`);
+    return null;
+  }).finally(() => {
+    placedAssetModelLoads.delete(assetKey);
+  });
+  placedAssetModelLoads.set(assetKey, loading);
+  return loading;
+}
+
+function createPlacedAssetModel(model, x, y, z) {
+  const assetScene = placedAssetModels.get(model.assetKey);
+  if (!assetScene) {
+    void loadPlacedAssetModel(model.assetKey);
+    return null;
+  }
+
+  const instance = assetScene.clone(true);
+  instance.updateMatrixWorld(true);
+  const bounds = new THREE.Box3().setFromObject(instance);
+  const size = bounds.getSize(new THREE.Vector3());
+  const center = bounds.getCenter(new THREE.Vector3());
+  const maximumHorizontalSize = Math.max(size.x, size.z, 0.01);
+  const scale = Math.min(0.85 / maximumHorizontalSize, 1.8 / Math.max(size.y, 0.01));
+  instance.scale.setScalar(scale);
+  instance.position.set(-center.x * scale, -bounds.min.y * scale, -center.z * scale);
+
+  const group = new THREE.Group();
+  group.add(instance);
+  const frame = planetFrameAt(x, z);
+  const point = planetPointAt(x, y + 1, z);
+  const orientation = new THREE.Matrix4().makeBasis(
+    new THREE.Vector3(frame.east.x, frame.east.y, frame.east.z),
+    new THREE.Vector3(frame.up.x, frame.up.y, frame.up.z),
+    new THREE.Vector3(-frame.north.x, -frame.north.y, -frame.north.z),
+  );
+  group.position.set(point.x, point.y, point.z);
+  group.quaternion.setFromRotationMatrix(orientation);
+  group.userData.sharedAssetModel = true;
+  instance.traverse((part) => {
+    if (!part.isMesh) return;
+    part.userData.blockCoordinates = [x, y, z];
+    modelTargetMeshes.push(part);
+  });
+  scene.add(group);
+  modelPlacementMeshes.push(group);
+  return group;
+}
+
+function setHeldAssetModel(container, assetKey) {
+  if (container.userData.assetKey === assetKey) return;
+  container.userData.assetKey = assetKey;
+  container.clear();
+  void loadPlacedAssetModel(assetKey).then((assetScene) => {
+    if (!assetScene || container.userData.assetKey !== assetKey) return;
+    const instance = assetScene.clone(true);
+    instance.updateMatrixWorld(true);
+    const bounds = new THREE.Box3().setFromObject(instance);
+    const size = bounds.getSize(new THREE.Vector3());
+    const center = bounds.getCenter(new THREE.Vector3());
+    const scale = 0.55 / Math.max(size.x, size.y, size.z, 0.01);
+    instance.scale.setScalar(scale);
+    instance.position.set(-center.x * scale, -center.y * scale, -center.z * scale);
+    container.add(instance);
+  });
+}
+
+function updateHeldAssetVisibility() {
+  const selectedModel = MODEL_ITEM_BY_ID.get(state.selected);
+  const assetKey = selectedModel?.assetKey?.startsWith("kenney-blaster-kit/")
+    ? selectedModel.assetKey
+    : null;
+  cameraAssetWeapon.visible = Boolean(assetKey && !thirdPersonView);
+  if (assetKey) setHeldAssetModel(cameraAssetWeapon, assetKey);
+  if (selfAvatar?.userData.assetWeapon) {
+    selfAvatar.userData.assetWeapon.visible = Boolean(assetKey && thirdPersonView);
+    if (assetKey) setHeldAssetModel(selfAvatar.userData.assetWeapon, assetKey);
+  }
+}
+
+function updateHeldWeaponVisibility() {
+  const isSword = ["wooden_sword", "stone_sword", "iron_sword", "steel_sword"].includes(state.selected);
+  cameraSword.visible = isSword && !thirdPersonView;
+  if (selfAvatar?.userData.sword) {
+    selfAvatar.userData.sword.visible = isSword && thirdPersonView;
+    if (isSword) {
+      const color = state.selected === "wooden_sword" ? "#8a5b32"
+        : state.selected === "stone_sword" ? "#9da4a9"
+          : state.selected === "iron_sword" ? "#d2dde0" : "#8ce1e3";
+      selfAvatar.userData.sword.userData.blade.material.color.set(color);
+    }
+  }
+  if (isSword) {
+    const color = state.selected === "wooden_sword" ? "#8a5b32"
+      : state.selected === "stone_sword" ? "#9da4a9"
+        : state.selected === "iron_sword" ? "#d2dde0" : "#8ce1e3";
+    cameraSword.userData.blade.material.color.set(color);
+  }
+}
+
 function createPlacedModel(model, x, y, z) {
+  if (model.assetKey) return createPlacedAssetModel(model, x, y, z);
+
   const group = new THREE.Group();
   const color = new THREE.Color(model.color);
   color.offsetHSL(((model.variant * 0.61803398875) % 1 - 0.5) * 0.22, 0.08, ((model.variant % 7) - 3) * 0.012);
@@ -828,6 +1046,7 @@ function renderWorld() {
   blockMeshes.length = 0;
   for (const model of modelPlacementMeshes) {
     scene.remove(model);
+    if (model.userData.sharedAssetModel) continue;
     model.traverse((part) => {
       part.geometry?.dispose();
       if (Array.isArray(part.material)) part.material.forEach((material) => material.dispose());
@@ -838,29 +1057,35 @@ function renderWorld() {
   modelTargetMeshes.length = 0;
 
   const grouped = new Map();
+  const doorCoordinates = [];
+  const waterSurfaceCoordinates = [];
   const placedModels = [];
-  const playerChunkX = Math.floor(wrapPlanetX(playerPosition.x) / CHUNK_SIZE);
-  const playerChunkZ = Math.floor(playerPosition.z / CHUNK_SIZE);
+  const latitude = (playerPosition.z - PLANET_MIN_Z + 0.5) / PLANET_LATITUDE_BLOCKS * Math.PI - Math.PI / 2;
+  const longitudeScale = Math.max(0.1, Math.cos(latitude));
   for (const [chunkKey, candidates] of renderCandidatesByChunk) {
-    const [chunkX, chunkZ] = chunkKey.split(",").map(Number);
-    const chunkDeltaX = Math.abs(chunkX - playerChunkX);
-    const wrappedDeltaX = Math.min(chunkDeltaX, MAX_PLANET_CHUNK_X - MIN_PLANET_CHUNK_X + 1 - chunkDeltaX);
-    const isDistant = Math.max(wrappedDeltaX, Math.abs(chunkZ - playerChunkZ)) > 1;
     for (const key of candidates) {
       const type = worldBlocks.get(key);
       const model = MODEL_ITEM_BY_ID.get(type);
       if (!model && !materials.has(type)) continue;
       const [x, y, z] = key.split(",").map(Number);
-      if (y === BEDROCK_Y) continue;
+      let deltaX = wrapPlanetX(x - playerPosition.x);
+      if (deltaX > PLANET_LONGITUDE_BLOCKS / 2) deltaX -= PLANET_LONGITUDE_BLOCKS;
+      const mapDistance = Math.hypot(deltaX * longitudeScale, z - playerPosition.z);
+      if (mapDistance > renderDistance) continue;
       if (model) {
         placedModels.push([model, x, y, z]);
         continue;
       }
-      if (
-        isDistant &&
-        (type === "grass" || type === "dirt" || type === "stone") &&
-        y < terrainHeightAt(x, z, state.seed)
-      ) continue;
+      if (type === "oak_door") {
+        doorCoordinates.push([x, y, z]);
+        continue;
+      }
+      if (type === "water") {
+        if (worldBlocks.get(blockKey(x, y + 1, z)) !== "water") {
+          waterSurfaceCoordinates.push([x, y, z]);
+        }
+        continue;
+      }
       const visible = (neighborX, neighborY, neighborZ) => {
         const neighborType = worldBlocks.get(blockKey(neighborX, neighborY, neighborZ));
         const neighborIsTransparent = neighborType === "glass" || neighborType === "water";
@@ -882,6 +1107,7 @@ function renderWorld() {
   const matrix = new THREE.Object3D();
   const east = new THREE.Vector3();
   const up = new THREE.Vector3();
+  const north = new THREE.Vector3();
   const westNorth = new THREE.Vector3();
   const basis = new THREE.Matrix4();
   const orientation = new THREE.Quaternion();
@@ -915,6 +1141,64 @@ function renderWorld() {
     }
     scene.add(mesh);
     blockMeshes.push(mesh);
+  }
+  if (doorCoordinates.length > 0) {
+    const doorMesh = new THREE.InstancedMesh(doorGeometry, materials.get("oak_door"), doorCoordinates.length);
+    doorMesh.userData.coordinates = doorCoordinates;
+    doorMesh.userData.blockType = "oak_door";
+    for (let index = 0; index < doorCoordinates.length; index += 1) {
+      const [x, y, z] = doorCoordinates[index];
+      const frame = planetFrameAt(x, z);
+      const point = planetPointAt(x, y + 0.5, z);
+      east.set(frame.east.x, frame.east.y, frame.east.z);
+      up.set(frame.up.x, frame.up.y, frame.up.z);
+      westNorth.set(-frame.north.x, -frame.north.y, -frame.north.z);
+      basis.makeBasis(east, up, westNorth);
+      orientation.setFromRotationMatrix(basis);
+      const blockRadius = PLANET_RADIUS + y + 1;
+      scale.set(
+        Math.max(0.05, 2 * Math.cos(frame.latitude) * blockRadius * Math.tan(Math.PI / PLANET_LONGITUDE_BLOCKS)),
+        1,
+        2 * blockRadius * Math.tan(Math.PI / (2 * PLANET_LATITUDE_BLOCKS)),
+      );
+      matrix.position.set(point.x, point.y, point.z);
+      matrix.quaternion.copy(orientation);
+      matrix.scale.copy(scale);
+      matrix.updateMatrix();
+      doorMesh.setMatrixAt(index, matrix.matrix);
+    }
+    scene.add(doorMesh);
+    blockMeshes.push(doorMesh);
+  }
+  if (waterSurfaceCoordinates.length > 0) {
+    const waterMesh = new THREE.InstancedMesh(
+      waterSurfaceGeometry,
+      waterSurfaceMaterial,
+      waterSurfaceCoordinates.length,
+    );
+    waterMesh.userData.coordinates = waterSurfaceCoordinates;
+    waterMesh.userData.blockType = "water";
+    for (let index = 0; index < waterSurfaceCoordinates.length; index += 1) {
+      const [x, y, z] = waterSurfaceCoordinates[index];
+      const frame = planetFrameAt(x, z);
+      const blockRadius = PLANET_RADIUS + y + 1;
+      east.set(frame.east.x, frame.east.y, frame.east.z);
+      north.set(frame.north.x, frame.north.y, frame.north.z);
+      up.set(frame.up.x, frame.up.y, frame.up.z);
+      basis.makeBasis(east, north, up);
+      orientation.setFromRotationMatrix(basis);
+      matrix.position.copy(planetPointAt(x, y + 1.006, z));
+      matrix.quaternion.copy(orientation);
+      matrix.scale.set(
+        Math.max(0.05, 2 * Math.cos(frame.latitude) * blockRadius * Math.tan(Math.PI / PLANET_LONGITUDE_BLOCKS)),
+        2 * blockRadius * Math.tan(Math.PI / (2 * PLANET_LATITUDE_BLOCKS)),
+        1,
+      );
+      matrix.updateMatrix();
+      waterMesh.setMatrixAt(index, matrix.matrix);
+    }
+    scene.add(waterMesh);
+    blockMeshes.push(waterMesh);
   }
   for (const [model, x, y, z] of placedModels) createPlacedModel(model, x, y, z);
 }
@@ -985,6 +1269,75 @@ function updateAvatarHealth(sprite, health) {
   sprite.userData.texture.needsUpdate = true;
 }
 
+function createFishingRodModel() {
+  const group = new THREE.Group();
+  const rodMaterial = new THREE.MeshLambertMaterial({ color: "#a87543" });
+  const gripMaterial = new THREE.MeshLambertMaterial({ color: "#45342b" });
+  const metalMaterial = new THREE.MeshLambertMaterial({ color: "#c8d0d3" });
+  const bobberMaterial = new THREE.MeshLambertMaterial({ color: "#d65d43" });
+  const addCylinder = (radiusTop, radiusBottom, height, material, position) => {
+    const mesh = new THREE.Mesh(
+      new THREE.CylinderGeometry(radiusTop, radiusBottom, height, 7),
+      material,
+    );
+    mesh.position.set(...position);
+    group.add(mesh);
+    return mesh;
+  };
+  const handle = addCylinder(0.035, 0.045, 0.24, gripMaterial, [0, 0.12, 0]);
+  handle.rotation.z = 0.18;
+  const shaft = addCylinder(0.008, 0.024, 0.76, rodMaterial, [-0.09, 0.57, 0]);
+  shaft.rotation.z = 0.2;
+  const reel = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.035, 10), metalMaterial);
+  reel.position.set(0.025, 0.28, 0.025);
+  reel.rotation.x = Math.PI / 2;
+  group.add(reel);
+  const reelHandle = addCylinder(0.012, 0.012, 0.12, metalMaterial, [0.11, 0.28, 0.02]);
+  reelHandle.rotation.z = Math.PI / 2;
+  const linePoints = [
+    new THREE.Vector3(-0.17, 0.94, 0),
+    new THREE.Vector3(-0.19, 0.61, -0.035),
+    new THREE.Vector3(-0.08, 0.36, -0.035),
+  ];
+  const line = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(linePoints),
+    new THREE.LineBasicMaterial({ color: "#eee8d6" }),
+  );
+  group.add(line);
+  const bobber = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 6), bobberMaterial);
+  bobber.position.copy(linePoints[2]);
+  group.add(bobber);
+  return group;
+}
+
+function createSwordModel() {
+  const group = new THREE.Group();
+  const blade = new THREE.Mesh(
+    new THREE.BoxGeometry(0.085, 0.68, 0.045),
+    new THREE.MeshLambertMaterial({ color: "#d2dde0" }),
+  );
+  blade.position.y = 0.48;
+  const guard = new THREE.Mesh(
+    new THREE.BoxGeometry(0.3, 0.07, 0.1),
+    new THREE.MeshLambertMaterial({ color: "#c19b4b" }),
+  );
+  guard.position.y = 0.12;
+  const handle = new THREE.Mesh(
+    new THREE.BoxGeometry(0.09, 0.26, 0.09),
+    new THREE.MeshLambertMaterial({ color: "#65452e" }),
+  );
+  handle.position.y = -0.04;
+  const pommel = new THREE.Mesh(
+    new THREE.BoxGeometry(0.12, 0.08, 0.11),
+    new THREE.MeshLambertMaterial({ color: "#c19b4b" }),
+  );
+  pommel.position.y = -0.2;
+  group.add(blade, guard, handle, pommel);
+  group.userData.blade = blade;
+  group.scale.setScalar(0.72);
+  return group;
+}
+
 function makeAvatar(entity, isBot = false) {
   const group = new THREE.Group();
   const skin = isBot ? "#e4c39c" : "#ecd2b4";
@@ -1004,6 +1357,14 @@ function makeAvatar(entity, isBot = false) {
   const rightLeg = new THREE.Mesh(legGeometry, bodyMaterial);
   const leftBoot = new THREE.Mesh(bootGeometry, bootMaterial);
   const rightBoot = new THREE.Mesh(bootGeometry, bootMaterial);
+  const armorMaterial = new THREE.MeshLambertMaterial({ color: "#9caeb6" });
+  const helmetMaterial = new THREE.MeshLambertMaterial({ color: "#d1b46d" });
+  const bodyArmor = new THREE.Mesh(new THREE.BoxGeometry(0.54, 0.58, 0.37), armorMaterial);
+  bodyArmor.position.y = 0.8;
+  bodyArmor.visible = false;
+  const headArmor = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.2, 0.48), helmetMaterial);
+  headArmor.position.y = 1.55;
+  headArmor.visible = false;
   const healthBar = avatarHealthBar(entity.health);
   leftArm.position.set(-0.32, 0.8, 0);
   rightArm.position.set(0.32, 0.8, 0);
@@ -1021,9 +1382,40 @@ function makeAvatar(entity, isBot = false) {
     rightLeg,
     leftBoot,
     rightBoot,
+    bodyArmor,
+    headArmor,
     healthBar,
   );
+  group.userData.bodyArmor = bodyArmor;
+  group.userData.headArmor = headArmor;
+  if (!isBot && entity.id === state.id) {
+    const fishingRod = createFishingRodModel();
+    fishingRod.position.set(0.36, 0.72, -0.18);
+    fishingRod.rotation.z = 0.45;
+    fishingRod.scale.setScalar(0.68);
+    fishingRod.visible = state.selected === "fishing_rod" && thirdPersonView;
+    group.add(fishingRod);
+    group.userData.fishingRod = fishingRod;
+    const assetWeapon = new THREE.Group();
+    assetWeapon.position.set(0.34, 0.68, -0.28);
+    assetWeapon.rotation.set(0, Math.PI, 0.35);
+    assetWeapon.visible = false;
+    group.add(assetWeapon);
+    group.userData.assetWeapon = assetWeapon;
+    const sword = createSwordModel();
+    sword.position.set(0.36, 0.67, -0.2);
+    sword.rotation.set(-0.1, Math.PI, 0.25);
+    sword.visible = false;
+    group.add(sword);
+    group.userData.sword = sword;
+  }
   group.userData.healthBar = healthBar;
+  group.userData.leftArm = leftArm;
+  group.userData.rightArm = rightArm;
+  group.userData.leftLeg = leftLeg;
+  group.userData.rightLeg = rightLeg;
+  group.userData.walking = false;
+  group.userData.gait = Math.random() * Math.PI * 2;
   const point = planetPointAt(entity.x, terrainHeightAt(entity.x, entity.z, state.seed) + 1, entity.z);
   group.position.set(point.x, point.y, point.z);
   group.quaternion.copy(surfaceQuaternionAt(entity.x, entity.z, entity.yaw ?? 0));
@@ -1104,8 +1496,12 @@ function updateAvatars(
 
   for (const entity of current) {
     if (entity.id === state.id && !isBot) {
-      if (!selfAvatar) selfAvatar = makeAvatar(entity);
-      selfAvatar.visible = thirdPersonView && state.connected;
+      if (!selfAvatar) {
+        selfAvatar = makeAvatar(entity);
+        updateHeldAssetVisibility();
+      }
+      updateCharacterArmor();
+      selfAvatar.visible = thirdPersonView && state.connected && !state.vehicleId;
       updateAvatarHealth(selfAvatar.userData.healthBar, entity.health);
       continue;
     }
@@ -1115,32 +1511,49 @@ function updateAvatars(
       avatarMeshes.set(entity.id, avatar);
     }
     if (!avatar.userData.healthBar) avatar.children[2].visible = true;
+    avatar.visible = !entity.vehicleId;
     if (entity.color) avatar.children[0].material.color.set(entity.color);
     updateAvatarHealth(avatar.userData.healthBar, entity.health);
+    avatar.userData.walking = Boolean(entity.walking);
     const surfaceHeight = entity.y === undefined
       ? terrainHeightAt(entity.x, entity.z, state.seed) + 1
-      : entity.y - 0.65;
+      : entity.y - 1.65;
     const point = planetPointAt(entity.x, surfaceHeight, entity.z);
     const target = new THREE.Vector3(point.x, point.y, point.z);
-    avatar.position.lerp(target, 0.32);
+    avatar.position.lerp(target, isBot ? 0.42 : 0.32);
     avatar.position.setLength(PLANET_RADIUS + surfaceHeight);
-    avatar.quaternion.copy(surfaceQuaternionAt(entity.x, entity.z, entity.yaw ?? 0));
+    avatar.quaternion.slerp(surfaceQuaternionAt(entity.x, entity.z, entity.yaw ?? 0), isBot ? 0.32 : 0.5);
   }
   target.clear();
   for (const entity of current) target.set(entity.id, entity);
 }
 
+function animateBots(delta) {
+  for (const bot of botAvatars.values()) {
+    bot.userData.gait += delta * (bot.userData.walking ? 10 : 2);
+    const stride = bot.userData.walking ? Math.sin(bot.userData.gait) * 0.55 : 0;
+    bot.userData.leftLeg.rotation.x = stride;
+    bot.userData.rightLeg.rotation.x = -stride;
+    bot.userData.leftArm.rotation.x = -stride * 0.7;
+    bot.userData.rightArm.rotation.x = stride * 0.7;
+  }
+}
+
 function makeAnimal(entity) {
-  const modelAsset = animalModels.get(entity.model);
-  if (modelAsset) return makeAnimatedAnimal(entity, modelAsset);
   if (entity.model === "fish") return makeFish(entity);
   const palettes = {
     cow: { body: "#f0eee5", head: "#f0eee5", face: "#d89582", legs: "#51473f", patch: "#413b38", scale: 1 },
     alpaca: { body: "#eee9da", head: "#eee9da", face: "#d89582", legs: "#62584d", patch: "#d6d0c1", scale: 1 },
     fox: { body: "#d77c4b", head: "#d77c4b", face: "#eee9da", legs: "#51473f", patch: "#eee9da", scale: 1 },
     wolf: { body: "#8a8d8e", head: "#a6a6a1", face: "#d6d0c1", legs: "#514d49", patch: "#d6d0c1", scale: 1 },
+    horse: { body: "#b58b5c", head: "#c89f6f", face: "#2f261d", legs: "#463a31", patch: "#d6c59d", scale: 1.1 },
+    dragon: { body: "#9d5d42", head: "#b66e4f", face: "#ffe8b5", legs: "#4b2c25", patch: "#d6a77a", scale: 1.15 },
   };
-  const palette = palettes[entity.model] ?? palettes.cow;
+  const palette = {
+    ...(palettes[entity.model] ?? palettes.cow),
+    body: entity.color ?? (palettes[entity.model] ?? palettes.cow).body,
+    head: entity.color ?? (palettes[entity.model] ?? palettes.cow).head,
+  };
   const group = new THREE.Group();
   group.scale.setScalar(entity.scale ?? palette.scale);
   const material = (color) => new THREE.MeshLambertMaterial({ color });
@@ -1157,38 +1570,62 @@ function makeAnimal(entity) {
     parent.add(mesh);
     return mesh;
   };
-  const bodySize = entity.species === "chicken" ? [0.58, 0.52, 0.68] : [0.9, 0.66, 0.62];
-  const bodyY = entity.species === "chicken" ? 0.55 : 0.72;
+  const bodySize = entity.model === "alpaca" ? [0.66, 0.86, 0.6]
+    : entity.model === "fox" || entity.model === "wolf" ? [0.94, 0.58, 0.58]
+      : entity.model === "horse" ? [1.12, 0.72, 0.72]
+        : entity.model === "dragon" ? [0.96, 0.66, 0.8]
+          : [0.9, 0.66, 0.62];
+  const bodyY = entity.model === "alpaca" ? 0.88 : entity.model === "horse" ? 0.8 : 0.72;
   const body = addBox(group, bodySize, [0, bodyY, 0], bodyMaterial);
   const head = new THREE.Group();
-  head.position.set(0, entity.species === "chicken" ? 0.82 : 0.9, entity.species === "chicken" ? -0.3 : -0.48);
+  const headPosition = entity.model === "alpaca" ? [0, 1.22, -0.3]
+    : entity.model === "cow" ? [0, 0.96, -0.48]
+      : entity.model === "horse" ? [0, 1.08, -0.68]
+        : entity.model === "dragon" ? [0, 0.98, -0.7]
+          : [0, 0.89, -0.5];
+  head.position.set(...headPosition);
   group.add(head);
-  const headSize = entity.species === "chicken" ? [0.32, 0.32, 0.3] : [0.4, 0.42, 0.38];
+  const headSize = entity.model === "alpaca" ? [0.34, 0.42, 0.34]
+    : entity.model === "cow" ? [0.4, 0.42, 0.38]
+      : entity.model === "horse" ? [0.42, 0.38, 0.42]
+        : entity.model === "dragon" ? [0.46, 0.38, 0.4]
+          : [0.34, 0.36, 0.34];
   addBox(head, headSize, [0, 0, -0.06], headMaterial);
-  addBox(head, entity.species === "chicken" ? [0.2, 0.12, 0.18] : [0.26, 0.18, 0.18], [0, -0.1, -0.26], faceMaterial);
+  addBox(head, [0.26, 0.18, 0.2], [0, -0.1, -0.26], faceMaterial);
   for (const side of [-1, 1]) addBox(head, [0.055, 0.06, 0.025], [side * 0.13, 0.08, -0.25], eyeMaterial);
-  if (entity.species === "cow") {
+  if (entity.model === "cow") {
     for (const side of [-1, 1]) {
       addBox(head, [0.1, 0.2, 0.1], [side * 0.16, 0.27, -0.04], accentMaterial);
       addBox(head, [0.08, 0.18, 0.08], [side * 0.16, 0.43, -0.04], hornMaterial);
     }
     addBox(group, [0.24, 0.22, 0.025], [-0.2, 0.77, -0.315], accentMaterial);
     addBox(group, [0.2, 0.2, 0.025], [0.22, 0.68, -0.315], accentMaterial);
-  } else if (entity.species === "pig") {
-    for (const side of [-1, 1]) addBox(head, [0.13, 0.22, 0.12], [side * 0.19, 0.26, -0.03], headMaterial);
-  } else if (entity.species === "sheep") {
-    for (const side of [-1, 1]) addBox(head, [0.16, 0.1, 0.12], [side * 0.27, -0.01, -0.02], accentMaterial);
-    for (const [x, y, z] of [[-0.28, 0.73, 0], [0.28, 0.73, 0], [0, 1.03, 0], [0, 0.73, 0.25]]) {
-      addBox(group, [0.3, 0.3, 0.3], [x, y, z], bodyMaterial);
+  } else if (entity.model === "alpaca") {
+    addBox(group, [0.28, 0.66, 0.3], [0, 1.05, -0.25], bodyMaterial);
+    for (const side of [-1, 1]) addBox(head, [0.1, 0.34, 0.12], [side * 0.17, 0.34, 0], headMaterial);
+  } else if (entity.model === "horse") {
+    addBox(group, [0.5, 0.22, 0.18], [0, 0.95, 0.36], accentMaterial);
+    addBox(head, [0.22, 0.18, 0.18], [0.16, -0.04, -0.18], accentMaterial);
+    addBox(head, [0.18, 0.13, 0.13], [-0.16, -0.04, -0.18], accentMaterial);
+    addBox(group, [0.96, 0.12, 0.12], [0, 0.24, 0.42], accentMaterial);
+  } else if (entity.model === "dragon") {
+    addBox(head, [0.28, 0.24, 0.24], [0, 0.1, -0.08], accentMaterial);
+    addBox(group, [0.2, 0.2, 0.2], [0, 0.76, 0.3], accentMaterial);
+    addBox(head, [0.08, 0.08, 0.18], [0.22, 0.14, -0.28], eyeMaterial);
+    addBox(head, [0.08, 0.08, 0.18], [-0.22, 0.14, -0.28], eyeMaterial);
+  } else {
+    for (const side of [-1, 1]) {
+      addBox(head, [0.14, 0.28, 0.14], [side * 0.14, 0.28, 0.02], headMaterial);
     }
-  } else if (entity.species === "chicken") {
-    addBox(head, [0.11, 0.13, 0.08], [0, 0.21, -0.02], accentMaterial);
+    if (entity.model === "fox") {
+      addBox(group, [0.16, 0.16, 0.16], [0, 0.55, 0.45], accentMaterial);
+    }
   }
 
   const legs = [];
-  const legHeight = entity.species === "chicken" ? 0.29 : 0.48;
-  const legWidth = entity.species === "chicken" ? 0.09 : 0.17;
-  const legTop = entity.species === "chicken" ? 0.36 : 0.49;
+  const legHeight = entity.model === "alpaca" ? 0.62 : entity.model === "fox" || entity.model === "wolf" ? 0.42 : entity.model === "horse" ? 0.65 : 0.48;
+  const legWidth = entity.model === "alpaca" ? 0.12 : entity.model === "horse" ? 0.15 : 0.17;
+  const legTop = entity.model === "alpaca" ? 0.62 : entity.model === "horse" ? 0.72 : 0.49;
   for (const x of [-0.27, 0.27]) {
     for (const z of [-0.2, 0.2]) {
       const pivot = new THREE.Group();
@@ -1205,11 +1642,12 @@ function makeAnimal(entity) {
   group.userData.legs = legs;
   group.userData.tail = tail;
   group.userData.body = body;
+  group.userData.bodyBaseY = bodyY;
   group.userData.gait = Math.random() * Math.PI * 2;
   group.userData.walking = Boolean(entity.walking);
   group.userData.species = entity.species;
   const ground = terrainHeightAt(entity.x, entity.z, state.seed);
-  const surfaceHeight = (entity.y ?? ground + 0.08) + (entity.aquatic ? 0 : 0.92);
+  const surfaceHeight = entity.y ?? ground + 1;
   const point = planetPointAt(entity.x, surfaceHeight, entity.z);
   group.position.set(point.x, point.y, point.z);
   group.quaternion.copy(surfaceQuaternionAt(entity.x, entity.z, entity.yaw ?? 0));
@@ -1217,60 +1655,6 @@ function makeAnimal(entity) {
   group.userData.pattern = entity.pattern;
   group.userData.species = entity.species;
   group.add(avatarLabel(entity.name, "#fff1c6"));
-  scene.add(group);
-  return group;
-}
-
-function makeAnimatedAnimal(entity, modelAsset) {
-  const group = new THREE.Group();
-  const model = cloneSkeleton(modelAsset.scene);
-  model.updateMatrixWorld(true);
-  const bounds = new THREE.Box3().setFromObject(model);
-  const size = bounds.getSize(new THREE.Vector3());
-  const center = bounds.getCenter(new THREE.Vector3());
-  const height = entity.species === "cow" || entity.species === "alpaca" ? 1.45 : 1.05;
-  const scale = height / size.y;
-  model.scale.setScalar(scale);
-  model.position.set(-center.x * scale, -bounds.min.y * scale, -center.z * scale);
-  if (entity.color) {
-    const tint = new THREE.Color(entity.color);
-    model.traverse((part) => {
-      if (!part.isMesh) return;
-      const applyTint = (source) => {
-        const material = source.clone();
-        if (!/(eye|black|hoof|nose)/i.test(material.name)) {
-          material.color.lerp(tint, 0.35 + (entity.pattern ?? 0) * 0.06);
-        }
-        return material;
-      };
-      part.material = Array.isArray(part.material)
-        ? part.material.map(applyTint)
-        : applyTint(part.material);
-    });
-  }
-  group.add(model);
-  group.add(avatarLabel(entity.name, "#fff1c6"));
-
-  const mixer = new THREE.AnimationMixer(model);
-  const idleClip = modelAsset.animations.find((clip) => clip.name.toLowerCase() === "idle");
-  const walkClip = modelAsset.animations.find((clip) => clip.name.toLowerCase().includes("walk"));
-  const idleAction = idleClip ? mixer.clipAction(idleClip) : null;
-  const walkAction = walkClip ? mixer.clipAction(walkClip) : null;
-  idleAction?.play();
-  group.userData.mixer = mixer;
-  group.userData.idleAction = idleAction;
-  group.userData.walkAction = walkAction;
-  group.userData.lastWalking = false;
-  group.userData.species = entity.species;
-  group.userData.walking = Boolean(entity.walking);
-  group.userData.color = entity.color;
-  group.userData.pattern = entity.pattern;
-  group.scale.setScalar(entity.scale ?? 1);
-  const ground = terrainHeightAt(entity.x, entity.z, state.seed);
-  const surfaceHeight = (entity.y ?? ground + 0.08) + (entity.aquatic ? 0 : 0.92);
-  const point = planetPointAt(entity.x, surfaceHeight, entity.z);
-  group.position.set(point.x, point.y, point.z);
-  group.quaternion.copy(surfaceQuaternionAt(entity.x, entity.z, entity.yaw ?? 0));
   scene.add(group);
   return group;
 }
@@ -1280,23 +1664,21 @@ function makeFish(entity) {
   const bodyMaterial = new THREE.MeshLambertMaterial({ color: entity.color ?? "#76b9c9" });
   const finMaterial = new THREE.MeshLambertMaterial({ color: new THREE.Color(entity.color ?? "#76b9c9").multiplyScalar(0.68) });
   const eyeMaterial = new THREE.MeshLambertMaterial({ color: "#1e2a36" });
-  const body = new THREE.Mesh(new THREE.SphereGeometry(0.3, 10, 7), bodyMaterial);
-  body.scale.set(0.76, 0.8, 1.5);
-  group.add(body);
+  const addBox = (size, position, material) => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), material);
+    mesh.position.set(...position);
+    group.add(mesh);
+    return mesh;
+  };
+  addBox([0.52, 0.38, 0.82], [0, 0, 0], bodyMaterial);
   for (const side of [-1, 1]) {
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.045, 6, 5), eyeMaterial);
-    eye.position.set(side * 0.16, 0.07, -0.28);
-    group.add(eye);
-    const fin = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.3, 4), finMaterial);
-    fin.position.set(side * 0.2, -0.04, 0.02);
-    fin.rotation.z = side * Math.PI / 2;
-    group.add(fin);
+    addBox([0.05, 0.07, 0.03], [side * 0.2, 0.09, -0.32], eyeMaterial);
+    addBox([0.22, 0.08, 0.34], [side * 0.35, -0.02, 0.02], finMaterial);
   }
   const tail = new THREE.Group();
-  tail.position.z = 0.35;
-  const tailFin = new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.38, 4), finMaterial);
-  tailFin.rotation.x = Math.PI / 2;
-  tailFin.position.z = 0.15;
+  tail.position.z = 0.4;
+  const tailFin = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.3, 0.34), finMaterial);
+  tailFin.position.z = 0.16;
   tail.add(tailFin);
   group.add(tail);
   group.userData.tail = tail;
@@ -1314,6 +1696,112 @@ function makeFish(entity) {
   group.scale.setScalar(entity.scale ?? 1);
   scene.add(group);
   return group;
+}
+
+function makeVehicle(vehicle) {
+  const group = new THREE.Group();
+  const paint = new THREE.MeshLambertMaterial({ color: vehicle.type === "plane" ? "#e9eee8" : "#c84e3f" });
+  const trim = new THREE.MeshLambertMaterial({ color: "#343c40" });
+  const glass = new THREE.MeshLambertMaterial({
+    color: "#83c9dc",
+    transparent: true,
+    opacity: 0.75,
+  });
+  const addBox = (size, position, material) => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), material);
+    mesh.position.set(...position);
+    group.add(mesh);
+    return mesh;
+  };
+
+  if (vehicle.type === "plane") {
+    addBox([0.62, 0.58, 3.2], [0, 0.48, 0], paint);
+    addBox([4.6, 0.12, 0.82], [0, 0.58, 0.14], paint);
+    addBox([1.6, 0.1, 0.58], [0, 1.05, 1.18], paint);
+    addBox([0.1, 0.62, 0.7], [0, 0.84, 1.18], paint);
+    addBox([0.52, 0.44, 0.76], [0, 0.86, -0.56], glass);
+    const propeller = new THREE.Group();
+    propeller.position.set(0, 0.48, -1.72);
+    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.05, 0.08), trim);
+    propeller.add(blade);
+    group.add(propeller);
+    group.userData.propeller = propeller;
+  } else {
+    addBox([1.85, 0.48, 3.2], [0, 0.55, 0], paint);
+    addBox([1.35, 0.66, 1.45], [0, 1.08, 0.22], glass);
+    addBox([1.95, 0.16, 1.25], [0, 0.88, -0.95], paint);
+    for (const x of [-0.98, 0.98]) {
+      for (const z of [-1.05, 1.08]) {
+        const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.22, 10), trim);
+        wheel.rotation.z = Math.PI / 2;
+        wheel.position.set(x, 0.34, z);
+        group.add(wheel);
+      }
+    }
+  }
+  group.userData.vehicleType = vehicle.type;
+  group.userData.propeller = group.userData.propeller ?? null;
+  scene.add(group);
+  return group;
+}
+
+function nearestAvailableVehicle() {
+  if (state.vehicleId) return null;
+  let nearest = null;
+  let nearestDistance = 3.5;
+  for (const vehicle of state.vehicles) {
+    if (vehicle.occupantId) continue;
+    const distance = Math.hypot(
+      wrapPlanetX(vehicle.x - playerPosition.x),
+      vehicle.z - playerPosition.z,
+    );
+    if (distance < nearestDistance) {
+      nearest = vehicle;
+      nearestDistance = distance;
+    }
+  }
+  return nearest;
+}
+
+function updateVehicleButton() {
+  const current = state.vehicles.find(({ id }) => id === state.vehicleId);
+  const nearby = current ? null : nearestAvailableVehicle();
+  vehicleButton.hidden = !current && !nearby;
+  vehicleButton.textContent = current
+    ? "Exit vehicle"
+    : nearby
+      ? `Enter ${nearby.type === "plane" ? "plane" : "car"}`
+      : "Vehicle";
+  vehicleButton.setAttribute("aria-label", vehicleButton.textContent);
+}
+
+function updateVehicles(current = []) {
+  state.vehicles = current;
+  const ids = new Set(current.map(({ id }) => id));
+  for (const [id, mesh] of vehicleMeshes) {
+    if (ids.has(id)) continue;
+    scene.remove(mesh);
+    vehicleMeshes.delete(id);
+  }
+  for (const vehicle of current) {
+    let mesh = vehicleMeshes.get(vehicle.id);
+    if (!mesh || mesh.userData.vehicleType !== vehicle.type) {
+      if (mesh) scene.remove(mesh);
+      mesh = makeVehicle(vehicle);
+      vehicleMeshes.set(vehicle.id, mesh);
+    }
+    const surfaceHeight = vehicle.y + (vehicle.type === "plane" ? 0.5 : 0.05);
+    const point = planetPointAt(vehicle.x, surfaceHeight, vehicle.z);
+    mesh.position.set(point.x, point.y, point.z);
+    mesh.quaternion.copy(surfaceQuaternionAt(vehicle.x, vehicle.z, vehicle.yaw));
+  }
+  updateVehicleButton();
+}
+
+function animateVehicles(delta) {
+  for (const vehicle of vehicleMeshes.values()) {
+    if (vehicle.userData.propeller) vehicle.userData.propeller.rotation.z += delta * 18;
+  }
 }
 
 function updateAnimals(current = []) {
@@ -1336,7 +1824,7 @@ function updateAnimals(current = []) {
     }
     animal.userData.walking = Boolean(entity.walking);
     const ground = terrainHeightAt(entity.x, entity.z, state.seed);
-    const surfaceHeight = (entity.y ?? ground + 0.08) + (entity.aquatic ? 0 : 0.92);
+    const surfaceHeight = entity.y ?? ground + 1;
     const point = planetPointAt(entity.x, surfaceHeight, entity.z);
     const target = new THREE.Vector3(point.x, point.y, point.z);
     animal.position.lerp(target, 0.32);
@@ -1346,28 +1834,8 @@ function updateAnimals(current = []) {
   }
 }
 
-function refreshAnimalModels() {
-  for (const animal of animalAvatars.values()) scene.remove(animal);
-  animalAvatars.clear();
-  updateAnimals(state.roomAnimals);
-}
-
 function animateAnimals(delta) {
   for (const animal of animalAvatars.values()) {
-    if (animal.userData.mixer) {
-      const walking = animal.userData.walking;
-      if (walking !== animal.userData.lastWalking) {
-        const from = walking ? animal.userData.idleAction : animal.userData.walkAction;
-        const to = walking ? animal.userData.walkAction : animal.userData.idleAction;
-        if (to) {
-          to.reset().play();
-          from?.crossFadeTo(to, 0.2, false);
-        }
-        animal.userData.lastWalking = walking;
-      }
-      animal.userData.mixer.update(delta);
-      continue;
-    }
     animal.userData.gait += delta * (animal.userData.walking ? 10 : 2);
     if (animal.userData.tail && !animal.userData.legs) {
       animal.userData.tail.rotation.y = Math.sin(animal.userData.gait) * 0.45;
@@ -1378,19 +1846,36 @@ function animateAnimals(delta) {
       leg.rotation.x = stride * (index === 0 || index === 3 ? 1 : -1);
     });
     animal.userData.tail.rotation.x = Math.sin(animal.userData.gait * 0.7) * 0.24;
-    animal.userData.body.position.y = 0.72 + (animal.userData.walking ? Math.abs(stride) * 0.025 : 0);
+    animal.userData.body.position.y = animal.userData.bodyBaseY + (animal.userData.walking ? Math.abs(stride) * 0.025 : 0);
   }
 }
 
 function updateLocalAvatar() {
   if (!selfAvatar) return;
-  selfAvatar.visible = thirdPersonView && state.connected;
+  selfAvatar.visible = thirdPersonView && state.connected && !state.vehicleId;
   if (!selfAvatar.visible) return;
-  const surfaceHeight = playerPosition.y - 0.65;
+  const surfaceHeight = playerPosition.y - 1.65;
   const point = planetPointAt(playerPosition.x, surfaceHeight, playerPosition.z);
   selfAvatar.position.set(point.x, point.y, point.z);
   selfAvatar.quaternion.copy(surfaceQuaternionAt(playerPosition.x, playerPosition.z, look.yaw));
   updateAvatarHealth(selfAvatar.userData.healthBar, state.health);
+}
+
+function updateCharacterArmor() {
+  const hasIronArmor = (state.inventory.get("iron_armor") ?? 0) > 0;
+  const hasSteelArmor = (state.inventory.get("steel_armor") ?? 0) > 0;
+  const hasGuardianHelm = (state.inventory.get("guardian_helm") ?? 0) > 0;
+  const armorColor = hasSteelArmor ? "#a8c3ce" : "#a7a8ad";
+  const helmetColor = hasGuardianHelm ? "#d3aa54" : armorColor;
+  if (selfAvatar?.userData.bodyArmor) {
+    selfAvatar.userData.bodyArmor.visible = hasIronArmor || hasSteelArmor;
+    selfAvatar.userData.bodyArmor.material.color.set(armorColor);
+  }
+  if (selfAvatar?.userData.headArmor) {
+    selfAvatar.userData.headArmor.visible = hasGuardianHelm;
+    selfAvatar.userData.headArmor.material.color.set(helmetColor);
+  }
+  updateHeldWeaponVisibility();
 }
 
 function renderDroppedItems(drops) {
@@ -1405,15 +1890,20 @@ function renderDroppedItems(drops) {
   for (const drop of drops) {
     let mesh = droppedItemMeshes.get(drop.id);
     if (!mesh) {
-      const material = materials.get(drop.item);
-      if (!material) continue;
-      mesh = new THREE.Mesh(cubeGeometry, material);
-      mesh.scale.setScalar(0.32);
+      if (drop.item === "fishing_rod") {
+        mesh = createFishingRodModel();
+        mesh.scale.setScalar(0.55);
+      } else {
+        const material = materials.get(drop.item);
+        if (!material) continue;
+        mesh = new THREE.Mesh(cubeGeometry, material);
+        mesh.scale.setScalar(0.32);
+      }
       mesh.userData.item = drop.item;
       scene.add(mesh);
       droppedItemMeshes.set(drop.id, mesh);
     }
-    mesh.userData.baseY = terrainHeightAt(drop.x, drop.z, state.seed) + 0.65;
+    mesh.userData.baseY = terrainHeightAt(drop.x, drop.z, state.seed) + 1.16;
     const point = planetPointAt(drop.x, mesh.userData.baseY, drop.z);
     mesh.position.set(point.x, point.y, point.z);
     mesh.userData.basePosition = mesh.position.clone();
@@ -1426,9 +1916,15 @@ function applySnapshot(message) {
   const playerList = message.players ?? [];
   const botList = message.bots ?? [];
   state.roomAnimals = message.animals ?? [];
-  loadAnimalModels(state.roomAnimals);
   state.roomPlayers = playerList;
+  state.properties = message.properties ?? state.properties;
+  state.roomMonsters = message.monsters ?? [];
+  updateVehicles(message.vehicles ?? state.vehicles);
   const self = playerList.find((player) => player.id === state.id);
+  if (self?.name) state.playerName = self.name;
+  state.vehicleId = self?.vehicleId ?? null;
+  state.vehicleType = state.vehicles.find(({ id }) => id === state.vehicleId)?.type ?? null;
+  updateVehicleButton();
   if (self) {
     const previousHealth = state.health;
     updateHealth(self.health);
@@ -1442,6 +1938,7 @@ function applySnapshot(message) {
   updateAnimals(state.roomAnimals);
   renderDroppedItems(message.drops ?? []);
   renderWorldMapMarkers(playerList);
+  if (!shopPanel.hidden) renderHomeProperties();
 }
 
 function updateHealth(health) {
@@ -1455,6 +1952,7 @@ function updateXp(xp, level) {
   state.xp = Number.isFinite(Number(xp)) ? Number(xp) : state.xp;
   state.level = Number.isFinite(Number(level)) ? Number(level) : state.level;
   xpHud.textContent = `XP ${state.xp} · Lv ${state.level}`;
+  renderCharacterProfile();
 }
 
 function updateCoins(coins) {
@@ -1481,6 +1979,53 @@ function renderPlayerProfile(profile) {
     document.querySelector(selector).textContent = String(profile.stats?.[key] ?? 0);
   }
   if (selfAvatar) selfAvatar.children[0].material.color.set(profile.color);
+  profileCharacterModel.style.setProperty("--character-color", profile.color);
+  renderCharacterProfile();
+}
+
+function renderCharacterProfile() {
+  profileCharacterName.textContent = profileNameInput.value.trim() || "Explorer";
+  profileCharacterLevel.textContent = `Level ${state.level}`;
+  const armor = (state.inventory.get("steel_armor") ?? 0) > 0
+    ? "steel"
+    : (state.inventory.get("iron_armor") ?? 0) > 0 ? "iron" : "";
+  const helmet = (state.inventory.get("guardian_helm") ?? 0) > 0;
+  profileCharacterModel.classList.toggle("wearing-armor", Boolean(armor));
+  profileCharacterModel.classList.toggle("wearing-steel", armor === "steel");
+  profileCharacterModel.classList.toggle("wearing-iron", armor === "iron");
+  profileCharacterModel.classList.toggle("wearing-helmet", helmet);
+  profileGearList.replaceChildren();
+  const gear = [
+    ["iron_armor", "Iron chestplate"],
+    ["steel_armor", "Steel chestplate"],
+    ["guardian_helm", "Guardian helmet"],
+    ["iron_sword", "Iron sword"],
+    ["steel_sword", "Steel sword"],
+    ["shield", "Shield"],
+  ];
+  const selectedWeapon = ["wooden_sword", "stone_sword", "iron_sword", "steel_sword"].includes(state.selected)
+    ? state.selected
+    : null;
+  if (selectedWeapon && (state.inventory.get(selectedWeapon) ?? 0) > 0) {
+    const tag = document.createElement("span");
+    tag.className = "profile-gear-item";
+    tag.textContent = `Equipped: ${itemName(selectedWeapon)}`;
+    profileGearList.append(tag);
+  }
+  for (const [id, label] of gear) {
+    const count = state.inventory.get(id) ?? 0;
+    if (count < 1) continue;
+    const tag = document.createElement("span");
+    tag.className = "profile-gear-item";
+    tag.textContent = `${label}${count > 1 ? ` ×${count}` : ""}`;
+    profileGearList.append(tag);
+  }
+  if (!profileGearList.childElementCount) {
+    const empty = document.createElement("span");
+    empty.className = "profile-gear-empty";
+    empty.textContent = "No armor or combat gear yet";
+    profileGearList.append(empty);
+  }
 }
 
 function drawWorldMap() {
@@ -1536,11 +2081,14 @@ function upsertMapMarker({ key, className, x, z, offset = 0, title, ariaLabel, l
     markerLabel.className = "map-marker-name";
     marker.append(dot, markerLabel);
     marker.addEventListener("click", () => {
-      const pressed = marker.getAttribute("aria-pressed") === "true";
       for (const otherMarker of mapMarkerElements.values()) otherMarker.setAttribute("aria-pressed", "false");
-      marker.setAttribute("aria-pressed", String(!pressed));
-      if (targetValue) teleportTarget.value = targetValue;
-      teleportButton.disabled = !teleportTarget.value;
+      marker.setAttribute("aria-pressed", "true");
+      selectedMapTarget = targetValue || null;
+      if (selectedMapTarget) teleportTarget.value = selectedMapTarget;
+      worldMapSelection.textContent = targetValue?.startsWith("location:")
+        ? `${title.replace(" (teleport point)", "")} selected.`
+        : targetValue ? `${label} selected.` : "This is your current location.";
+      mapTeleportButton.hidden = !selectedMapTarget;
     });
     mapMarkerElements.set(key, marker);
     worldMapMarkers.append(marker);
@@ -1550,6 +2098,7 @@ function upsertMapMarker({ key, className, x, z, offset = 0, title, ariaLabel, l
   marker.style.top = `${(PLANET_MAX_Z - z) / PLANET_LATITUDE_BLOCKS * 100}%`;
   marker.title = title;
   marker.setAttribute("aria-label", ariaLabel);
+  marker.setAttribute("aria-pressed", String(Boolean(targetValue && targetValue === selectedMapTarget)));
   marker.children[1].textContent = label;
   return marker;
 }
@@ -1624,9 +2173,16 @@ function renderWorldMapMarkers(playerList = state.roomPlayers ?? []) {
   }
 
   if (teleportTarget.value && !activeOptions.has(teleportTarget.value)) teleportTarget.value = "";
+  if (selectedMapTarget && !activeOptions.has(selectedMapTarget)) {
+    selectedMapTarget = null;
+    mapTeleportButton.hidden = true;
+    worldMapSelection.textContent = "Select a location marker to choose a destination.";
+  }
   const teleportDisabled = !teleportTarget.value;
   if (teleportButton.disabled !== teleportDisabled) teleportButton.disabled = teleportDisabled;
 }
+
+renderWorldMapMarkers([]);
 
 function setLobbyStatus(label, online = false) {
   lobbyStatus.innerHTML = `<i></i>${label}`;
@@ -1785,6 +2341,42 @@ function connect() {
     } else if (message.type === "profile_data") {
       renderPlayerProfile(message.profile);
       profileStatus.textContent = "Profile saved and synced.";
+    } else if (message.type === "fly_result") {
+      state.isFlying = message.enabled === true;
+      if (!state.isFlying) state.flyVerticalDirection = 0;
+      flyToggle.checked = state.isFlying;
+      flyButton.setAttribute("aria-pressed", String(state.isFlying));
+      flyButton.textContent = state.isFlying ? "Land" : "Fly";
+      desktopFlyButton.setAttribute("aria-pressed", String(state.isFlying));
+      desktopFlyButton.textContent = state.isFlying ? "Land" : "Fly";
+      flyDownButton.hidden = !state.isFlying;
+      document.querySelector("#jump-button").textContent = state.isFlying ? "Up" : "Jump";
+      notify(message.message);
+    } else if (message.type === "vehicle_result") {
+      state.vehicleId = message.vehicleId;
+      state.vehicleType = message.vehicleType ?? null;
+      if (state.vehicleId) {
+        const vehicle = state.vehicles.find(({ id }) => id === state.vehicleId);
+        if (vehicle) {
+          playerPosition.x = vehicle.x;
+          playerPosition.z = vehicle.z;
+          playerPosition.y = vehicle.y + 2.65;
+          look.yaw = vehicle.yaw;
+        }
+        if (state.isFlying) requestFlight(false);
+        state.isFlying = false;
+        state.flyVerticalDirection = 0;
+        flyToggle.checked = false;
+        flyButton.setAttribute("aria-pressed", "false");
+        desktopFlyButton.setAttribute("aria-pressed", "false");
+        flyButton.textContent = "Fly";
+        desktopFlyButton.textContent = "Fly";
+        flyDownButton.hidden = true;
+      }
+      updateVehicleButton();
+      updateCamera();
+      updateLocalAvatar();
+      notify(message.message);
     } else if (message.type === "autosave_result") {
       autosaveToggle.checked = message.enabled;
       gameMenuStatus.textContent = message.message;
@@ -1805,7 +2397,7 @@ function connect() {
     } else if (message.type === "respawn_result") {
       playerPosition.x = message.position.x;
       playerPosition.z = message.position.z;
-      playerPosition.y = message.position.y ?? terrainHeightAt(playerPosition.x, playerPosition.z, state.seed) + 1.65;
+      playerPosition.y = message.position.y ?? terrainHeightAt(playerPosition.x, playerPosition.z, state.seed) + 2.65;
       look.yaw = message.position.yaw;
       state.jumpVelocity = 0;
       updateHealth(message.health);
@@ -1815,7 +2407,7 @@ function connect() {
     } else if (message.type === "teleport_result") {
       playerPosition.x = message.position.x;
       playerPosition.z = message.position.z;
-      playerPosition.y = message.position.y ?? terrainHeightAt(playerPosition.x, playerPosition.z, state.seed) + 1.65;
+      playerPosition.y = message.position.y ?? terrainHeightAt(playerPosition.x, playerPosition.z, state.seed) + 2.65;
       look.yaw = message.position.yaw;
       state.jumpVelocity = 0;
       updateChunkWindow(true);
@@ -1833,11 +2425,19 @@ function connect() {
       state.seed = message.seed;
       createUnderwaterLife(state.seed);
       state.mode = message.mode === "design" ? "design" : "survival";
+      state.isFlying = message.flying === true;
+      flyToggle.checked = state.isFlying;
+      flyButton.setAttribute("aria-pressed", String(state.isFlying));
+      flyButton.textContent = state.isFlying ? "Land" : "Fly";
+      desktopFlyButton.setAttribute("aria-pressed", String(state.isFlying));
+      desktopFlyButton.textContent = state.isFlying ? "Land" : "Fly";
+      flyDownButton.hidden = !state.isFlying;
+      document.querySelector("#jump-button").textContent = state.isFlying ? "Up" : "Jump";
       autosaveToggle.checked = message.autosaveEnabled !== false;
       if (message.position) {
         playerPosition.x = message.position.x;
         playerPosition.z = message.position.z;
-        playerPosition.y = message.position.y ?? terrainHeightAt(playerPosition.x, playerPosition.z, state.seed) + 1.65;
+        playerPosition.y = message.position.y ?? terrainHeightAt(playerPosition.x, playerPosition.z, state.seed) + 2.65;
         look.yaw = message.position.yaw;
       }
       updateHealth(message.health);
@@ -1860,6 +2460,18 @@ function connect() {
       notify("Welcome! Your shared world is ready.");
     } else if (message.type === "snapshot") {
       applySnapshot(message);
+    } else if (message.type === "move_rejected") {
+      if (message.position) {
+        const movedChunks =
+          Math.floor(message.position.x / CHUNK_SIZE) !== Math.floor(playerPosition.x / CHUNK_SIZE) ||
+          Math.floor(message.position.z / CHUNK_SIZE) !== Math.floor(playerPosition.z / CHUNK_SIZE);
+        playerPosition.x = message.position.x;
+        playerPosition.y = message.position.y;
+        playerPosition.z = message.position.z;
+        look.yaw = message.position.yaw ?? look.yaw;
+        if (movedChunks) updateChunkWindow(true);
+        updateCamera();
+      }
     } else if (message.type === "chunk") {
       const key = chunkKey(message.x, message.z);
       if (!loadedChunks.has(key)) return;
@@ -1874,6 +2486,23 @@ function connect() {
       updateInventory(message.items);
     } else if (message.type === "currency") {
       updateCoins(message.coins);
+    } else if (message.type === "home_result") {
+      if (Number.isFinite(Number(message.coins))) updateCoins(message.coins);
+      if (Array.isArray(message.properties)) state.properties = message.properties;
+      if (message.success && message.position) {
+        playerPosition.set(message.position.x, message.position.y, message.position.z);
+        look.yaw = message.position.yaw;
+        state.jumpVelocity = 0;
+        updateChunkWindow(true);
+        renderWorld();
+        shopPanel.hidden = true;
+        gameMenu.hidden = true;
+        updateCamera();
+      }
+      homeNotice.textContent = message.message;
+      gameMenuStatus.textContent = message.message;
+      notify(message.message);
+      if (!shopPanel.hidden) renderHomeProperties();
     } else if (message.type === "buy_result") {
       updateCoins(message.coins);
       shopNotice.textContent = message.message;
@@ -1968,6 +2597,7 @@ autosaveToggle.addEventListener("change", () => {
 });
 document.querySelector("#open-profile-button").addEventListener("click", () => {
   profileStatus.textContent = "Loading profile…";
+  renderCharacterProfile();
   profileDialog.showModal();
   gameMenu.hidden = true;
   gameMenuToggle.setAttribute("aria-expanded", "false");
@@ -1983,9 +2613,47 @@ document.querySelector("#save-profile-button").addEventListener("click", () => {
   profileStatus.textContent = "Saving profile…";
   sendLobbyMessage({ type: "profile_update", name, color: profileColorInput.value });
 });
+profileNameInput.addEventListener("input", renderCharacterProfile);
+profileColorInput.addEventListener("input", () => {
+  profileCharacterModel.style.setProperty("--character-color", profileColorInput.value);
+});
+function requestFlight(enabled) {
+  if (!state.connected) {
+    flyToggle.checked = state.isFlying;
+    notify("Start a world before enabling flight.");
+    return;
+  }
+  if (!enabled) state.flyVerticalDirection = 0;
+  sendLobbyMessage({ type: "fly_toggle", enabled });
+}
+function useVehicleOrPlace() {
+  if (state.vehicleId) {
+    sendLobbyMessage({ type: "vehicle_exit" });
+    return;
+  }
+  const vehicle = nearestAvailableVehicle();
+  if (vehicle) {
+    sendLobbyMessage({ type: "vehicle_enter", vehicleId: vehicle.id });
+    return;
+  }
+  sendEdit("place");
+}
+flyToggle.addEventListener("change", () => requestFlight(flyToggle.checked));
+flyButton.addEventListener("click", () => requestFlight(!state.isFlying));
+desktopFlyButton.addEventListener("click", () => requestFlight(!state.isFlying));
+vehicleButton.addEventListener("click", () => {
+  if (state.vehicleId) sendLobbyMessage({ type: "vehicle_exit" });
+  else {
+    const vehicle = nearestAvailableVehicle();
+    if (vehicle) sendLobbyMessage({ type: "vehicle_enter", vehicleId: vehicle.id });
+  }
+});
 thirdPersonToggle.addEventListener("change", () => {
   thirdPersonView = thirdPersonToggle.checked;
+  document.documentElement.classList.toggle("first-person-view", !thirdPersonView);
   localStorage.setItem("camera-view-mode", thirdPersonView ? "third-person" : "first-person");
+  updateFishingRodVisibility();
+  updateHeldAssetVisibility();
   updateCamera();
   updateLocalAvatar();
 });
@@ -1995,9 +2663,20 @@ document.querySelector("#logout-button").addEventListener("click", () => {
 document.querySelector("#open-world-map-button").addEventListener("click", () => {
   drawWorldMap();
   renderWorldMapMarkers();
+  worldMapPanel.classList.remove("expanded");
+  expandWorldMapButton.setAttribute("aria-pressed", "false");
+  expandWorldMapButton.textContent = "Expand map";
+  selectedMapTarget = null;
+  mapTeleportButton.hidden = true;
+  worldMapSelection.textContent = "Select a location marker to choose a destination.";
   worldMapPanel.hidden = false;
   gameMenu.hidden = true;
   gameMenuToggle.setAttribute("aria-expanded", "false");
+});
+expandWorldMapButton.addEventListener("click", () => {
+  const expanded = worldMapPanel.classList.toggle("expanded");
+  expandWorldMapButton.setAttribute("aria-pressed", String(expanded));
+  expandWorldMapButton.textContent = expanded ? "Shrink map" : "Expand map";
 });
 document.querySelector("#close-world-map-button").addEventListener("click", () => {
   worldMapPanel.hidden = true;
@@ -2011,6 +2690,16 @@ document.querySelector("#open-shop-button").addEventListener("click", () => {
 document.querySelector("#close-shop-button").addEventListener("click", () => {
   shopPanel.hidden = true;
 });
+document.querySelector("#go-home-button").addEventListener("click", () => {
+  const home = state.properties.find(
+    ({ ownerName }) => ownerName?.toLowerCase() === state.playerName.toLowerCase(),
+  );
+  if (!home) {
+    gameMenuStatus.textContent = "Buy a Glass City residence first.";
+    return;
+  }
+  sendLobbyMessage({ type: "home_teleport", propertyId: home.id });
+});
 shopCategory.addEventListener("change", renderShop);
 shopSearch.addEventListener("input", renderShop);
 teleportTarget.addEventListener("change", () => {
@@ -2023,11 +2712,30 @@ teleportButton.addEventListener("click", () => {
     sendLobbyMessage({ type: "teleport", targetId: teleportTarget.value });
   }
 });
+mapTeleportButton.addEventListener("click", () => {
+  if (!selectedMapTarget) return;
+  if (selectedMapTarget.startsWith("location:")) {
+    sendLobbyMessage({ type: "teleport", locationId: selectedMapTarget.slice("location:".length) });
+  } else {
+    sendLobbyMessage({ type: "teleport", targetId: selectedMapTarget });
+  }
+});
 
 function selectBlock(id) {
   state.selected = id;
   for (const button of hotbar.querySelectorAll("button")) {
     button.classList.toggle("selected", button.dataset.block === id);
+  }
+  updateFishingRodVisibility();
+  updateHeldAssetVisibility();
+  updateHeldWeaponVisibility();
+  renderCharacterProfile();
+}
+
+function updateFishingRodVisibility() {
+  cameraFishingRod.visible = state.selected === "fishing_rod" && !thirdPersonView;
+  if (selfAvatar?.userData.fishingRod) {
+    selfAvatar.userData.fishingRod.visible = state.selected === "fishing_rod" && thirdPersonView;
   }
 }
 
@@ -2041,6 +2749,8 @@ function updateInventory(items) {
     hotbarItems[emptySlot] = item;
   }
   updateHotbar();
+  updateCharacterArmor();
+  renderCharacterProfile();
   if (!state.selected) {
     selectBlock(hotbarItems.find((item) => item) ?? null);
   }
@@ -2056,84 +2766,107 @@ function renderInventory() {
     inventoryList.append(emptyMessage);
   }
 
-  for (const [id, count] of state.inventory) {
-    const item = document.createElement("div");
-    item.className = "inventory-item";
-    const supportsTouch = window.matchMedia("(pointer: coarse)").matches;
-    item.classList.toggle("hotbar-armed", state.pendingHotbarItem === id);
-    item.addEventListener("click", (event) => {
-      if (event.target.closest("button")) return;
-      state.pendingHotbarItem = id;
-      for (const choice of inventoryList.querySelectorAll(".inventory-item")) {
-        choice.classList.toggle("hotbar-armed", choice === item);
+  for (const [id, totalCount] of state.inventory) {
+    for (let stackOffset = 0; stackOffset < totalCount; stackOffset += MAX_STACK_SIZE) {
+      const count = Math.min(MAX_STACK_SIZE, totalCount - stackOffset);
+      const stackNumber = Math.floor(stackOffset / MAX_STACK_SIZE) + 1;
+      const item = document.createElement("div");
+      item.className = "inventory-item";
+      const supportsTouch = window.matchMedia("(pointer: coarse)").matches;
+      item.classList.toggle("hotbar-armed", state.pendingHotbarItem === id);
+      item.addEventListener("click", (event) => {
+        if (event.target.closest("button")) return;
+        state.pendingHotbarItem = id;
+        for (const choice of inventoryList.querySelectorAll(".inventory-item")) {
+          choice.classList.toggle("hotbar-armed", choice === item);
+        }
+        notify(`Tap a hotbar slot to assign ${itemName(id)}.`);
+      });
+      const swatch = document.createElement("span");
+      swatch.className = "inventory-swatch";
+      const model = MODEL_ITEM_BY_ID.get(id);
+      swatch.style.backgroundImage = model
+        ? `linear-gradient(135deg, ${model.color}, #f3e9ca)`
+        : id === "fishing_rod"
+        ? `url("${fishingRodIconUrl}")`
+        : id === "campfire"
+        ? "linear-gradient(135deg, #ffd56a, #ed7338 55%, #604230 56%)"
+        : `url("${blockChoices.find(([block]) => block === id)?.[2] ?? ""}")`;
+      const itemNameLabel = document.createElement("span");
+      itemNameLabel.className = "inventory-item-name";
+      itemNameLabel.textContent = itemName(id);
+      const amount = document.createElement("span");
+      amount.className = "inventory-amount";
+      amount.textContent = `×${count}`;
+      const stackLabel = document.createElement("span");
+      stackLabel.className = "inventory-amount";
+      stackLabel.textContent = totalCount > MAX_STACK_SIZE ? `Stack ${stackNumber}` : "";
+      const dropButton = document.createElement("button");
+      dropButton.className = "drop-item";
+      dropButton.type = "button";
+      dropButton.draggable = false;
+      dropButton.textContent = "Drop 1";
+      dropButton.setAttribute("aria-label", `Drop one ${itemName(id)}`);
+      dropButton.addEventListener("click", () => sendInventoryAction({ type: "drop", item: id, count: 1 }));
+      const itemActions = [];
+      if (["wooden_sword", "stone_sword", "iron_sword", "steel_sword"].includes(id)) {
+        const equipButton = document.createElement("button");
+        equipButton.className = "drop-item";
+        equipButton.type = "button";
+        equipButton.textContent = state.selected === id ? "Equipped" : "Equip";
+        equipButton.disabled = state.selected === id;
+        equipButton.setAttribute("aria-label", `Equip ${itemName(id)}`);
+        equipButton.addEventListener("click", () => {
+          selectBlock(id);
+          notify(`${itemName(id)} equipped. Face an enemy and attack.`);
+        });
+        itemActions.push(equipButton);
       }
-      notify(`Tap a hotbar slot to assign ${itemName(id)}.`);
-    });
-    const swatch = document.createElement("span");
-    swatch.className = "inventory-swatch";
-    const model = MODEL_ITEM_BY_ID.get(id);
-    swatch.style.backgroundImage = model
-      ? `linear-gradient(135deg, ${model.color}, #f3e9ca)`
-      : id === "campfire"
-      ? "linear-gradient(135deg, #ffd56a, #ed7338 55%, #604230 56%)"
-      : `url("${blockChoices.find(([block]) => block === id)?.[2] ?? ""}")`;
-    const itemNameLabel = document.createElement("span");
-    itemNameLabel.className = "inventory-item-name";
-    itemNameLabel.textContent = itemName(id);
-    const amount = document.createElement("span");
-    amount.className = "inventory-amount";
-    amount.textContent = `×${count}`;
-    const dropButton = document.createElement("button");
-    dropButton.className = "drop-item";
-    dropButton.type = "button";
-    dropButton.draggable = false;
-    dropButton.textContent = "Drop 1";
-    dropButton.setAttribute("aria-label", `Drop one ${itemName(id)}`);
-    dropButton.addEventListener("click", () => sendInventoryAction({ type: "drop", item: id, count: 1 }));
-    if (FISH_TYPE_BY_ID.has(id)) {
-      const sellButton = document.createElement("button");
-      sellButton.className = "drop-item";
-      sellButton.type = "button";
-      sellButton.draggable = false;
-      sellButton.textContent = "Sell 1";
-      sellButton.setAttribute("aria-label", `Sell one ${itemName(id)}`);
-      sellButton.addEventListener("click", () => sendInventoryAction({ type: "sell", item: id, count: 1 }));
-      item.append(sellButton);
+      if (FISH_TYPE_BY_ID.has(id)) {
+        const sellButton = document.createElement("button");
+        sellButton.className = "drop-item";
+        sellButton.type = "button";
+        sellButton.draggable = false;
+        sellButton.textContent = "Sell 1";
+        sellButton.setAttribute("aria-label", `Sell one ${itemName(id)}`);
+        sellButton.addEventListener("click", () => sendInventoryAction({ type: "sell", item: id, count: 1 }));
+        itemActions.push(sellButton);
+      }
+      const dragHandle = document.createElement("button");
+      dragHandle.className = "inventory-drag-handle";
+      dragHandle.type = "button";
+      dragHandle.draggable = !supportsTouch;
+      dragHandle.textContent = "↗";
+      dragHandle.setAttribute("aria-label", `Drag ${itemName(id)} to a hotbar slot`);
+      dragHandle.addEventListener("dragstart", (event) => {
+        if (!event.dataTransfer) return;
+        event.dataTransfer.setData("text/plain", id);
+        event.dataTransfer.effectAllowed = "copy";
+        state.pendingHotbarItem = id;
+      });
+      dragHandle.addEventListener("dragend", () => {
+        state.pendingHotbarItem = null;
+      });
+      dragHandle.addEventListener("pointerdown", (event) => {
+        if (event.pointerType === "mouse") return;
+        event.preventDefault();
+        dragHandle.setPointerCapture(event.pointerId);
+        beginTouchHotbarDrag(id, event.pointerId, event.clientX, event.clientY);
+      });
+      dragHandle.addEventListener("pointermove", (event) => {
+        if (state.touchHotbarDrag?.pointerId !== event.pointerId) return;
+        moveTouchHotbarDrag(event.clientX, event.clientY);
+      });
+      dragHandle.addEventListener("pointerup", (event) => {
+        if (state.touchHotbarDrag?.pointerId !== event.pointerId) return;
+        finishTouchHotbarDrag(event.clientX, event.clientY);
+      });
+      dragHandle.addEventListener("pointercancel", (event) => {
+        if (state.touchHotbarDrag?.pointerId === event.pointerId) cancelTouchHotbarDrag();
+      });
+      item.append(swatch, itemNameLabel, amount, stackLabel, ...itemActions, dragHandle, dropButton);
+      inventoryList.append(item);
     }
-    const dragHandle = document.createElement("button");
-    dragHandle.className = "inventory-drag-handle";
-    dragHandle.type = "button";
-    dragHandle.draggable = !supportsTouch;
-    dragHandle.textContent = "↗";
-    dragHandle.setAttribute("aria-label", `Drag ${itemName(id)} to a hotbar slot`);
-    dragHandle.addEventListener("dragstart", (event) => {
-      if (!event.dataTransfer) return;
-      event.dataTransfer.setData("text/plain", id);
-      event.dataTransfer.effectAllowed = "copy";
-      state.pendingHotbarItem = id;
-    });
-    dragHandle.addEventListener("dragend", () => {
-      state.pendingHotbarItem = null;
-    });
-    dragHandle.addEventListener("pointerdown", (event) => {
-      if (event.pointerType === "mouse") return;
-      event.preventDefault();
-      dragHandle.setPointerCapture(event.pointerId);
-      beginTouchHotbarDrag(id, event.pointerId, event.clientX, event.clientY);
-    });
-    dragHandle.addEventListener("pointermove", (event) => {
-      if (state.touchHotbarDrag?.pointerId !== event.pointerId) return;
-      moveTouchHotbarDrag(event.clientX, event.clientY);
-    });
-    dragHandle.addEventListener("pointerup", (event) => {
-      if (state.touchHotbarDrag?.pointerId !== event.pointerId) return;
-      finishTouchHotbarDrag(event.clientX, event.clientY);
-    });
-    dragHandle.addEventListener("pointercancel", (event) => {
-      if (state.touchHotbarDrag?.pointerId === event.pointerId) cancelTouchHotbarDrag();
-    });
-    item.append(swatch, itemNameLabel, amount, dragHandle, dropButton);
-    inventoryList.append(item);
   }
 
   recipeList.replaceChildren();
@@ -2214,6 +2947,7 @@ document.querySelector("#inventory-toggle").addEventListener("click", () => togg
 document.querySelector("#close-inventory").addEventListener("click", () => toggleInventory(false));
 
 function renderShop() {
+  renderHomeProperties();
   if (shopCategory.options.length === 0) {
     const all = document.createElement("option");
     all.value = "";
@@ -2230,12 +2964,12 @@ function renderShop() {
   const query = shopSearch.value.trim().toLowerCase();
   const category = shopCategory.value;
   const filtered = MODEL_CATALOG.filter((model) =>
-    (!category || model.category === category) &&
+    (!category || (category === "imported" ? Boolean(model.assetKey) : model.category === category)) &&
     (!query || `${model.name} ${model.categoryLabel}`.toLowerCase().includes(query)),
   );
   const atMarket = Math.hypot(wrapPlanetX(playerPosition.x), playerPosition.z) <= 16;
   shopNotice.textContent = atMarket
-    ? `${filtered.length.toLocaleString()} models available. Choose one to decorate your home.`
+    ? `${filtered.length.toLocaleString()} models available. Imported assets are listed first. Choose one to decorate your home.`
     : "Visit the village market near the world spawn to buy models.";
   shopItems.replaceChildren();
   if (filtered.length === 0) {
@@ -2271,6 +3005,73 @@ function renderShop() {
   }
 }
 
+function renderHomeProperties() {
+  if (!homeProperties) return;
+  const catalog = listCityProperties(state.seed);
+  const ownedIds = new Set(
+    state.properties
+      .filter((property) => property.ownerName?.toLowerCase() === state.playerName.toLowerCase())
+      .map(({ id }) => id),
+  );
+  const properties = catalog
+    .map((property) => ({
+      ...property,
+      owned: ownedIds.has(property.id),
+      distance: Math.hypot(playerPosition.x - property.entranceX, playerPosition.z - property.entranceZ),
+      ownerName: state.properties.find(({ id }) => id === property.id)?.ownerName,
+    }))
+    .sort((left, right) =>
+      Number(right.owned) - Number(left.owned) ||
+      left.distance - right.distance,
+    );
+  homeProperties.replaceChildren();
+  for (const property of properties) {
+    const row = document.createElement("div");
+    row.className = "home-property";
+    const name = document.createElement("span");
+    name.textContent = property.owned
+      ? `${property.name} · Yours`
+      : property.ownerName
+        ? `${property.name} · Owned by ${property.ownerName}`
+        : `${property.name} · ${Math.ceil(property.height / 4)} floors · ${property.price} coins`;
+    const button = document.createElement("button");
+    button.type = "button";
+    if (property.owned) {
+      button.textContent = "Go home";
+      button.addEventListener("click", () => sendLobbyMessage({
+        type: "home_teleport",
+        propertyId: property.id,
+      }));
+    } else {
+      button.textContent = state.mode === "design" ? "Claim free" : `Buy · ${property.price}`;
+      button.disabled = Boolean(property.ownerName) ||
+        property.distance > 5 ||
+        (state.mode !== "design" && state.coins < property.price);
+      button.addEventListener("click", () => {
+        homeNotice.textContent = "Processing home purchase…";
+        sendLobbyMessage({ type: "buy_home" });
+      });
+    }
+    row.append(name, button);
+    homeProperties.append(row);
+  }
+  if (properties.length === 0) {
+    homeNotice.textContent = "No residences are available in this city.";
+  } else if (!properties.some(({ owned }) => owned)) {
+    homeNotice.textContent = cityPropertyNear(playerPosition.x, playerPosition.z, state.seed)
+      ? "You are beside a residence. Choose Buy to purchase it."
+      : "Walk to a building entrance to buy a home.";
+  } else {
+    homeNotice.textContent = "Your owned home is saved with this world.";
+  }
+}
+
+function cycleHotbar(direction) {
+  const currentIndex = Math.max(0, hotbarItems.indexOf(state.selected));
+  const nextIndex = (currentIndex + direction + HOTBAR_SIZE) % HOTBAR_SIZE;
+  selectBlock(hotbarItems[nextIndex]);
+}
+
 function updateHotbar() {
   for (const [index, button] of [...hotbar.querySelectorAll(".block-choice")].entries()) {
     const id = hotbarItems[index];
@@ -2284,9 +3085,10 @@ function updateHotbar() {
       ? `linear-gradient(135deg, ${model.color}, #f3e9ca)`
       : textureUrl
       ? `url("${textureUrl}")`
-      : id === "campfire" ? "linear-gradient(135deg, #ffd56a, #ed7338 55%, #604230 56%)" : "none";
+      : id === "fishing_rod" ? `url("${fishingRodIconUrl}")`
+        : id === "campfire" ? "linear-gradient(135deg, #ffd56a, #ed7338 55%, #604230 56%)" : "none";
     button.querySelector(".block-label").textContent = name ?? "";
-    const count = id ? state.inventory.get(id) ?? 0 : 0;
+    const count = id ? Math.min(state.inventory.get(id) ?? 0, MAX_STACK_SIZE) : 0;
     const counter = button.querySelector(".block-count");
     counter.textContent = String(count);
     counter.hidden = count === 0;
@@ -2348,6 +3150,7 @@ function targetBlock() {
   const hits = raycaster.intersectObjects([...blockMeshes, ...modelTargetMeshes], false);
   const hit = hits.find((candidate) =>
     (candidate.instanceId !== undefined || candidate.object.userData.blockCoordinates) &&
+    candidate.object.userData.blockType !== "water" &&
     candidate.distance < 6,
   );
   if (!hit) return null;
@@ -2363,15 +3166,18 @@ function findCombatTarget() {
   const forwardNorth = Math.cos(look.yaw);
   let closest = null;
   let closestDistance = 3.5;
-  for (const player of state.roomPlayers ?? []) {
-    if (player.id === state.id || player.health <= 0) continue;
-    const east = wrapPlanetX(player.x - playerPosition.x) * Math.cos(latitude);
-    const north = player.z - playerPosition.z;
+  for (const candidate of [
+    ...(state.roomMonsters ?? []),
+    ...(state.roomPlayers ?? []).filter((player) => player.id !== state.id),
+  ]) {
+    if (candidate.health <= 0) continue;
+    const east = wrapPlanetX(candidate.x - playerPosition.x) * Math.cos(latitude);
+    const north = candidate.z - playerPosition.z;
     const distance = Math.hypot(east, north);
     if (distance >= closestDistance) continue;
     const facing = (east * forwardEast + north * forwardNorth) / Math.max(distance, 0.001);
     if (facing < 0.2) continue;
-    closest = player;
+    closest = candidate;
     closestDistance = distance;
   }
   return closest;
@@ -2381,10 +3187,14 @@ function attackPlayer() {
   if (!state.connected || state.health <= 0) return;
   const target = findCombatTarget();
   if (!target) {
-    notify("No player in reach. Face a nearby player to punch.");
+    notify("No enemy in reach. Face a nearby monster or player to attack.");
     return;
   }
-  state.socket.send(JSON.stringify({ type: "attack", targetId: target.id }));
+  const weapon = ["wooden_sword", "stone_sword", "iron_sword", "steel_sword"].includes(state.selected)
+    && (state.inventory.get(state.selected) ?? 0) > 0
+    ? state.selected
+    : null;
+  state.socket.send(JSON.stringify({ type: "attack", targetId: target.id, ...(weapon ? { weapon } : {}) }));
 }
 
 function fishAtHarbor() {
@@ -2467,7 +3277,29 @@ document.querySelector("#fish-menu-button").addEventListener("click", fishAtHarb
 respawnButton.addEventListener("click", () => sendLobbyMessage({ type: "respawn" }));
 document.querySelector("#jump-button").addEventListener("pointerdown", (event) => {
   event.preventDefault();
-  jump();
+  if (state.isFlying) {
+    state.flyVerticalDirection = 1;
+    event.currentTarget.setPointerCapture(event.pointerId);
+  } else {
+    jump();
+  }
+});
+function stopFlyingVertically() {
+  if (state.flyVerticalDirection > 0) state.flyVerticalDirection = 0;
+}
+document.querySelector("#jump-button").addEventListener("pointerup", stopFlyingVertically);
+document.querySelector("#jump-button").addEventListener("pointercancel", stopFlyingVertically);
+flyDownButton.addEventListener("pointerdown", (event) => {
+  event.preventDefault();
+  if (!state.isFlying) return;
+  state.flyVerticalDirection = -1;
+  flyDownButton.setPointerCapture(event.pointerId);
+});
+flyDownButton.addEventListener("pointerup", () => {
+  if (state.flyVerticalDirection < 0) state.flyVerticalDirection = 0;
+});
+flyDownButton.addEventListener("pointercancel", () => {
+  if (state.flyVerticalDirection < 0) state.flyVerticalDirection = 0;
 });
 function bindSwimControl(button, direction) {
   const release = () => {
@@ -2504,8 +3336,17 @@ window.addEventListener("keydown", (event) => {
   }
   if (event.code === "Space") {
     event.preventDefault();
-    if (state.isSwimming) state.swimDirection = 1;
-    else if (!event.repeat) jump();
+    if (state.isFlying || state.vehicleType === "plane") state.flyVerticalDirection = 1;
+    else if (state.isSwimming) state.swimDirection = 1;
+    else if (!state.vehicleId && !event.repeat) jump();
+    return;
+  }
+  if (
+    (event.code === "ShiftLeft" || event.code === "ShiftRight") &&
+    (state.isFlying || state.vehicleType === "plane")
+  ) {
+    event.preventDefault();
+    state.flyVerticalDirection = -1;
     return;
   }
   if ((event.code === "ShiftLeft" || event.code === "ShiftRight") && state.isSwimming) {
@@ -2521,15 +3362,26 @@ window.addEventListener("keydown", (event) => {
     fishAtHarbor();
     return;
   }
+  if (event.code === "KeyG" && !event.repeat) {
+    event.preventDefault();
+    requestFlight(!state.isFlying);
+    return;
+  }
   moveKeys.add(event.code);
+  if (["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.code)) {
+    event.preventDefault();
+  }
   if (/^Digit[1-6]$/.test(event.code)) {
     selectBlock(hotbarItems[Number(event.code.at(-1)) - 1]);
   }
-  if (event.code === "KeyE") sendEdit("place");
+  if (event.code === "KeyE") useVehicleOrPlace();
   if (event.code === "KeyQ") sendEdit("remove");
 });
 window.addEventListener("keyup", (event) => {
   moveKeys.delete(event.code);
+  if (event.code === "Space" || event.code === "ShiftLeft" || event.code === "ShiftRight") {
+    state.flyVerticalDirection = 0;
+  }
   if (event.code === "Space" || event.code === "ShiftLeft" || event.code === "ShiftRight") {
     state.swimDirection = 0;
   }
@@ -2543,14 +3395,36 @@ canvas.addEventListener("contextmenu", (event) => event.preventDefault());
 let pointerId = null;
 let pointerStart = null;
 let pointerMoved = false;
+function updateAimFromPointer(event) {
+  if (activeGamepadIndex !== null) {
+    center.set(0, 0);
+    return;
+  }
+  const bounds = canvas.getBoundingClientRect();
+  const inside = event.clientX >= bounds.left && event.clientX <= bounds.right
+    && event.clientY >= bounds.top && event.clientY <= bounds.bottom;
+  if (event.pointerType === "mouse" && inside) {
+    center.set(
+      ((event.clientX - bounds.left) / bounds.width) * 2 - 1,
+      -((event.clientY - bounds.top) / bounds.height) * 2 + 1,
+    );
+    aimCrosshair.style.left = `${event.clientX}px`;
+    aimCrosshair.style.top = `${event.clientY}px`;
+    aimCrosshair.classList.add("is-aiming");
+  } else if (event.pointerType !== "mouse") {
+    center.set(0, 0);
+  }
+}
 canvas.addEventListener("pointerdown", (event) => {
   if (event.ctrlKey || (event.button !== 0 && event.button !== 2)) return;
+  updateAimFromPointer(event);
   pointerId = event.pointerId;
   pointerStart = { x: event.clientX, y: event.clientY, button: event.button };
   pointerMoved = false;
   canvas.setPointerCapture(event.pointerId);
 });
 canvas.addEventListener("pointermove", (event) => {
+  updateAimFromPointer(event);
   if (pointerId !== event.pointerId || !pointerStart) return;
   if (event.ctrlKey) {
     pointerStart.x = event.clientX;
@@ -2577,6 +3451,11 @@ canvas.addEventListener("pointerup", (event) => {
 canvas.addEventListener("pointercancel", () => {
   pointerId = null;
   pointerStart = null;
+});
+canvas.addEventListener("pointerleave", () => {
+  if (pointerStart) return;
+  aimCrosshair.classList.remove("is-aiming");
+  center.set(0, 0);
 });
 
 let joystickPointer = null;
@@ -2614,26 +3493,41 @@ function groundEyeAt(x, z, referenceEyeY) {
   const blockZ = Math.round(z);
   const firstBlockY = Math.floor(referenceEyeY - 1.65 + 0.05);
   for (let y = firstBlockY; y >= BEDROCK_Y; y -= 1) {
-    if (worldBlocks.has(blockKey(blockX, y, blockZ))) return y + 1.65;
+    const type = worldBlocks.get(blockKey(blockX, y, blockZ));
+    if (type !== undefined && type !== null && type !== "water") return y + 2.65;
   }
-  return BEDROCK_Y + 1.65;
+  return BEDROCK_Y + 2.65;
+}
+
+function playerOccupiesSolidBlock(x, z, eyeY) {
+  const blockX = Math.round(wrapPlanetX(x));
+  const blockZ = Math.round(z);
+  const feetY = Math.floor(eyeY - 1.65 + 0.05);
+  const headY = Math.floor(eyeY - 0.1);
+  for (let blockY = feetY; blockY <= headY; blockY += 1) {
+    const type = worldBlocks.get(blockKey(blockX, blockY, blockZ));
+    if (type !== undefined && type !== null && type !== "water" && type !== "oak_door") return true;
+  }
+  return false;
 }
 
 function hasWallAt(x, z, eyeY) {
-  const blockX = Math.round(x);
+  const feetY = Math.floor(eyeY - 1.65 + 0.05);
+  const blockX = Math.round(wrapPlanetX(x));
   const blockZ = Math.round(z);
-  const firstBlockY = Math.floor(eyeY - 0.15);
-  return [firstBlockY, firstBlockY + 1].some((blockY) => {
+  const headY = Math.floor(eyeY - 0.1);
+  for (let blockY = feetY; blockY <= headY; blockY += 1) {
     const type = worldBlocks.get(blockKey(blockX, blockY, blockZ));
-    return type !== undefined && type !== null && type !== "water";
-  });
+    if (type !== undefined && type !== null && type !== "water" && type !== "oak_door") return true;
+  }
+  return false;
 }
 
 function waterSurfaceEyeAt(x, z) {
   const blockX = Math.round(wrapPlanetX(x));
   const blockZ = Math.round(z);
   for (let blockY = 0; blockY >= BEDROCK_Y; blockY -= 1) {
-    if (worldBlocks.get(blockKey(blockX, blockY, blockZ)) === "water") return blockY + 1.65;
+    if (worldBlocks.get(blockKey(blockX, blockY, blockZ)) === "water") return blockY + 2.65;
   }
   return null;
 }
@@ -2646,21 +3540,248 @@ function jump() {
   }
 }
 
+function applyGamepadButton(gamepad, buttonIndex, action) {
+  const button = gamepad.buttons[buttonIndex];
+  const pressed = Boolean(button?.pressed || (button?.value ?? 0) > 0.5);
+  const wasPressed = previousGamepadButtons.has(buttonIndex);
+  if (pressed && !wasPressed) action();
+  if (pressed) previousGamepadButtons.add(buttonIndex);
+  else previousGamepadButtons.delete(buttonIndex);
+  return pressed;
+}
+
+function deadzoneAxis(value, deadzone = 0.16) {
+  if (Math.abs(value) <= deadzone) return 0;
+  return Math.sign(value) * (Math.abs(value) - deadzone) / (1 - deadzone);
+}
+
+function gamepadOverlayControls() {
+  const overlay = profileDialog.open
+    ? profileDialog
+    : !inventoryPanel.hidden
+      ? inventoryPanel
+      : !shopPanel.hidden
+        ? shopPanel
+        : !worldMapPanel.hidden
+          ? worldMapPanel
+          : !gameMenu.hidden
+            ? gameMenu
+            : null;
+  return overlay
+    ? [...overlay.querySelectorAll("button:not(:disabled), input:not(:disabled), select:not(:disabled)")]
+    : [];
+}
+
+function closeGamepadOverlay() {
+  if (profileDialog.open) profileDialog.close();
+  else if (!inventoryPanel.hidden) toggleInventory(false);
+  else if (!shopPanel.hidden) shopPanel.hidden = true;
+  else if (!worldMapPanel.hidden) worldMapPanel.hidden = true;
+  else if (!gameMenu.hidden) {
+    gameMenu.hidden = true;
+    gameMenuToggle.setAttribute("aria-expanded", "false");
+  }
+}
+
+function focusGamepadControl(direction) {
+  const controls = gamepadOverlayControls();
+  if (controls.length === 0) return;
+  const currentIndex = controls.indexOf(document.activeElement);
+  const nextIndex = currentIndex < 0
+    ? direction > 0 ? 0 : controls.length - 1
+    : (currentIndex + direction + controls.length) % controls.length;
+  controls[nextIndex].focus();
+}
+
+function navigateGamepadControls(direction, now) {
+  if (direction === 0) {
+    gamepadNavigationDirection = 0;
+    return;
+  }
+  if (direction === gamepadNavigationDirection && now < gamepadNavigationRepeatAt) return;
+  gamepadNavigationDirection = direction;
+
+  const focused = document.activeElement;
+  if (focused instanceof HTMLSelectElement) {
+    const step = direction > 0 ? 1 : -1;
+    focused.selectedIndex = (focused.selectedIndex + step + focused.options.length) % focused.options.length;
+    focused.dispatchEvent(new Event("change", { bubbles: true }));
+  } else {
+    focusGamepadControl(direction > 0 ? 1 : -1);
+  }
+  gamepadNavigationRepeatAt = now + 220;
+}
+
+function pollGamepad(delta) {
+  const gamepads = navigator.getGamepads?.() ?? [];
+  const gamepad = activeGamepadIndex === null
+    ? Array.from(gamepads).find(Boolean)
+    : gamepads[activeGamepadIndex];
+  if (!gamepad) {
+    activeGamepadIndex = null;
+    document.documentElement.classList.remove("gamepad-aiming");
+    gamepadMoveVector.set(0, 0);
+    state.flyVerticalDirection = 0;
+    previousGamepadButtons.clear();
+    gamepadNavigationDirection = 0;
+    return;
+  }
+
+  activeGamepadIndex = gamepad.index;
+  const overlayControls = gamepadOverlayControls();
+  const overlayOpen = overlayControls.length > 0;
+  if (overlayOpen) {
+    applyGamepadButton(gamepad, 0, () => {
+      const focused = overlayControls.includes(document.activeElement)
+        ? document.activeElement
+        : overlayControls[0];
+      focused?.click();
+    });
+  }
+  applyGamepadButton(gamepad, 1, () => {
+    if (overlayOpen) {
+      closeGamepadOverlay();
+    } else if (!state.isFlying && state.vehicleType !== "plane") {
+      attackPlayer();
+    }
+  });
+  applyGamepadButton(gamepad, 8, () => {
+    if (overlayOpen) closeGamepadOverlay();
+    else toggleInventory();
+  });
+  applyGamepadButton(gamepad, 9, () => {
+    if (overlayOpen) closeGamepadOverlay();
+    else {
+      gameMenu.hidden = false;
+      gameMenuToggle.setAttribute("aria-expanded", "true");
+    }
+  });
+  const dpadUp = Boolean(gamepad.buttons[12]?.pressed);
+  const dpadDown = Boolean(gamepad.buttons[13]?.pressed);
+  const dpadLeft = Boolean(gamepad.buttons[14]?.pressed);
+  const dpadRight = Boolean(gamepad.buttons[15]?.pressed);
+  const navigationDirection = dpadDown || deadzoneAxis(gamepad.axes[1] ?? 0, 0.55) > 0
+    ? 1
+    : dpadUp || deadzoneAxis(gamepad.axes[1] ?? 0, 0.55) < 0
+      ? -1
+      : dpadRight || deadzoneAxis(gamepad.axes[0] ?? 0, 0.55) > 0
+        ? 2
+        : dpadLeft || deadzoneAxis(gamepad.axes[0] ?? 0, 0.55) < 0
+          ? -2
+          : 0;
+  if (overlayOpen) navigateGamepadControls(navigationDirection, performance.now());
+  else gamepadNavigationDirection = 0;
+  for (const [index, pressed] of [
+    [12, dpadUp],
+    [13, dpadDown],
+    [14, dpadLeft],
+    [15, dpadRight],
+  ]) {
+    if (pressed) previousGamepadButtons.add(index);
+    else previousGamepadButtons.delete(index);
+  }
+  const gameplayActive = state.connected && gameMenu.hidden && worldMapPanel.hidden &&
+    shopPanel.hidden && inventoryPanel.hidden;
+  document.documentElement.classList.toggle("gamepad-aiming", gameplayActive);
+  if (!gameplayActive) {
+    gamepadMoveVector.set(0, 0);
+    state.flyVerticalDirection = 0;
+    for (const index of [...previousGamepadButtons]) {
+      if (![0, 1, 8, 9, 12, 13, 14, 15].includes(index)) previousGamepadButtons.delete(index);
+    }
+    return;
+  }
+
+  gamepadMoveVector.set(
+    deadzoneAxis(gamepad.axes[0] ?? 0),
+    -deadzoneAxis(gamepad.axes[1] ?? 0),
+  );
+  center.set(0, 0);
+  look.yaw -= deadzoneAxis(gamepad.axes[2] ?? 0) * delta * 2.4;
+  look.pitch = THREE.MathUtils.clamp(
+    look.pitch - deadzoneAxis(gamepad.axes[3] ?? 0) * delta * 1.8,
+    -1.35,
+    1.35,
+  );
+
+  const jumpButtonPressed = Boolean(gamepad.buttons[0]?.pressed || (gamepad.buttons[0]?.value ?? 0) > 0.5);
+  const jumpWasPressed = previousGamepadButtons.has(0);
+  if (jumpButtonPressed && !jumpWasPressed && !state.isFlying && state.vehicleType !== "plane") jump();
+  if (jumpButtonPressed) previousGamepadButtons.add(0);
+  else previousGamepadButtons.delete(0);
+  applyGamepadButton(gamepad, 2, useVehicleOrPlace);
+  applyGamepadButton(gamepad, 3, () => requestFlight(!state.isFlying));
+
+  const descendButtonPressed = Boolean(gamepad.buttons[1]?.pressed || (gamepad.buttons[1]?.value ?? 0) > 0.5);
+  const leftTrigger = gamepad.buttons[6]?.value ?? 0;
+  const rightTrigger = gamepad.buttons[7]?.value ?? 0;
+  if (state.isFlying || state.vehicleType === "plane") {
+    state.flyVerticalDirection = jumpButtonPressed ? 1 : descendButtonPressed ? -1 : 0;
+    if (state.vehicleType === "plane") {
+      if (rightTrigger > 0.25) state.flyVerticalDirection = 1;
+      else if (leftTrigger > 0.25) state.flyVerticalDirection = -1;
+    }
+  }
+  if (state.vehicleType !== "plane") {
+    if (rightTrigger > 0.5 && !previousGamepadButtons.has(7)) sendEdit("remove");
+    if (leftTrigger > 0.5 && !previousGamepadButtons.has(6)) sendEdit("place");
+  }
+  for (const [index, value] of [[6, leftTrigger], [7, rightTrigger]]) {
+    if (value > 0.5) previousGamepadButtons.add(index);
+    else previousGamepadButtons.delete(index);
+  }
+
+  applyGamepadButton(gamepad, 4, () => cycleHotbar(-1));
+  applyGamepadButton(gamepad, 5, () => cycleHotbar(1));
+}
+
+window.addEventListener("gamepadconnected", (event) => {
+  activeGamepadIndex = event.gamepad.index;
+  notify(`${event.gamepad.id || "Controller"} connected. Use the left stick to move.`);
+});
+window.addEventListener("gamepaddisconnected", (event) => {
+  if (activeGamepadIndex !== event.gamepad.index) return;
+  activeGamepadIndex = null;
+  document.documentElement.classList.remove("gamepad-aiming");
+  gamepadMoveVector.set(0, 0);
+  state.flyVerticalDirection = 0;
+  previousGamepadButtons.clear();
+  notify("Controller disconnected.");
+});
+
 function updateMovement(delta) {
   if (!state.connected || !gameMenu.hidden || !worldMapPanel.hidden || !shopPanel.hidden) return;
+  if (playerOccupiesSolidBlock(playerPosition.x, playerPosition.z, playerPosition.y)) {
+    let safeEyeY = groundEyeAt(playerPosition.x, playerPosition.z, playerPosition.y);
+    while (
+      safeEyeY <= MAX_BUILD_HEIGHT + 2.65 &&
+      playerOccupiesSolidBlock(playerPosition.x, playerPosition.z, safeEyeY)
+    ) {
+      safeEyeY += 1;
+    }
+    playerPosition.y = Math.min(safeEyeY, MAX_BUILD_HEIGHT + 2.65);
+    state.jumpVelocity = 0;
+  }
   let forwardInput = (moveKeys.has("KeyW") || moveKeys.has("ArrowUp") ? 1 : 0)
     - (moveKeys.has("KeyS") || moveKeys.has("ArrowDown") ? 1 : 0);
   let strafeInput = (moveKeys.has("KeyD") || moveKeys.has("ArrowRight") ? 1 : 0)
     - (moveKeys.has("KeyA") || moveKeys.has("ArrowLeft") ? 1 : 0);
   forwardInput += joystickVector.y;
   strafeInput += joystickVector.x;
+  forwardInput += gamepadMoveVector.y;
+  strafeInput += gamepadMoveVector.x;
   const magnitude = Math.hypot(forwardInput, strafeInput);
   if (magnitude > 1) {
     forwardInput /= magnitude;
     strafeInput /= magnitude;
   }
 
-  const speed = 4.2 * delta;
+  const activeVehicle = state.vehicles.find(({ id }) => id === state.vehicleId);
+  if (activeVehicle && strafeInput !== 0) {
+    look.yaw -= strafeInput * delta * (activeVehicle.type === "plane" ? 1.6 : 2.1);
+    strafeInput = 0;
+  }
+  const speed = (activeVehicle?.type === "plane" ? 16 : activeVehicle?.type === "car" ? 9 : 4.2) * delta;
   const eastDistance = (-Math.sin(look.yaw) * forwardInput + Math.cos(look.yaw) * strafeInput) * speed;
   const northDistance = (Math.cos(look.yaw) * forwardInput + Math.sin(look.yaw) * strafeInput) * speed;
   const nextPosition = advancePlanetPosition(
@@ -2672,47 +3793,80 @@ function updateMovement(delta) {
   );
   const nextX = nextPosition.x;
   const nextZ = nextPosition.z;
-  const currentGround = groundEyeAt(playerPosition.x, playerPosition.z, playerPosition.y);
-  const grounded = state.jumpVelocity <= 0 && playerPosition.y <= currentGround + 0.04;
-  if (nextPosition.yaw !== look.yaw) {
-    const nextGround = groundEyeAt(nextX, nextZ, playerPosition.y);
-    if (
-      !hasWallAt(nextX, nextZ, grounded ? nextGround : playerPosition.y) &&
-      (!grounded || nextGround <= currentGround + 1.05)
-    ) {
+  if (state.isFlying || activeVehicle?.type === "plane") {
+    if (!hasWallAt(nextX, nextZ, playerPosition.y)) {
       playerPosition.x = nextX;
       playerPosition.z = nextZ;
       look.yaw = nextPosition.yaw;
-      if (grounded && nextGround > currentGround) playerPosition.y = nextGround;
     }
+    const nextY = THREE.MathUtils.clamp(
+      playerPosition.y + state.flyVerticalDirection * 7 * delta,
+      BEDROCK_Y + 2.65,
+      MAX_BUILD_HEIGHT + 2.65,
+    );
+    if (!playerOccupiesSolidBlock(playerPosition.x, playerPosition.z, nextY)) {
+      playerPosition.y = nextY;
+    } else {
+      state.flyVerticalDirection = 0;
+    }
+    state.jumpVelocity = 0;
   } else {
-    const nextXGround = groundEyeAt(nextX, playerPosition.z, playerPosition.y);
-    if (
-      !hasWallAt(nextX, playerPosition.z, grounded ? nextXGround : playerPosition.y) &&
-      (!grounded || nextXGround <= currentGround + 1.05)
-    ) {
-      playerPosition.x = nextX;
-      if (grounded && nextXGround > currentGround) playerPosition.y = nextXGround;
-    }
-    const nextZGround = groundEyeAt(playerPosition.x, nextZ, playerPosition.y);
-    const nowGround = groundEyeAt(playerPosition.x, playerPosition.z, playerPosition.y);
-    if (
-      !hasWallAt(playerPosition.x, nextZ, grounded ? nextZGround : playerPosition.y) &&
-      (!grounded || nextZGround <= nowGround + 1.05)
-    ) {
-      playerPosition.z = nextZ;
-      if (grounded && nextZGround > nowGround) playerPosition.y = nextZGround;
+    const currentGround = groundEyeAt(playerPosition.x, playerPosition.z, playerPosition.y);
+    const grounded = state.jumpVelocity <= 0 && playerPosition.y <= currentGround + 0.04;
+    if (nextPosition.yaw !== look.yaw) {
+      const nextGround = groundEyeAt(nextX, nextZ, playerPosition.y);
+      if (
+        !hasWallAt(nextX, nextZ, grounded ? nextGround : playerPosition.y) &&
+        (!grounded || nextGround <= currentGround + 1.05)
+      ) {
+        playerPosition.x = nextX;
+        playerPosition.z = nextZ;
+        look.yaw = nextPosition.yaw;
+        if (grounded && nextGround > currentGround) playerPosition.y = nextGround;
+      }
+    } else {
+      const nextXGround = groundEyeAt(nextX, playerPosition.z, playerPosition.y);
+      if (
+        !hasWallAt(nextX, playerPosition.z, grounded ? nextXGround : playerPosition.y) &&
+        (!grounded || nextXGround <= currentGround + 1.05)
+      ) {
+        playerPosition.x = nextX;
+        if (grounded && nextXGround > currentGround) playerPosition.y = nextXGround;
+      }
+      const nextZGround = groundEyeAt(playerPosition.x, nextZ, playerPosition.y);
+      const nowGround = groundEyeAt(playerPosition.x, playerPosition.z, playerPosition.y);
+      if (
+        !hasWallAt(playerPosition.x, nextZ, grounded ? nextZGround : playerPosition.y) &&
+        (!grounded || nextZGround <= nowGround + 1.05)
+      ) {
+        playerPosition.z = nextZ;
+        if (grounded && nextZGround > nowGround) playerPosition.y = nextZGround;
+      }
     }
   }
 
+  if (activeVehicle) {
+    activeVehicle.x = playerPosition.x;
+    activeVehicle.y = playerPosition.y - 2.65;
+    activeVehicle.z = playerPosition.z;
+    activeVehicle.yaw = look.yaw;
+    updateVehicles(state.vehicles);
+  } else {
+    updateVehicleButton();
+  }
+
   const waterSurfaceEyeY = waterSurfaceEyeAt(playerPosition.x, playerPosition.z);
-  const waterFloorEyeY = terrainHeightAt(playerPosition.x, playerPosition.z, state.seed) + 1.65;
-  const swimming = waterSurfaceEyeY !== null &&
+  const waterFloorEyeY = terrainHeightAt(playerPosition.x, playerPosition.z, state.seed) + 2.65;
+  const swimming = !activeVehicle && waterSurfaceEyeY !== null &&
     playerPosition.y >= waterFloorEyeY &&
     playerPosition.y <= waterSurfaceEyeY + 0.3;
   state.isSwimming = swimming;
   waterControls.hidden = !swimming;
-  if (swimming) {
+  if (state.isFlying || activeVehicle?.type === "plane") {
+    state.isSwimming = false;
+    state.swimDirection = 0;
+    waterControls.hidden = true;
+  } else if (swimming) {
     state.jumpVelocity = 0;
     const verticalSpeed = state.swimDirection === 0 ? 0.45 : state.swimDirection * 3.2;
     playerPosition.y = THREE.MathUtils.clamp(
@@ -2743,8 +3897,11 @@ function updateMovement(delta) {
 function animate() {
   requestAnimationFrame(animate);
   const delta = Math.min(clock.getDelta(), 0.05);
+  pollGamepad(delta);
   updateMovement(delta);
+  animateBots(delta);
   animateAnimals(delta);
+  animateVehicles(delta);
   const now = performance.now();
   updateSkyObjects(now);
   updateUnderwaterLife(now);
