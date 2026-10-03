@@ -290,6 +290,109 @@ kbd {
   display: none;
 }
 
+.shop-panel {
+  position: absolute;
+  z-index: 4;
+  top: 88px;
+  left: 22px;
+  display: grid;
+  gap: 9px;
+  width: min(390px, calc(100vw - 44px));
+  max-height: min(650px, calc(100vh - 180px));
+  overflow: auto;
+  padding: 17px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--panel);
+  box-shadow: 0 16px 42px rgba(17, 29, 24, 0.3);
+  backdrop-filter: blur(17px);
+}
+
+.shop-panel[hidden] {
+  display: none;
+}
+
+.shop-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.shop-heading h2 {
+  margin: 2px 0 0;
+  font: 700 19px "Space Grotesk", sans-serif;
+}
+
+.shop-heading button {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+}
+
+.shop-hint,
+.shop-notice {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.shop-balance {
+  color: var(--lime);
+  font-size: 12px;
+}
+
+.shop-panel input,
+.shop-panel select {
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--ink);
+}
+
+.shop-panel select option {
+  color: #25312b;
+}
+
+.shop-items {
+  display: grid;
+  gap: 5px;
+  overflow: auto;
+  min-height: 100px;
+  max-height: 330px;
+}
+
+.shop-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 38px;
+  padding: 5px 7px;
+  border: 1px solid rgba(241, 246, 228, 0.09);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.045);
+  font-size: 11px;
+}
+
+.shop-item button {
+  flex: 0 0 auto;
+  min-width: 76px;
+  min-height: 29px;
+  border: 1px solid rgba(185, 233, 137, 0.35);
+  border-radius: 8px;
+  background: rgba(185, 233, 137, 0.1);
+  color: var(--lime);
+}
+
+.shop-item button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .inventory-heading,
 .crafting-heading,
 .inventory-item {
@@ -351,7 +454,7 @@ kbd {
 }
 
 .inventory-drag-handle {
-  display: none;
+  display: grid;
   flex: 0 0 30px;
   width: 30px;
   height: 30px;
@@ -617,6 +720,33 @@ kbd {
   display: none;
 }
 
+.water-controls {
+  position: absolute;
+  z-index: 7;
+  right: 22px;
+  bottom: 94px;
+  display: flex;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.water-controls[hidden] {
+  display: none;
+}
+
+.water-controls button {
+  min-width: 70px;
+  min-height: 40px;
+  border: 1px solid rgba(155, 229, 232, 0.55);
+  border-radius: 8px;
+  background: rgba(28, 75, 83, 0.92);
+  color: #d3f7f0;
+  font-size: 12px;
+  font-weight: 700;
+  pointer-events: auto;
+  touch-action: none;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -697,6 +827,14 @@ kbd {
     padding: 15px;
   }
 
+  .shop-panel {
+    top: 62px;
+    left: 12px;
+    width: min(350px, calc(100vw - 24px));
+    max-height: 54vh;
+    padding: 14px;
+  }
+
   .help-toggle {
     top: 62px;
     left: 12px;
@@ -717,6 +855,13 @@ kbd {
     align-items: flex-end;
     justify-content: space-between;
     pointer-events: none;
+  }
+
+  .water-controls {
+    right: auto;
+    bottom: calc(max(230px, env(safe-area-inset-bottom) + 210px));
+    left: 17px;
+    flex-direction: column;
   }
 
   .joystick {
@@ -975,6 +1120,40 @@ kbd {
 
 .lobby-field input:focus {
   border-color: var(--lime);
+}
+
+.world-mode-field select {
+  width: 100%;
+  min-height: 40px;
+  padding: 0 36px 0 11px;
+  appearance: none;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  outline: none;
+  background-color: rgba(255, 255, 255, 0.06);
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--lime) 50%),
+    linear-gradient(135deg, var(--lime) 50%, transparent 50%);
+  background-position:
+    calc(100% - 17px) 17px,
+    calc(100% - 12px) 17px;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.world-mode-field select:focus-visible {
+  border-color: var(--lime);
+  box-shadow: 0 0 0 2px rgba(185, 233, 137, 0.16);
+}
+
+.world-mode-field select option {
+  background: #1d2b24;
+  color: var(--ink);
 }
 
 .lobby-create-row,
@@ -1267,6 +1446,23 @@ kbd {
   font-size: 10px;
 }
 
+.game-menu-view-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  color: var(--ink);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.game-menu-view-toggle input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #b9e989;
+}
+
 .game-menu select {
   min-height: 34px;
   margin: 0 5px 4px;
@@ -1282,6 +1478,118 @@ kbd {
 .game-menu button:disabled {
   cursor: not-allowed;
   opacity: 0.45;
+}
+
+.profile-dialog {
+  width: min(420px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 32px);
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(21, 33, 29, 0.98);
+  color: var(--ink);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+}
+
+.profile-dialog::backdrop {
+  background: rgba(8, 14, 12, 0.62);
+  backdrop-filter: blur(3px);
+}
+
+.profile-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.profile-heading h2 {
+  margin: 2px 0 0;
+  font: 700 18px "Space Grotesk", sans-serif;
+}
+
+.profile-heading button,
+.profile-dialog footer button {
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.profile-field {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.profile-field input:not([type="color"]) {
+  min-height: 36px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--ink);
+}
+
+.profile-color-field input {
+  width: 100%;
+  height: 36px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  cursor: pointer;
+}
+
+.profile-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 16px;
+  margin-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.profile-stats h3 {
+  grid-column: 1 / -1;
+  margin: 12px 0 6px;
+  font: 700 12px "Space Grotesk", sans-serif;
+}
+
+.profile-stats div {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 7px 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.profile-stats strong {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.profile-status {
+  min-height: 16px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.profile-dialog footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.profile-dialog footer button {
+  border-color: rgba(185, 233, 137, 0.4);
+  background: rgba(185, 233, 137, 0.12);
+  color: var(--lime);
 }
 
 .world-map-panel {

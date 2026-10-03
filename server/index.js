@@ -7,18 +7,22 @@ import { Pool } from "pg";
 import { WebSocket, WebSocketServer } from "ws";
 import {
   BLOCK_TYPES,
+  BEDROCK_Y,
   blockKey,
   canCraft,
   canEditBlock,
   CHUNK_SIZE,
+  CITY_BEACH_OUTER_RADIUS,
   FISH_TYPES,
   FISH_TYPE_BY_ID,
   getBaseBlockAt,
+  HARBOR_WATER_OUTER_RADIUS,
   MAX_PLANET_CHUNK_X,
   MAX_PLANET_CHUNK_Z,
   MIN_PLANET_CHUNK_X,
   MIN_PLANET_CHUNK_Z,
   MAX_STACK_SIZE,
+  MAX_BUILD_HEIGHT,
   PLANET_MAX_X,
   PLANET_MAX_Z,
   PLANET_LATITUDE_BLOCKS,
@@ -32,15 +36,28 @@ import {
   terrainHeightAt,
   wrapPlanetX,
 } from "./world.js";
+import { MODEL_ITEM_BY_ID } from "../shared/models.js";
+import { CREATURE_HABITATS, getCreatureSpecies } from "../shared/creatures.js";
 
 const GAME_DIR = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const DIST_DIR = resolve(GAME_DIR, "dist");
 const DEFAULT_SAVE_DIRECTORY = resolve(GAME_DIR, ".data", "saves");
 const ROOM_RECONNECT_GRACE_MS = 5 * 60 * 1000;
+const AUTO_SAVE_INTERVAL_MS = 60_000;
 const MAX_PLAYER_HEALTH = 100;
+const DEFAULT_PROFILE_STATS = {
+  blocksMined: 0,
+  blocksPlaced: 0,
+  itemsCrafted: 0,
+  creaturesDefeated: 0,
+  worldsSaved: 0,
+};
 const PLAYER_ATTACK_DAMAGE = 20;
 const PLAYER_ATTACK_RANGE = 3.5;
 const PLAYER_ATTACK_COOLDOWN_MS = 650;
+const MONSTER_KILL_XP = 50;
+const MONSTER_KILL_COINS = 25;
+const XP_PER_LEVEL = 100;
 const MONSTER_ATTACK_RANGE = 2;
 const MONSTER_ATTACK_DAMAGE = 8;
 const MONSTER_ATTACK_COOLDOWN_MS = 1400;
@@ -65,6 +82,58 @@ function createBots() {
     ["bot-pebble", { id: "bot-pebble", name: "Pebble", x: 1, z: -5, yaw: 0, color: "#d3a36e", targetX: 1, targetZ: -5 }],
     ["bot-fern", { id: "bot-fern", name: "Fern", x: 8, z: 1, yaw: 0, color: "#8f8ed3", targetX: 8, targetZ: 1 }],
   ]);
+}
+
+function createAnimals(seed = 1) {
+  const animals = new Map();
+  for (const [habitatIndex, habitat] of CREATURE_HABITATS.entries()) {
+    habitat.spawnPoints.forEach(([x, z], slot) => {
+      const speciesIndex = ((Math.imul(seed >>> 0, 31) >>> 0) + habitatIndex * 67 + slot * 43) % habitat.species.length;
+      const species = getCreatureSpecies(habitat.id, speciesIndex);
+      const id = `animal-${habitat.id}-${slot}`;
+      const ground = terrainHeightAt(x, z, seed);
+      animals.set(id, {
+        id,
+        species: species.id,
+        name: species.name,
+        model: species.model,
+        color: species.color,
+        habitat: species.habitat,
+        aquatic: species.aquatic,
+        scale: species.scale,
+        pattern: species.pattern,
+        x,
+        y: species.aquatic ? ground + 3 : ground + 0.08,
+        z,
+        yaw: 0,
+        homeX: x,
+        homeZ: z,
+        targetX: x,
+        targetZ: z,
+        walking: false,
+      });
+    });
+  }
+  return animals;
+}
+
+function serializeAnimals(room) {
+  return [...room.animals.values()].map(({ id, species, name, model, color, habitat, aquatic, scale, pattern, x, y, z, yaw, walking }) => ({
+    id,
+    species,
+    name,
+    model,
+    color,
+    habitat,
+    aquatic,
+    scale,
+    pattern,
+    x,
+    y,
+    z,
+    yaw,
+    walking,
+  }));
 }
 
 function createMonsters() {
@@ -105,6 +174,11 @@ function validPlayerPosition(position) {
     position !== null &&
     typeof position === "object" &&
     Number.isFinite(position.x) &&
+    (position.y === undefined || (
+      Number.isFinite(position.y) &&
+      position.y >= BEDROCK_Y &&
+      position.y <= MAX_BUILD_HEIGHT + 2
+    )) &&
     Number.isFinite(position.z) &&
     Number.isFinite(position.yaw) &&
     position.x >= PLANET_MIN_X &&
@@ -143,6 +217,36 @@ function inventoryItems(inventory) {
   return [...inventory].sort(([left], [right]) => left.localeCompare(right));
 }
 
+function botCanMove(room, bot, x, z) {
+  const blockX = Math.round(x);
+  const blockZ = Math.round(z);
+  const nextGround = terrainHeightAt(blockX, blockZ, room.seed);
+  const currentGround = terrainHeightAt(Math.round(bot.x), Math.round(bot.z), room.seed);
+  if (nextGround > currentGround + 1.05) return false;
+  for (const blockY of [nextGround + 1, nextGround + 2]) {
+    const key = blockKey(blockX, blockY, blockZ);
+    const type = room.blocks.has(key)
+      ? room.blocks.get(key)
+      : getBaseBlockAt(blockX, blockY, blockZ, room.seed);
+    if (type && type !== "water") return false;
+  }
+  return true;
+}
+
+function playerCanOccupy(room, x, eyeY, z) {
+  const blockX = Math.round(x);
+  const blockZ = Math.round(z);
+  const feetY = Math.floor(eyeY - 1.65 + 0.05);
+  for (const blockY of [feetY + 1, feetY + 2]) {
+    const key = blockKey(blockX, blockY, blockZ);
+    const type = room.blocks.has(key)
+      ? room.blocks.get(key)
+      : getBaseBlockAt(blockX, blockY, blockZ, room.seed);
+    if (type && type !== "water") return false;
+  }
+  return true;
+}
+
 function restoreSavedRoom(saved) {
   if (!saved || typeof saved !== "object") return null;
   const blockChanges = new Map(Array.isArray(saved.blockChanges) ? saved.blockChanges : []);
@@ -166,7 +270,11 @@ function restoreSavedRoom(saved) {
     blockChanges,
     droppedItems: new Map(Array.isArray(saved.droppedItems) ? saved.droppedItems : []),
     savedPlayers,
+    bots: createBots(),
+    animals: createAnimals(Number.isSafeInteger(saved.seed) ? saved.seed : 1),
     monsters: createMonsters(),
+    autosaveEnabled: saved.autosaveEnabled !== false,
+    lastAutosaveAt: Date.now(),
     saved: true,
   };
 }
@@ -196,6 +304,7 @@ function roomSaveData(room, players) {
     savedPlayers.set(player.name.toLowerCase(), {
       name: player.name,
       x: player.x,
+      y: player.y,
       z: player.z,
       yaw: player.yaw,
       inventory: inventoryItems(player.inventory),
@@ -212,6 +321,7 @@ function roomSaveData(room, players) {
     mode: room.mode,
     seed: room.seed,
     started: room.started,
+    autosaveEnabled: room.autosaveEnabled !== false,
     blockChanges: [...room.blockChanges],
     droppedItems: [...room.droppedItems],
     players: [...savedPlayers.values()],
@@ -231,6 +341,15 @@ async function initializeDatabase(pool) {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS voxland_profiles (
+      profile_id UUID PRIMARY KEY,
+      name TEXT NOT NULL,
+      color TEXT NOT NULL,
+      stats JSONB NOT NULL DEFAULT '{}',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
   const { rows } = await pool.query("SELECT payload FROM voxland_worlds");
   return rows.map(({ payload }) => restoreSavedRoom(payload)).filter(Boolean);
 }
@@ -243,6 +362,67 @@ async function persistRoomToDatabase(room, players, pool) {
     ON CONFLICT (id) DO UPDATE
     SET payload = EXCLUDED.payload, updated_at = NOW()
   `, [room.id, JSON.stringify(payload)]);
+}
+
+async function persistPlayerProfile(player, profiles, pool) {
+  if (!player.profileId) return;
+  const profile = {
+    profileId: player.profileId,
+    name: player.name,
+    color: player.color,
+    stats: { ...DEFAULT_PROFILE_STATS, ...player.profileStats },
+  };
+  profiles.set(player.profileId, profile);
+  if (!pool) return;
+  await pool.query(`
+    INSERT INTO voxland_profiles (profile_id, name, color, stats)
+    VALUES ($1, $2, $3, $4::jsonb)
+    ON CONFLICT (profile_id) DO UPDATE
+    SET name = EXCLUDED.name, color = EXCLUDED.color, stats = EXCLUDED.stats, updated_at = NOW()
+  `, [profile.profileId, profile.name, profile.color, JSON.stringify(profile.stats)]);
+}
+
+async function loadPlayerProfile(profileId, player, profiles, pool) {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(profileId)) {
+    throw new TypeError("Invalid player profile ID.");
+  }
+  let profile = profiles.get(profileId);
+  if (pool) {
+    const { rows } = await pool.query(
+      "SELECT profile_id, name, color, stats FROM voxland_profiles WHERE profile_id = $1",
+      [profileId],
+    );
+    profile = rows[0];
+  }
+  if (!profile) {
+    profile = {
+      profileId,
+      name: player.name,
+      color: player.color,
+      stats: { ...DEFAULT_PROFILE_STATS },
+    };
+  }
+  player.profileId = profileId;
+  player.name = safeName(profile.name) ?? player.name;
+  player.color = /^#[0-9a-f]{6}$/i.test(profile.color) ? profile.color : player.color;
+  player.profileStats = Object.fromEntries(Object.keys(DEFAULT_PROFILE_STATS).map((key) => [
+    key,
+    Number.isSafeInteger(Number(profile.stats?.[key])) && Number(profile.stats[key]) >= 0
+      ? Number(profile.stats[key])
+      : 0,
+  ]));
+  await persistPlayerProfile(player, profiles, pool);
+  return {
+    name: player.name,
+    color: player.color,
+    stats: player.profileStats,
+  };
+}
+
+async function incrementProfileStat(player, stat, amount, profiles, pool) {
+  if (!player.profileId || !Object.hasOwn(DEFAULT_PROFILE_STATS, stat)) return;
+  player.profileStats[stat] = (player.profileStats[stat] ?? 0) + amount;
+  await persistPlayerProfile(player, profiles, pool);
 }
 
 function staticResponse(request, response) {
@@ -290,6 +470,7 @@ export function createGameServer({
   seed: requestedSeed,
   saveDirectory = DEFAULT_SAVE_DIRECTORY,
   databaseUrl = process.env.DATABASE_URL,
+  autosaveIntervalMs = AUTO_SAVE_INTERVAL_MS,
 } = {}) {
   if (process.env.RAILWAY_ENVIRONMENT && !databaseUrl) {
     throw new Error("DATABASE_URL must be set for Railway deployments.");
@@ -301,6 +482,7 @@ export function createGameServer({
   }
   const pool = databaseUrl ? new Pool({ connectionString: databaseUrl }) : null;
   const players = new Map();
+  const profiles = new Map();
   const rooms = new Map(pool ? [] : loadSavedRooms(saveDirectory).map((room) => [room.id, room]));
   let databaseInitialized = false;
   const bots = createBots();
@@ -319,6 +501,7 @@ export function createGameServer({
     started: room.started,
     mode: room.mode,
     saved: Boolean(room.saved),
+    autosaveEnabled: room.autosaveEnabled !== false,
   });
 
   const lobbyRooms = () => [...rooms.values()]
@@ -351,16 +534,18 @@ export function createGameServer({
 
   const roomSnapshot = (room) => ({
     type: "snapshot",
-    players: [...room.members].map((id) => players.get(id)).filter(Boolean).map(({ id, name, x, z, yaw, color, health }) => ({
+    players: [...room.members].map((id) => players.get(id)).filter(Boolean).map(({ id, name, x, y, z, yaw, color, health }) => ({
       id,
       name,
       x,
+      y,
       z,
       yaw,
       color,
       health,
     })),
-    bots: [...bots.values()],
+    bots: [...room.bots.values()],
+    animals: serializeAnimals(room),
     monsters: serializeMonsters(room),
     drops: [...room.droppedItems.values()].map(({ id, item, count, x, z }) => ({
       id,
@@ -384,20 +569,23 @@ export function createGameServer({
     id: player.id,
     seed: room.seed,
     mode: room.mode,
+    autosaveEnabled: room.autosaveEnabled !== false,
     chunkSize: CHUNK_SIZE,
-    players: [...room.members].map((id) => players.get(id)).filter(Boolean).map(({ id, name, x, z, yaw, color, health }) => ({
+    players: [...room.members].map((id) => players.get(id)).filter(Boolean).map(({ id, name, x, y, z, yaw, color, health }) => ({
       id,
       name,
       x,
+      y,
       z,
       yaw,
       color,
       health,
     })),
-    bots: [...bots.values()],
+    bots: [...room.bots.values()],
+    animals: serializeAnimals(room),
     monsters: serializeMonsters(room),
     drops: [...room.droppedItems.values()].map(({ id, item, count, x, z }) => ({ id, item, count, x, z })),
-    position: { x: player.x, z: player.z, yaw: player.yaw },
+    position: { x: player.x, y: player.y, z: player.z, yaw: player.yaw },
     inventory: inventoryItems(player.inventory),
     health: player.health,
     xp: player.xp ?? 0,
@@ -414,20 +602,85 @@ export function createGameServer({
       if (room.started) broadcastToRoom(room, roomSnapshot(room));
     }
   }, 100);
+  const autosaveTimer = setInterval(() => {
+    const now = Date.now();
+    for (const room of rooms.values()) {
+      if (!room.started || !room.autosaveEnabled || room.autosaveInProgress || now - room.lastAutosaveAt < autosaveIntervalMs) continue;
+      room.lastAutosaveAt = now;
+      room.autosaveInProgress = true;
+      const save = pool
+        ? persistRoomToDatabase(room, players, pool)
+        : Promise.resolve().then(() => persistRoom(room, players, saveDirectory));
+      save.catch(() => {
+        room.lastAutosaveAt = Date.now() - autosaveIntervalMs;
+      }).finally(() => {
+        room.autosaveInProgress = false;
+      });
+    }
+  }, autosaveIntervalMs);
   const botTimer = setInterval(() => {
-    for (const bot of bots.values()) {
-      const deltaX = bot.targetX - bot.x;
-      const deltaZ = bot.targetZ - bot.z;
-      const distance = Math.hypot(deltaX, deltaZ);
+    for (const room of rooms.values()) {
+      if (!room.started) continue;
+      for (const bot of room.bots.values()) {
+        const deltaX = bot.targetX - bot.x;
+        const deltaZ = bot.targetZ - bot.z;
+        const distance = Math.hypot(deltaX, deltaZ);
 
-      if (distance < 0.3) {
-        bot.targetX = Math.round((Math.random() * 80 - 40) * 2) / 2;
-        bot.targetZ = Math.round((Math.random() * 80 - 40) * 2) / 2;
-      } else {
+        if (distance < 0.3) {
+          bot.targetX = Math.round((Math.random() * 80 - 40) * 2) / 2;
+          bot.targetZ = Math.round((Math.random() * 80 - 40) * 2) / 2;
+          continue;
+        }
+
         const step = Math.min(0.12, distance);
-        bot.x += (deltaX / distance) * step;
-        bot.z += (deltaZ / distance) * step;
-        bot.yaw = Math.atan2(-deltaX, -deltaZ);
+        const nextX = bot.x + deltaX / distance * step;
+        const nextZ = bot.z + deltaZ / distance * step;
+        if (botCanMove(room, bot, nextX, nextZ)) {
+          bot.x = nextX;
+          bot.z = nextZ;
+          bot.yaw = Math.atan2(-deltaX, -deltaZ);
+        } else {
+          bot.targetX = bot.x + Math.round((Math.random() * 12 - 6) * 2) / 2;
+          bot.targetZ = bot.z + Math.round((Math.random() * 12 - 6) * 2) / 2;
+        }
+      }
+      for (const animal of room.animals.values()) {
+        const deltaX = animal.targetX - animal.x;
+        const deltaZ = animal.targetZ - animal.z;
+        const distance = Math.hypot(deltaX, deltaZ);
+
+        if (distance < 0.3) {
+          const wanderRange = animal.aquatic ? 7 : 5;
+          animal.targetX = animal.homeX + Math.round((Math.random() * wanderRange * 2 - wanderRange) * 2) / 2;
+          animal.targetZ = animal.homeZ + Math.round((Math.random() * wanderRange * 2 - wanderRange) * 2) / 2;
+          animal.walking = false;
+          continue;
+        }
+
+        const step = Math.min(animal.aquatic ? 0.11 : 0.08, distance);
+        const nextX = animal.x + deltaX / distance * step;
+        const nextZ = animal.z + deltaZ / distance * step;
+        const habitatRadius = animal.aquatic ? 12 : 8;
+        const inHabitat = Math.hypot(nextX - animal.homeX, nextZ - animal.homeZ) <= habitatRadius;
+        const canMove = animal.aquatic
+          ? Math.hypot(nextX, nextZ) > CITY_BEACH_OUTER_RADIUS
+            && Math.hypot(nextX, nextZ) < HARBOR_WATER_OUTER_RADIUS
+            && terrainHeightAt(nextX, nextZ, room.seed) < 0
+          : botCanMove(room, animal, nextX, nextZ);
+        if (inHabitat && canMove) {
+          animal.x = nextX;
+          animal.z = nextZ;
+          animal.y = animal.aquatic
+            ? terrainHeightAt(nextX, nextZ, room.seed) + 3
+            : terrainHeightAt(nextX, nextZ, room.seed) + 0.08;
+          animal.yaw = Math.atan2(-deltaX, -deltaZ);
+          animal.walking = true;
+        } else {
+          const wanderRange = animal.aquatic ? 7 : 5;
+          animal.targetX = animal.homeX + Math.round((Math.random() * wanderRange * 2 - wanderRange) * 2) / 2;
+          animal.targetZ = animal.homeZ + Math.round((Math.random() * wanderRange * 2 - wanderRange) * 2) / 2;
+          animal.walking = false;
+        }
       }
     }
   }, 250);
@@ -458,6 +711,8 @@ export function createGameServer({
           const east = wrapPlanetX(candidate.x - monster.x) * Math.cos(latitude);
           const north = candidate.z - monster.z;
           const distance = Math.hypot(east, north);
+          const surfaceY = terrainHeightAt(candidate.x, candidate.z, room.seed) + 1.65;
+          if (isNearHarbor(candidate.x, candidate.z) || candidate.y < surfaceY - 1.5) continue;
           if (distance < closestDistance) {
             closestPlayer = candidate;
             closestDistance = distance;
@@ -503,12 +758,15 @@ export function createGameServer({
       id,
       name: `Guest-${id.slice(0, 4)}`,
       x: 0,
+      y: terrainHeightAt(0, 0, seed) + 1.65,
       z: 0,
       yaw: 0,
       health: MAX_PLAYER_HEALTH,
       xp: 0,
       level: 0,
       coins: 0,
+      profileId: null,
+      profileStats: { ...DEFAULT_PROFILE_STATS },
       lastAttackAt: 0,
       lastFishAt: 0,
       color: colors[Math.floor(Math.random() * colors.length)],
@@ -559,7 +817,11 @@ export function createGameServer({
           blockChanges: new Map(),
           droppedItems: new Map(),
           savedPlayers: new Map(),
+          bots: new Map([...bots].map(([botId, bot]) => [botId, { ...bot }])),
+          animals: createAnimals(seed),
           monsters: createMonsters(),
+          autosaveEnabled: true,
+          lastAutosaveAt: 0,
           disconnectTimer: null,
           saved: false,
         };
@@ -594,6 +856,9 @@ export function createGameServer({
           : createInventory(room.mode);
         if (savedPlayer) {
           player.x = savedPlayer.x;
+          player.y = Number.isFinite(savedPlayer.y)
+            ? savedPlayer.y
+            : terrainHeightAt(savedPlayer.x, savedPlayer.z, room.seed) + 1.65;
           player.z = savedPlayer.z;
           player.yaw = savedPlayer.yaw;
           player.xp = Number.isFinite(Number(savedPlayer.xp)) ? Number(savedPlayer.xp) : 0;
@@ -648,6 +913,31 @@ export function createGameServer({
         return;
       }
 
+      if (message.type === "set_autosave") {
+        const room = rooms.get(player.roomId);
+        if (!room?.started) {
+          writeJson(socket, { type: "autosave_result", enabled: false, message: "Start a world before changing autosave." });
+          return;
+        }
+        const previousSetting = room.autosaveEnabled;
+        room.autosaveEnabled = message.enabled === true;
+        room.lastAutosaveAt = Date.now();
+        try {
+          if (pool) await persistRoomToDatabase(room, players, pool);
+          else persistRoom(room, players, saveDirectory);
+          writeJson(socket, {
+            type: "autosave_result",
+            enabled: room.autosaveEnabled,
+            message: room.autosaveEnabled ? "Autosave is on." : "Autosave is off.",
+          });
+          sendRoomState(room);
+        } catch {
+          room.autosaveEnabled = previousSetting;
+          writeJson(socket, { type: "autosave_result", enabled: previousSetting, message: "Autosave setting could not be saved." });
+        }
+        return;
+      }
+
       if (message.type === "save_room") {
         const room = rooms.get(player.roomId);
         if (!room?.started) {
@@ -657,10 +947,48 @@ export function createGameServer({
         try {
           if (pool) await persistRoomToDatabase(room, players, pool);
           else persistRoom(room, players, saveDirectory);
+          await incrementProfileStat(player, "worldsSaved", 1, profiles, pool);
           writeJson(socket, { type: "save_result", saved: true, message: "World saved." });
           sendLobbyRooms();
         } catch {
           writeJson(socket, { type: "save_result", saved: false, message: "World could not be saved." });
+        }
+        return;
+      }
+
+      if (message.type === "profile_load") {
+        try {
+          const profile = await loadPlayerProfile(message.profileId, player, profiles, pool);
+          writeJson(socket, { type: "profile_data", profile });
+          writeJson(socket, { type: "name_result", name: player.name });
+        } catch (error) {
+          writeJson(socket, { type: "error", message: error.message === "Invalid player profile ID." ? error.message : "Player profile could not be loaded." });
+        }
+        return;
+      }
+
+      if (message.type === "profile_update") {
+        const name = safeName(message.name);
+        const validColor = typeof message.color === "string" && /^#[0-9a-f]{6}$/i.test(message.color);
+        if (!player.profileId || !name || !validColor) {
+          writeJson(socket, { type: "error", message: "Enter a valid name and character color." });
+          return;
+        }
+        player.name = name;
+        player.color = message.color;
+        try {
+          await persistPlayerProfile(player, profiles, pool);
+          writeJson(socket, {
+            type: "profile_data",
+            profile: { name: player.name, color: player.color, stats: player.profileStats },
+          });
+          const room = rooms.get(player.roomId);
+          if (room) {
+            sendRoomState(room);
+            if (room.started) broadcastToRoom(room, roomSnapshot(room));
+          }
+        } catch {
+          writeJson(socket, { type: "error", message: "Player profile could not be saved." });
         }
         return;
       }
@@ -672,6 +1000,14 @@ export function createGameServer({
           return;
         }
         player.name = name;
+        if (player.profileId) {
+          try {
+            await persistPlayerProfile(player, profiles, pool);
+          } catch {
+            writeJson(socket, { type: "error", message: "Player profile could not be saved." });
+            return;
+          }
+        }
         const room = rooms.get(player.roomId);
         if (room) {
           sendRoomState(room);
@@ -698,10 +1034,11 @@ export function createGameServer({
         }
         player.x = location ? location.x : wrapPlanetX(target.x + 2);
         player.z = location ? location.z : target.z;
+        player.y = terrainHeightAt(player.x, player.z, room.seed) + 1.65;
         player.yaw = location ? location.yaw : target.yaw;
         writeJson(socket, {
           type: "teleport_result",
-          position: { x: player.x, z: player.z, yaw: player.yaw },
+          position: { x: player.x, y: player.y, z: player.z, yaw: player.yaw },
           targetId: target?.id ?? null,
           locationId: location?.id ?? null,
           locationName: location?.name ?? null,
@@ -743,7 +1080,15 @@ export function createGameServer({
         }
 
         target.health = Math.max(0, target.health - PLAYER_ATTACK_DAMAGE);
-        if (monsterTarget && target.health === 0) target.respawnAt = now + MONSTER_RESPAWN_MS;
+        let reward = null;
+        if (monsterTarget && target.health === 0) {
+          target.respawnAt = now + MONSTER_RESPAWN_MS;
+          await incrementProfileStat(player, "creaturesDefeated", 1, profiles, pool);
+          player.xp = (player.xp ?? 0) + MONSTER_KILL_XP;
+          player.level = Math.max(player.level ?? 0, Math.floor(player.xp / XP_PER_LEVEL));
+          player.coins = (player.coins ?? 0) + MONSTER_KILL_COINS;
+          reward = { xp: player.xp, level: player.level, coins: player.coins, xpGained: MONSTER_KILL_XP, coinsGained: MONSTER_KILL_COINS };
+        }
         writeJson(socket, {
           type: "attack_result",
           hit: true,
@@ -752,6 +1097,7 @@ export function createGameServer({
           health: target.health,
           monster: Boolean(monsterTarget),
           killed: Boolean(monsterTarget && target.health === 0),
+          reward,
         });
         broadcastToRoom(room, roomSnapshot(room));
         return;
@@ -817,16 +1163,50 @@ export function createGameServer({
         return;
       }
 
+      if (message.type === "buy_model") {
+        const room = rooms.get(player.roomId);
+        if (!room?.started || player.health <= 0) return;
+        const model = MODEL_ITEM_BY_ID.get(message.item);
+        if (!model) {
+          writeJson(socket, { type: "error", message: "That shop item is unavailable." });
+          return;
+        }
+        if (Math.hypot(wrapPlanetX(player.x), player.z) > 16) {
+          writeJson(socket, { type: "error", message: "Visit the village market to shop." });
+          return;
+        }
+        if ((player.inventory.get(model.id) ?? 0) >= MAX_STACK_SIZE) {
+          writeJson(socket, { type: "error", message: "That item stack is full." });
+          return;
+        }
+        if (room.mode !== "design" && player.coins < model.price) {
+          writeJson(socket, { type: "error", message: `You need ${model.price} coins to buy ${model.name}.` });
+          return;
+        }
+        if (room.mode !== "design") player.coins -= model.price;
+        addItems(player.inventory, model.id, 1);
+        writeJson(socket, {
+          type: "buy_result",
+          item: model.id,
+          coins: player.coins,
+          message: `Bought ${model.name} for ${room.mode === "design" ? 0 : model.price} coins.`,
+        });
+        writeJson(socket, { type: "currency", coins: player.coins });
+        writeJson(socket, { type: "inventory", items: inventoryItems(player.inventory) });
+        return;
+      }
+
       if (message.type === "respawn") {
         const room = rooms.get(player.roomId);
         if (!room?.started || player.health > 0) return;
         player.health = MAX_PLAYER_HEALTH;
         player.x = 0;
         player.z = 0;
+        player.y = terrainHeightAt(player.x, player.z, room.seed) + 1.65;
         player.yaw = 0;
         writeJson(socket, {
           type: "respawn_result",
-          position: { x: player.x, z: player.z, yaw: player.yaw },
+          position: { x: player.x, y: player.y, z: player.z, yaw: player.yaw },
           health: player.health,
         });
         broadcastToRoom(room, roomSnapshot(room));
@@ -839,11 +1219,17 @@ export function createGameServer({
           writeJson(socket, { type: "error", message: "Movement was outside the world." });
           return;
         }
+        const room = rooms.get(player.roomId);
+        if (!room || !playerCanOccupy(room, message.position.x, message.position.y ?? player.y, message.position.z)) {
+          return;
+        }
         player.x = message.position.x;
         player.z = message.position.z;
+        player.y = Number.isFinite(message.position.y)
+          ? message.position.y
+          : terrainHeightAt(player.x, player.z, room.seed) + 1.65;
         player.yaw = message.position.yaw;
-        const room = rooms.get(player.roomId);
-        if (room) broadcastToRoom(room, roomSnapshot(room));
+        broadcastToRoom(room, roomSnapshot(room));
         return;
       }
 
@@ -944,6 +1330,7 @@ export function createGameServer({
         addItems(player.inventory, recipe.result, recipe.resultCount);
         player.xp = (player.xp ?? 0) + 2;
         player.level = (player.level ?? 0) + 2;
+        await incrementProfileStat(player, "itemsCrafted", recipe.resultCount, profiles, pool);
         writeJson(socket, { type: "xp", xp: player.xp, level: player.level });
         writeJson(socket, { type: "inventory", items: inventoryItems(player.inventory) });
         return;
@@ -977,6 +1364,7 @@ export function createGameServer({
           room.blocks.set(key, block);
         }
         room.blockChanges.set(key, action === "remove" ? null : block);
+        await incrementProfileStat(player, action === "remove" ? "blocksMined" : "blocksPlaced", 1, profiles, pool);
         broadcastToRoom(room, { type: "block", action, position, block: changedBlock });
         writeJson(socket, { type: "inventory", items: inventoryItems(player.inventory) });
       }
@@ -988,6 +1376,7 @@ export function createGameServer({
         room.savedPlayers.set(player.name.toLowerCase(), {
           name: player.name,
           x: player.x,
+          y: player.y,
           z: player.z,
           yaw: player.yaw,
           health: player.health,
@@ -1036,6 +1425,7 @@ export function createGameServer({
     },
     async close() {
       clearInterval(snapshotTimer);
+      clearInterval(autosaveTimer);
       clearInterval(botTimer);
       clearInterval(monsterTimer);
       for (const socket of webSocketServer.clients) socket.terminate();

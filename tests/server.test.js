@@ -1,11 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createGameServer } from "../server/index.js";
-import { BLOCK_TYPES } from "../server/world.js";
+import { BLOCK_TYPES, FISH_ITEMS } from "../server/world.js";
 import { WebSocket } from "ws";
+import { MODEL_ITEM_BY_ID } from "../shared/models.js";
 
 function nextMessage(socket, predicate = () => true, timeoutMs = 5000) {
   return new Promise((resolve, reject) => {
@@ -32,6 +33,307 @@ function connect(url) {
   });
   return { socket, opened };
 }
+
+test("loads and saves persistent player profile appearance and statistics", async () => {
+  const server = createGameServer({ host: "127.0.0.1", port: 0, seed: 31 });
+  const sockets = [];
+  try {
+    const address = await server.listen();
+    const connection = connect(`ws://127.0.0.1:${address.port}/ws`);
+    sockets.push(connection.socket);
+    const lobby = nextMessage(connection.socket, (message) => message.type === "lobby");
+    await connection.opened;
+    await lobby;
+    const nameResult = nextMessage(connection.socket, (message) => message.type === "name_result");
+    connection.socket.send(JSON.stringify({ type: "name", name: "Profile Tester" }));
+    await nameResult;
+
+    const loadedProfile = nextMessage(connection.socket, (message) => message.type === "profile_data");
+    connection.socket.send(JSON.stringify({
+      type: "profile_load",
+      profileId: "6f9619ff-8b86-4d11-b42d-00cf4fc964ff",
+    }));
+    const initial = (await loadedProfile).profile;
+    assert.equal(initial.name, "Profile Tester");
+    assert.equal(initial.stats.blocksMined, 0);
+
+    const savedProfile = nextMessage(connection.socket, (message) => message.type === "profile_data");
+    connection.socket.send(JSON.stringify({ type: "profile_update", name: "Builder", color: "#d05b43" }));
+    const saved = (await savedProfile).profile;
+    assert.equal(saved.name, "Builder");
+    assert.equal(saved.color, "#d05b43");
+
+    const closed = new Promise((resolve) => connection.socket.once("close", resolve));
+    connection.socket.close();
+    await closed;
+    const reopened = connect(`ws://127.0.0.1:${address.port}/ws`);
+    sockets.push(reopened.socket);
+    const reopenedLobby = nextMessage(reopened.socket, (message) => message.type === "lobby");
+    await reopened.opened;
+    await reopenedLobby;
+    const restoredProfile = nextMessage(reopened.socket, (message) => message.type === "profile_data");
+    reopened.socket.send(JSON.stringify({
+      type: "profile_load",
+      profileId: "6f9619ff-8b86-4d11-b42d-00cf4fc964ff",
+    }));
+    const restored = (await restoredProfile).profile;
+    assert.equal(restored.name, "Builder");
+    assert.equal(restored.color, "#d05b43");
+  } finally {
+    for (const socket of sockets) socket.terminate();
+    await server.close();
+  }
+});
+
+test("bots retarget instead of walking through walls", async () => {
+  const server = createGameServer({ host: "127.0.0.1", port: 0, seed: 31 });
+  const sockets = [];
+  try {
+    const address = await server.listen();
+    const connection = connect(`ws://127.0.0.1:${address.port}/ws`);
+    sockets.push(connection.socket);
+    const lobby = nextMessage(connection.socket, (message) => message.type === "lobby");
+    await connection.opened;
+    await lobby;
+    const created = nextMessage(connection.socket, (message) => message.type === "room_created");
+    connection.socket.send(JSON.stringify({ type: "create_room", roomName: "Bot Wall Test" }));
+    const roomId = (await created).room.id;
+    const started = nextMessage(connection.socket, (message) => message.type === "init");
+    connection.socket.send(JSON.stringify({ type: "start_room" }));
+    const initial = await started;
+    assert.equal(initial.animals.length, 20);
+    assert.deepEqual(
+      new Set(initial.animals.map(({ habitat }) => habitat)),
+      new Set(["village", "coast", "ocean", "forest", "highlands"]),
+    );
+    assert.ok(initial.animals.every(({ name, model, color }) => name && model && /^#[0-9a-f]{6}$/i.test(color)));
+
+    const room = server.rooms.get(roomId);
+    const bot = room.bots.get("bot-moss");
+    const animalPositions = [...room.animals.values()].map(({ x, z }) => ({ x, z }));
+    bot.x = -3.6;
+    bot.z = -2;
+    bot.targetX = 0;
+    bot.targetZ = -2;
+    room.blocks.set("-3,1,-2", "stone");
+    room.blocks.set("-3,2,-2", "stone");
+    await new Promise((resolve) => setTimeout(resolve, 320));
+
+    assert.equal(bot.x, -3.6);
+    assert.notEqual(bot.targetX, 0);
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    assert.ok([...room.animals.values()].some((animal, index) =>
+      Math.hypot(animal.x - animalPositions[index].x, animal.z - animalPositions[index].z) > 0.01));
+  } finally {
+    for (const socket of sockets) socket.terminate();
+    await server.close();
+  }
+});
+
+test("players cannot move into solid blocks", async () => {
+  const server = createGameServer({ host: "127.0.0.1", port: 0, seed: 31 });
+  const sockets = [];
+  try {
+    const address = await server.listen();
+    const connection = connect(`ws://127.0.0.1:${address.port}/ws`);
+    sockets.push(connection.socket);
+    const lobby = nextMessage(connection.socket, (message) => message.type === "lobby");
+    await connection.opened;
+    await lobby;
+    const created = nextMessage(connection.socket, (message) => message.type === "room_created");
+    connection.socket.send(JSON.stringify({ type: "create_room", roomName: "Player Wall Test" }));
+    const roomId = (await created).room.id;
+    const started = nextMessage(connection.socket, (message) => message.type === "init");
+    connection.socket.send(JSON.stringify({ type: "start_room" }));
+    const initial = await started;
+    const room = server.rooms.get(roomId);
+    const player = server.players.get(initial.id);
+
+    connection.socket.send(JSON.stringify({
+      type: "move",
+      position: { x: 0.2, y: 1.65, z: 0, yaw: 0 },
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(player.x, 0.2);
+
+    room.blocks.set("1,1,0", "stone");
+    room.blocks.set("1,2,0", "stone");
+    connection.socket.send(JSON.stringify({
+      type: "move",
+      position: { x: 1, y: 1.65, z: 0, yaw: 0 },
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(player.x, 0.2);
+
+    room.blocks.set("2,1,0", "water");
+    room.blocks.set("2,2,0", "water");
+    connection.socket.send(JSON.stringify({
+      type: "move",
+      position: { x: 2, y: 1.65, z: 0, yaw: 0 },
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(player.x, 2);
+  } finally {
+    for (const socket of sockets) socket.terminate();
+    await server.close();
+  }
+});
+
+test("surface monsters do not damage players underground", async () => {
+  const server = createGameServer({ host: "127.0.0.1", port: 0, seed: 31 });
+  const sockets = [];
+  try {
+    const address = await server.listen();
+    const connection = connect(`ws://127.0.0.1:${address.port}/ws`);
+    sockets.push(connection.socket);
+    const lobby = nextMessage(connection.socket, (message) => message.type === "lobby");
+    await connection.opened;
+    await lobby;
+    const created = nextMessage(connection.socket, (message) => message.type === "room_created");
+    connection.socket.send(JSON.stringify({ type: "create_room", roomName: "Underground Safety Test" }));
+    const roomId = (await created).room.id;
+    const started = nextMessage(connection.socket, (message) => message.type === "init");
+    connection.socket.send(JSON.stringify({ type: "start_room" }));
+    const init = await started;
+    const player = server.players.get(init.id);
+
+    connection.socket.send(JSON.stringify({
+      type: "move",
+      position: { x: 1, y: -5, z: 126, yaw: 0 },
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    assert.equal(player.health, 100);
+
+    connection.socket.send(JSON.stringify({
+      type: "move",
+      position: { x: 1, y: 1.65, z: 126, yaw: 0 },
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    assert.equal(player.health, 92);
+
+    const crab = server.rooms.get(roomId).monsters.get("monster-crab");
+    crab.x = 0;
+    crab.z = 140;
+    crab.targetX = 0;
+    crab.targetZ = 140;
+    crab.lastAttackAt = 0;
+    connection.socket.send(JSON.stringify({
+      type: "move",
+      position: { x: 0, y: 1.65, z: 140, yaw: 0 },
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    assert.equal(player.health, 92);
+    assert.ok(server.rooms.has(roomId));
+  } finally {
+    for (const socket of sockets) socket.terminate();
+    await server.close();
+  }
+});
+
+test("monster kills award XP and coins that buy placeable models at the village market", async () => {
+  const server = createGameServer({ host: "127.0.0.1", port: 0, seed: 63 });
+  const sockets = [];
+  try {
+    const address = await server.listen();
+    const connection = connect(`ws://127.0.0.1:${address.port}/ws`);
+    sockets.push(connection.socket);
+    const lobby = nextMessage(connection.socket, (message) => message.type === "lobby");
+    await connection.opened;
+    await lobby;
+    const created = nextMessage(connection.socket, (message) => message.type === "room_created");
+    connection.socket.send(JSON.stringify({ type: "create_room", roomName: "Home Decor Test" }));
+    const roomId = (await created).room.id;
+    const started = nextMessage(connection.socket, (message) => message.type === "init");
+    connection.socket.send(JSON.stringify({ type: "start_room" }));
+    const init = await started;
+    const room = server.rooms.get(roomId);
+    const player = server.players.get(init.id);
+    const crab = room.monsters.get("monster-crab");
+    crab.x = 0;
+    crab.z = 2;
+    crab.targetX = 0;
+    crab.targetZ = 2;
+    crab.health = 20;
+    crab.lastAttackAt = Date.now();
+
+    const attackResult = nextMessage(connection.socket, (message) => message.type === "attack_result");
+    connection.socket.send(JSON.stringify({ type: "attack", targetId: crab.id }));
+    const attack = await attackResult;
+    assert.equal(attack.killed, true);
+    assert.deepEqual(attack.reward, {
+      xp: 50,
+      level: 0,
+      coins: 25,
+      xpGained: 50,
+      coinsGained: 25,
+    });
+    assert.equal(player.xp, 50);
+    assert.equal(player.coins, 25);
+
+    const model = MODEL_ITEM_BY_ID.get("model_plant_001");
+    const buyResult = nextMessage(connection.socket, (message) => message.type === "buy_result");
+    const balance = nextMessage(connection.socket, (message) => message.type === "currency");
+    const inventory = nextMessage(connection.socket, (message) => message.type === "inventory");
+    connection.socket.send(JSON.stringify({ type: "buy_model", item: model.id }));
+    assert.equal((await buyResult).item, model.id);
+    assert.equal((await balance).coins, 25 - model.price);
+    assert.equal((await inventory).items.find(([item]) => item === model.id)?.[1], 1);
+
+    const position = { x: -30, y: 100, z: -30 };
+    const placed = nextMessage(connection.socket, (message) => message.type === "block");
+    connection.socket.send(JSON.stringify({
+      type: "edit",
+      action: "place",
+      position,
+      block: model.id,
+    }));
+    assert.equal((await placed).block, model.id);
+    assert.equal(room.blockChanges.get(`${position.x},${position.y},${position.z}`), model.id);
+  } finally {
+    for (const socket of sockets) socket.terminate();
+    await server.close();
+  }
+});
+
+test("automatically saves started worlds without a manual save request", async () => {
+  const saveDirectory = mkdtempSync(join(tmpdir(), "voxland-autosave-"));
+  const server = createGameServer({
+    host: "127.0.0.1",
+    port: 0,
+    seed: 52,
+    saveDirectory,
+    autosaveIntervalMs: 30,
+  });
+  const sockets = [];
+  try {
+    const address = await server.listen();
+    const connection = connect(`ws://127.0.0.1:${address.port}/ws`);
+    sockets.push(connection.socket);
+    const lobby = nextMessage(connection.socket, (message) => message.type === "lobby");
+    await connection.opened;
+    await lobby;
+    const created = nextMessage(connection.socket, (message) => message.type === "room_created");
+    connection.socket.send(JSON.stringify({ type: "create_room", roomName: "Autosave Test" }));
+    const roomId = (await created).room.id;
+    const initial = nextMessage(connection.socket, (message) => message.type === "init");
+    connection.socket.send(JSON.stringify({ type: "start_room" }));
+    await initial;
+    const savePath = join(saveDirectory, `${roomId}.json`);
+    const deadline = Date.now() + 1000;
+    while (!existsSync(savePath) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    assert.equal(existsSync(savePath), true);
+    const savedWorld = JSON.parse(readFileSync(savePath, "utf8"));
+    assert.equal(savedWorld.id, roomId);
+    assert.equal(savedWorld.autosaveEnabled, true);
+  } finally {
+    for (const socket of sockets) socket.terminate();
+    await server.close();
+    rmSync(saveDirectory, { recursive: true, force: true });
+  }
+});
 
 test("generates seeded terrain and shares chunk edits with joining players", async () => {
   const server = createGameServer({ host: "127.0.0.1", port: 0, seed: 481516 });
@@ -164,13 +466,20 @@ test("generates seeded terrain and shares chunk edits with joining players", asy
     firstPlayer.send(JSON.stringify({ type: "teleport", locationId: "beach" }));
     const beachTeleport = await beachTeleportResult;
     assert.equal(beachTeleport.locationId, "beach");
-    assert.deepEqual(beachTeleport.position, { x: 0, z: 124, yaw: 0 });
+    assert.deepEqual(beachTeleport.position, { x: 0, y: 1.65, z: 124, yaw: 0 });
+    const crab = server.rooms.get(roomId).monsters.get("monster-crab");
+    crab.health = 20;
     const monsterAttack = nextMessage(firstPlayer, (message) => message.type === "attack_result");
     firstPlayer.send(JSON.stringify({ type: "attack", targetId: "monster-crab" }));
     const monsterHit = await monsterAttack;
     assert.equal(monsterHit.hit, true);
     assert.equal(monsterHit.monster, true);
-    assert.equal(monsterHit.health, 40);
+    assert.equal(monsterHit.health, 0);
+    assert.equal(monsterHit.killed, true);
+    assert.equal(monsterHit.reward.xpGained, 50);
+    assert.equal(monsterHit.reward.coinsGained, 25);
+    assert.equal(server.players.get(initial.id).xp, 52);
+    assert.equal(server.players.get(initial.id).coins, 25);
 
     const isolatedConnection = connect(url);
     const isolatedPlayer = isolatedConnection.socket;
@@ -241,7 +550,7 @@ test("rejoins an active world with player state after a disconnect", async () =>
     const restored = await resumedInit;
 
     assert.equal(restored.seed, 9876);
-    assert.deepEqual(restored.position, { x: 24, z: 37, yaw: 1.25 });
+    assert.deepEqual(restored.position, { x: 24, y: 1.65, z: 37, yaw: 1.25 });
     assert.equal(restored.inventory.find(([item]) => item === "oak_planks")[1], 7);
     assert.equal(server.rooms.get(roomId).members.size, 1);
   } finally {
@@ -443,7 +752,8 @@ test("fishing is limited to the harbor and awards fish with a cooldown", async (
     const inventory = nextMessage(connection.socket, (message) => message.type === "inventory");
     connection.socket.send(JSON.stringify({ type: "fish" }));
     assert.equal((await caught).caught, true);
-    assert.equal((await inventory).items.find(([item]) => item === "raw_fish")[1], 1);
+    const fishInventory = (await inventory).items;
+    assert.ok(fishInventory.some(([item, count]) => FISH_ITEMS.includes(item) && count === 1));
 
     const cooldown = nextMessage(connection.socket, (message) => message.type === "fish_result");
     connection.socket.send(JSON.stringify({ type: "fish" }));

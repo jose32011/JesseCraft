@@ -12,7 +12,6 @@ import {
   MAX_PLANET_CHUNK_X,
   MAX_PLANET_CHUNK_Z,
   MAX_WORLD_COORDINATE,
-  HARBOR_SEABED_Y,
   PLANET_MAX_X,
   PLANET_MAX_Z,
   PLANET_MIN_X,
@@ -24,6 +23,19 @@ import {
   terrainHeightAt,
   wrapPlanetX,
 } from "../server/world.js";
+import { MODEL_CATALOG, MODEL_ITEM_BY_ID } from "../shared/models.js";
+
+test("provides a thousand distinct procedural catalog models", () => {
+  assert.equal(MODEL_CATALOG.length, 1000);
+  assert.equal(MODEL_ITEM_BY_ID.size, 1000);
+  assert.equal(new Set(MODEL_CATALOG.map(({ id }) => id)).size, 1000);
+  assert.equal(new Set(MODEL_CATALOG.map(({ category }) => category)).size, 10);
+  for (const model of MODEL_CATALOG) {
+    assert.ok(model.name);
+    assert.ok(model.price > 0);
+    assert.equal(canEditBlock({ x: 20, y: 100, z: 20 }, model.id, "place", new Map(), 27), true);
+  }
+});
 
 test("generates repeatable terrain from a seed and varies terrain across seeds", () => {
   const first = [...createChunkBlocks(2, 1, 481516)].sort(([a], [b]) => a.localeCompare(b));
@@ -150,9 +162,20 @@ test("generates harbor water, a walkable pier, and a fishing boundary", () => {
   const oceanChunk = createChunkBlocks(10, 0, 12345);
   const dockChunk = createChunkBlocks(0, 8, 12345);
 
-  assert.equal(terrainHeightAt(160, 0, 12345), HARBOR_SEABED_Y);
+  const seabed = terrainHeightAt(160, 0, 12345);
+  const seabedSamples = [
+    [160, 0],
+    [164, 0],
+    [168, 0],
+    [172, 0],
+    [176, 0],
+    [180, 0],
+  ].map(([x, z]) => terrainHeightAt(x, z, 12345));
+  assert.ok(seabed >= -8 && seabed <= -2);
+  assert.ok(new Set(seabedSamples).size > 1);
   assert.equal(oceanChunk.get(blockKey(160, 0, 0)), "water");
-  assert.equal(oceanChunk.get(blockKey(160, -4, 0)), "sand");
+  assert.equal(oceanChunk.get(blockKey(160, seabed, 0)), "sand");
+  assert.equal(oceanChunk.get(blockKey(160, seabed + 1, 0)), "water");
   assert.equal([...oceanChunk.values()].some((type) => type === "oak_log" || type === "leaves"), false);
   assert.equal(dockChunk.get(blockKey(0, 0, 140)), "oak_planks");
   assert.equal(getBaseBlockAt(-17, 1, 132, 12345), "oak_log");

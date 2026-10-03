@@ -74,8 +74,12 @@
       <div class="toast" id="toast" role="status"></div>
 
       <section class="game-menu" id="game-menu" aria-label="World settings" hidden>
+        <button type="button" id="open-profile-button">Player profile</button>
         <button type="button" id="save-world-button">Save world</button>
         <button type="button" id="open-world-map-button">Open map</button>
+        <button type="button" id="open-shop-button">Village market</button>
+        <label class="game-menu-view-toggle"><input type="checkbox" id="autosave-toggle" checked /><span>Autosave every minute</span></label>
+        <label class="game-menu-view-toggle"><input type="checkbox" id="third-person-toggle" /><span>Show my character</span></label>
         <label class="game-menu-label" for="teleport-target">Teleport to player</label>
         <select id="teleport-target" aria-label="Choose a player to teleport to"><option value="">No other players</option></select>
         <button type="button" id="teleport-button" disabled>Teleport</button>
@@ -94,10 +98,30 @@
         <div class="world-map-legend"><span><i class="map-self-dot"></i>You</span><span><i></i>Players</span><span><i class="map-location-dot"></i>Locations</span></div>
       </section>
 
+      <dialog class="profile-dialog" id="profile-dialog" aria-labelledby="profile-title">
+        <header class="profile-heading">
+          <div><span class="eyebrow">PLAYER</span><h2 id="profile-title">Character profile</h2></div>
+          <button type="button" id="close-profile-button" aria-label="Close profile">×</button>
+        </header>
+        <label class="profile-field">Player name<input id="profile-name" maxlength="16" autocomplete="nickname" /></label>
+        <label class="profile-field profile-color-field">Character color<input id="profile-color" type="color" value="#7eaa80" /></label>
+        <section class="profile-stats" aria-label="Player statistics">
+          <h3>Statistics</h3>
+          <div><span>Blocks mined</span><strong id="profile-blocks-mined">0</strong></div>
+          <div><span>Blocks placed</span><strong id="profile-blocks-placed">0</strong></div>
+          <div><span>Items crafted</span><strong id="profile-items-crafted">0</strong></div>
+          <div><span>Creatures defeated</span><strong id="profile-creatures-defeated">0</strong></div>
+          <div><span>Worlds saved</span><strong id="profile-worlds-saved">0</strong></div>
+        </section>
+        <p class="profile-status" id="profile-status" role="status"></p>
+        <footer><button type="button" id="save-profile-button">Save profile</button></footer>
+      </dialog>
+
       <section class="help-card" id="help-card" aria-label="Game controls" hidden>
         <button class="close-help" id="close-help" aria-label="Close controls">×</button>
         <strong>Welcome to your world</strong>
         <p><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Space</kbd> jump · <kbd>F</kbd> punch · drag to look</p>
+        <p>While swimming: hold <kbd>Space</kbd> to rise or <kbd>Shift</kbd> to dive.</p>
         <p><kbd>R</kbd> fish from the harbor pier.</p>
         <p>Tap <b>Break</b> or click to mine · <b>Place</b> or right-click to build</p>
         <p><kbd>I</kbd> inventory · mine blocks to collect materials and open your bag to craft.</p>
@@ -124,6 +148,19 @@
         </div>
       </section>
 
+      <section class="shop-panel" id="shop-panel" aria-label="Village market" hidden>
+        <header class="shop-heading">
+          <div><span class="eyebrow">VILLAGE MARKET</span><h2>Model shop</h2></div>
+          <button type="button" id="close-shop-button" aria-label="Close market">×</button>
+        </header>
+        <p class="shop-hint">Buy a model, add it to your hotbar, then place it in your home. Visit the village to purchase.</p>
+        <strong class="shop-balance" id="shop-coins">Coins 0</strong>
+        <input id="shop-search" type="search" placeholder="Search 1,000 models" aria-label="Search models" />
+        <select id="shop-category" aria-label="Filter models by category"></select>
+        <div class="shop-items" id="shop-items"></div>
+        <p class="shop-notice" id="shop-notice" role="status"></p>
+      </section>
+
       <section class="hotbar" id="hotbar" aria-label="Choose a block"></section>
       <div class="mobile-crosshair" aria-hidden="true"><span></span><span></span></div>
       <div class="mobile-controls" aria-label="Touch controls">
@@ -137,6 +174,10 @@
           <button class="action-button attack-button" id="attack-button">Punch</button>
           <button class="action-button fish-button" id="fish-button">Fish</button>
         </div>
+      </div>
+      <div class="water-controls" id="water-controls" aria-label="Swimming controls" hidden>
+        <button type="button" id="water-rise-button" aria-label="Rise toward the surface">Rise</button>
+        <button type="button" id="water-dive-button" aria-label="Dive deeper">Dive</button>
       </div>
       <footer class="bottom-note">Created for my Son Jesse Parker<a href="README.md" target="_blank" rel="noreferrer"></a></footer>
     </main>

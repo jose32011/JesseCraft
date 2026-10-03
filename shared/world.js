@@ -1,3 +1,5 @@
+import { MODEL_ITEM_BY_ID } from "./models.js";
+
 export const BLOCK_TYPES = new Set([
   "grass",
   "dirt",
@@ -242,12 +244,19 @@ function noise2d(x, z, seed) {
   return top * (1 - sz) + bottom * sz;
 }
 
+export function harborSeabedAt(x, z, seed = 1) {
+  const radius = Math.hypot(wrapPlanetX(x), z);
+  const radialDepth = 3 + Math.round(smoothStep(CITY_BEACH_OUTER_RADIUS, HARBOR_WATER_OUTER_RADIUS, radius) * 3);
+  const channel = Math.round(noise2d(x * 0.055, z * 0.055, normalizeSeed(seed)) * 1.5);
+  return -Math.max(2, Math.min(8, radialDepth + channel));
+}
+
 export function terrainHeightAt(x, z, seed = 1) {
   x = wrapPlanetX(x);
   z = Math.max(PLANET_MIN_Z, Math.min(PLANET_MAX_Z, z));
   const distanceFromHarbor = Math.hypot(x, z);
   if (distanceFromHarbor <= CITY_BEACH_OUTER_RADIUS) return 0;
-  if (distanceFromHarbor <= HARBOR_WATER_OUTER_RADIUS) return HARBOR_SEABED_Y;
+  if (distanceFromHarbor <= HARBOR_WATER_OUTER_RADIUS) return harborSeabedAt(x, z, seed);
   const worldSeed = normalizeSeed(seed);
   const longitude = (x - PLANET_MIN_X + 0.5) / PLANET_LONGITUDE_BLOCKS * Math.PI * 2 - Math.PI;
   const latitude = (z - PLANET_MIN_Z + 0.5) / PLANET_LATITUDE_BLOCKS * Math.PI - Math.PI / 2;
@@ -366,13 +375,13 @@ function cityBlockAt(x, y, z, seed) {
   return cityColumnBlockAt(cityColumnAt(x, z, seed), y);
 }
 
-function harborBlockAt(x, y, z) {
+function harborBlockAt(x, y, z, seed = 1) {
   const walkway = Math.abs(x) <= 3 && z >= HARBOR_DOCK_MIN_Z && z <= 152;
   const pierEnd = Math.abs(x) <= 14 && z >= 150 && z <= HARBOR_DOCK_MAX_Z;
   const baitShackDeck = x >= -17 && x <= -6 && z >= 126 && z <= 138;
   if ((walkway || pierEnd || baitShackDeck) && y === 0) return "oak_planks";
 
-  if (walkway && (Math.abs(x) === 3 || (z % 7 === 0 && Math.abs(x) === 2)) && y >= HARBOR_SEABED_Y + 1 && y <= -1) {
+  if (walkway && (Math.abs(x) === 3 || (z % 7 === 0 && Math.abs(x) === 2)) && y > terrainHeightAt(x, z, seed) && y <= -1) {
     return "oak_log";
   }
 
@@ -458,12 +467,13 @@ export function getBaseBlockAt(x, y, z, seed = 1) {
   if (house) return house;
   const cityBlock = cityBlockAt(wrapPlanetX(x), y, z, normalizeSeed(seed));
   if (cityBlock) return cityBlock;
-  const harbor = harborBlockAt(x, y, z);
+  const harbor = harborBlockAt(x, y, z, seed);
   if (harbor) return harbor;
   const beach = Math.hypot(wrapPlanetX(x), z) > CITY_RADIUS && Math.hypot(wrapPlanetX(x), z) <= CITY_BEACH_OUTER_RADIUS;
   if (beach && y === 0) return "sand";
   const water = Math.hypot(wrapPlanetX(x), z);
-  if (water > CITY_BEACH_OUTER_RADIUS && water <= HARBOR_WATER_OUTER_RADIUS && y > HARBOR_SEABED_Y && y <= 0) {
+  const seabed = terrainHeightAt(x, z, seed);
+  if (water > CITY_BEACH_OUTER_RADIUS && water <= HARBOR_WATER_OUTER_RADIUS && y > seabed && y <= 0) {
     return "water";
   }
   if (x >= -2 && x <= 3 && y === 0 && z === 2) return "sand";
@@ -506,7 +516,7 @@ export function createChunkBlocks(chunkX, chunkZ, seed = 1) {
       }
       const waterDistance = Math.hypot(x, z);
       if (waterDistance > CITY_BEACH_OUTER_RADIUS && waterDistance <= HARBOR_WATER_OUTER_RADIUS) {
-        for (let y = HARBOR_SEABED_Y + 1; y <= 0; y += 1) {
+        for (let y = surface + 1; y <= 0; y += 1) {
           blocks.set(blockKey(x, y, z), "water");
         }
       }
@@ -555,8 +565,8 @@ export function createChunkBlocks(chunkX, chunkZ, seed = 1) {
 
   for (let x = Math.max(startX, -18); x < Math.min(startX + CHUNK_SIZE, 19); x += 1) {
     for (let z = Math.max(startZ, HARBOR_DOCK_MIN_Z); z < Math.min(startZ + CHUNK_SIZE, HARBOR_DOCK_MAX_Z + 1); z += 1) {
-      for (let y = HARBOR_SEABED_Y + 1; y <= 4; y += 1) {
-        const type = harborBlockAt(x, y, z);
+      for (let y = HARBOR_SEABED_Y - 5; y <= 4; y += 1) {
+        const type = harborBlockAt(x, y, z, seed);
         if (type) blocks.set(blockKey(x, y, z), type);
       }
     }
@@ -642,7 +652,7 @@ export function canEditBlock(position, type, action, blocks, seed = 1) {
   const key = blockKey(position.x, position.y, position.z);
   const current = blocks.has(key) ? blocks.get(key) : getBaseBlockAt(position.x, position.y, position.z, seed);
   if (action === "remove") return current !== null && position.y > BEDROCK_Y;
-  if (action === "place") return BLOCK_TYPES.has(type) && current === null;
+  if (action === "place") return (BLOCK_TYPES.has(type) || MODEL_ITEM_BY_ID.has(type)) && current === null;
   return false;
 }
 
