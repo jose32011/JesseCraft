@@ -98,7 +98,11 @@ const thirdPersonToggle = document.querySelector("#third-person-toggle");
 const flyToggle = document.querySelector("#fly-toggle");
 const flyButton = document.querySelector("#fly-button");
 const desktopFlyButton = document.querySelector("#desktop-fly-button");
+const flyUpButton = document.querySelector("#fly-up-button");
 const flyDownButton = document.querySelector("#fly-down-button");
+const tankAimLeftButton = document.querySelector("#tank-aim-left-button");
+const tankAimRightButton = document.querySelector("#tank-aim-right-button");
+const tankFireButton = document.querySelector("#tank-fire-button");
 const autosaveToggle = document.querySelector("#autosave-toggle");
 const profileDialog = document.querySelector("#profile-dialog");
 const profileNameInput = document.querySelector("#profile-name");
@@ -552,6 +556,7 @@ const state = {
   fishingCast: null,
   isFlying: false,
   flyVerticalDirection: 0,
+  tankTurretDirection: 0,
 };
 let lobbyRoom = null;
 let toastTimer;
@@ -574,7 +579,7 @@ function updateCamera() {
   const forward = north.multiplyScalar(Math.cos(look.yaw)).addScaledVector(east, -Math.sin(look.yaw));
   forward.multiplyScalar(Math.cos(look.pitch)).addScaledVector(up, Math.sin(look.pitch));
   camera.up.copy(up);
-  if (thirdPersonView) {
+  if (thirdPersonView || state.vehicleType === "tank") {
     const target = planetPointAt(playerPosition.x, playerPosition.y + 0.2, playerPosition.z);
     camera.position.set(target.x, target.y, target.z).addScaledVector(forward, -4.5).addScaledVector(up, 1.7);
     cameraRayOrigin.set(target.x, target.y, target.z);
@@ -2043,6 +2048,15 @@ function updateVehicleButton() {
   vehicleButton.setAttribute("aria-label", vehicleButton.textContent);
   attackButton.textContent = state.vehicleType === "tank" ? "Fire" : "Punch";
   attackButton.setAttribute("aria-label", state.vehicleType === "tank" ? "Fire tank cannon" : "Punch");
+  const canFlyVertically = state.isFlying || state.vehicleType === "plane";
+  flyUpButton.hidden = !canFlyVertically;
+  flyDownButton.hidden = !canFlyVertically;
+  flyButton.hidden = state.vehicleType === "plane";
+  desktopFlyButton.hidden = state.vehicleType === "plane";
+  tankAimLeftButton.hidden = state.vehicleType !== "tank";
+  tankAimRightButton.hidden = state.vehicleType !== "tank";
+  tankFireButton.hidden = state.vehicleType !== "tank";
+  attackButton.hidden = state.vehicleType === "tank";
 }
 
 function updateVehicles(current = []) {
@@ -2066,10 +2080,13 @@ function updateVehicles(current = []) {
 }
 
 function updateVehicleMesh(vehicle, mesh) {
-  const surfaceHeight = vehicle.y + 0.5;
+  const surfaceHeight = vehicle.y + 1.05;
   const point = planetPointAt(vehicle.x, surfaceHeight, vehicle.z);
   mesh.position.set(point.x, point.y, point.z);
   mesh.quaternion.copy(surfaceQuaternionAt(vehicle.x, vehicle.z, vehicle.yaw));
+  if (mesh.userData.turret) {
+    mesh.userData.turret.rotation.y = (vehicle.turretYaw ?? vehicle.yaw) - vehicle.yaw;
+  }
 }
 
 function animateVehicles(delta) {
@@ -2624,8 +2641,7 @@ function connect() {
       flyButton.textContent = state.isFlying ? "Land" : "Fly";
       desktopFlyButton.setAttribute("aria-pressed", String(state.isFlying));
       desktopFlyButton.textContent = state.isFlying ? "Land" : "Fly";
-      flyDownButton.hidden = !state.isFlying;
-      document.querySelector("#jump-button").textContent = state.isFlying ? "Up" : "Jump";
+      updateVehicleButton();
       notify(message.message);
     } else if (message.type === "vehicle_result") {
       state.vehicleId = message.vehicleId;
@@ -2646,7 +2662,6 @@ function connect() {
         desktopFlyButton.setAttribute("aria-pressed", "false");
         flyButton.textContent = "Fly";
         desktopFlyButton.textContent = "Fly";
-        flyDownButton.hidden = true;
       }
       updateVehicleButton();
       updateCamera();
@@ -2706,8 +2721,6 @@ function connect() {
       flyButton.textContent = state.isFlying ? "Land" : "Fly";
       desktopFlyButton.setAttribute("aria-pressed", String(state.isFlying));
       desktopFlyButton.textContent = state.isFlying ? "Land" : "Fly";
-      flyDownButton.hidden = !state.isFlying;
-      document.querySelector("#jump-button").textContent = state.isFlying ? "Up" : "Jump";
       autosaveToggle.checked = message.autosaveEnabled !== false;
       if (message.position) {
         playerPosition.x = message.position.x;
@@ -3439,9 +3452,11 @@ function targetBlock() {
 
 function findCombatTarget() {
   const tankCombat = state.vehicleType === "tank";
+  const tank = tankCombat ? state.vehicles.find(({ id }) => id === state.vehicleId) : null;
+  const aimYaw = tank?.turretYaw ?? tank?.yaw ?? look.yaw;
   const latitude = (playerPosition.z - PLANET_MIN_Z + 0.5) / PLANET_LATITUDE_BLOCKS * Math.PI - Math.PI / 2;
-  const forwardEast = -Math.sin(look.yaw);
-  const forwardNorth = Math.cos(look.yaw);
+  const forwardEast = -Math.sin(aimYaw);
+  const forwardNorth = Math.cos(aimYaw);
   let closest = null;
   let closestDistance = tankCombat ? 48 : 3.5;
   for (const candidate of [
@@ -3554,35 +3569,46 @@ function sendEdit(action) {
 document.querySelector("#break-button").addEventListener("click", () => sendEdit("remove"));
 document.querySelector("#place-button").addEventListener("click", () => sendEdit("place"));
 attackButton.addEventListener("click", attackPlayer);
+tankFireButton.addEventListener("click", attackPlayer);
 fishButton.addEventListener("click", fishAtHarbor);
 document.querySelector("#fish-menu-button").addEventListener("click", fishAtHarbor);
 respawnButton.addEventListener("click", () => sendLobbyMessage({ type: "respawn" }));
 document.querySelector("#jump-button").addEventListener("pointerdown", (event) => {
   event.preventDefault();
-  if (state.isFlying) {
-    state.flyVerticalDirection = 1;
-    event.currentTarget.setPointerCapture(event.pointerId);
-  } else {
-    jump();
-  }
+  jump();
 });
-function stopFlyingVertically() {
-  if (state.flyVerticalDirection > 0) state.flyVerticalDirection = 0;
+function bindFlightControl(button, direction) {
+  const release = () => {
+    if (state.flyVerticalDirection === direction) state.flyVerticalDirection = 0;
+  };
+  button.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    if (!state.isFlying && state.vehicleType !== "plane") return;
+    button.setPointerCapture(event.pointerId);
+    state.flyVerticalDirection = direction;
+  });
+  button.addEventListener("pointerup", release);
+  button.addEventListener("pointercancel", release);
+  button.addEventListener("lostpointercapture", release);
 }
-document.querySelector("#jump-button").addEventListener("pointerup", stopFlyingVertically);
-document.querySelector("#jump-button").addEventListener("pointercancel", stopFlyingVertically);
-flyDownButton.addEventListener("pointerdown", (event) => {
-  event.preventDefault();
-  if (!state.isFlying) return;
-  state.flyVerticalDirection = -1;
-  flyDownButton.setPointerCapture(event.pointerId);
-});
-flyDownButton.addEventListener("pointerup", () => {
-  if (state.flyVerticalDirection < 0) state.flyVerticalDirection = 0;
-});
-flyDownButton.addEventListener("pointercancel", () => {
-  if (state.flyVerticalDirection < 0) state.flyVerticalDirection = 0;
-});
+bindFlightControl(flyUpButton, 1);
+bindFlightControl(flyDownButton, -1);
+function bindTankTurretControl(button, direction) {
+  const release = () => {
+    if (state.tankTurretDirection === direction) state.tankTurretDirection = 0;
+  };
+  button.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    if (state.vehicleType !== "tank") return;
+    button.setPointerCapture(event.pointerId);
+    state.tankTurretDirection = direction;
+  });
+  button.addEventListener("pointerup", release);
+  button.addEventListener("pointercancel", release);
+  button.addEventListener("lostpointercapture", release);
+}
+bindTankTurretControl(tankAimLeftButton, 1);
+bindTankTurretControl(tankAimRightButton, -1);
 function bindSwimControl(button, direction) {
   const release = () => {
     if (state.swimDirection === direction) state.swimDirection = 0;
@@ -3621,6 +3647,21 @@ window.addEventListener("keydown", (event) => {
     if (state.isFlying || state.vehicleType === "plane") state.flyVerticalDirection = 1;
     else if (state.isSwimming) state.swimDirection = 1;
     else if (!state.vehicleId && !event.repeat) jump();
+    return;
+  }
+  if (event.code === "PageUp" && (state.isFlying || state.vehicleType === "plane")) {
+    event.preventDefault();
+    state.flyVerticalDirection = 1;
+    return;
+  }
+  if (event.code === "PageDown" && (state.isFlying || state.vehicleType === "plane")) {
+    event.preventDefault();
+    state.flyVerticalDirection = -1;
+    return;
+  }
+  if (state.vehicleType === "tank" && (event.code === "KeyZ" || event.code === "KeyC")) {
+    event.preventDefault();
+    state.tankTurretDirection = event.code === "KeyZ" ? 1 : -1;
     return;
   }
   if (
@@ -3664,12 +3705,16 @@ window.addEventListener("keyup", (event) => {
   if (event.code === "Space" || event.code === "ShiftLeft" || event.code === "ShiftRight") {
     state.flyVerticalDirection = 0;
   }
+  if (event.code === "PageUp" || event.code === "PageDown") state.flyVerticalDirection = 0;
+  if (event.code === "KeyZ" || event.code === "KeyC") state.tankTurretDirection = 0;
   if (event.code === "Space" || event.code === "ShiftLeft" || event.code === "ShiftRight") {
     state.swimDirection = 0;
   }
 });
 window.addEventListener("blur", () => {
   moveKeys.clear();
+  state.flyVerticalDirection = 0;
+  state.tankTurretDirection = 0;
   state.swimDirection = 0;
 });
 canvas.addEventListener("contextmenu", (event) => event.preventDefault());
@@ -4097,7 +4142,7 @@ function updateMovement(delta) {
     const nextY = THREE.MathUtils.clamp(
       playerPosition.y + state.flyVerticalDirection * 7 * delta,
       BEDROCK_Y + 2.65,
-      MAX_BUILD_HEIGHT + 2.65,
+      MAX_BUILD_HEIGHT + 2,
     );
     if (!playerOccupiesSolidBlock(playerPosition.x, playerPosition.z, nextY)) {
       playerPosition.y = nextY;
@@ -4141,10 +4186,23 @@ function updateMovement(delta) {
   }
 
   if (activeVehicle) {
+    const previousVehicleYaw = activeVehicle.yaw;
     activeVehicle.x = playerPosition.x;
     activeVehicle.y = playerPosition.y - 2.65;
     activeVehicle.z = playerPosition.z;
     activeVehicle.yaw = look.yaw;
+    if (activeVehicle.type === "tank") {
+      const turretYaw = activeVehicle.turretYaw ?? activeVehicle.yaw;
+      const hullTurn = Math.atan2(
+        Math.sin(activeVehicle.yaw - previousVehicleYaw),
+        Math.cos(activeVehicle.yaw - previousVehicleYaw),
+      );
+      const turretTurn = state.tankTurretDirection * 1.35 * delta;
+      activeVehicle.turretYaw = Math.atan2(
+        Math.sin(turretYaw + hullTurn + turretTurn),
+        Math.cos(turretYaw + hullTurn + turretTurn),
+      );
+    }
     const activeVehicleMesh = vehicleMeshes.get(activeVehicle.id);
     if (activeVehicleMesh) updateVehicleMesh(activeVehicle, activeVehicleMesh);
   }
@@ -4209,7 +4267,15 @@ function animate() {
     state.socket.send(
       JSON.stringify({
         type: "move",
-        position: { x: playerPosition.x, y: playerPosition.y, z: playerPosition.z, yaw: look.yaw },
+        position: {
+          x: playerPosition.x,
+          y: playerPosition.y,
+          z: playerPosition.z,
+          yaw: look.yaw,
+          ...(state.vehicleType === "tank"
+            ? { turretYaw: state.vehicles.find(({ id }) => id === state.vehicleId)?.turretYaw ?? look.yaw }
+            : {}),
+        },
       }),
     );
     state.lastSentAt = now;

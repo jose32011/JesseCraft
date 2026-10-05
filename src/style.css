@@ -1005,9 +1005,17 @@ kbd {
     color: #ffe7a6;
   }
 
+  .fly-up-button,
   .fly-down-button {
     border-color: rgba(130, 206, 255, 0.62);
     color: #d3efff;
+  }
+
+  .tank-aim-left-button,
+  .tank-aim-right-button {
+    border-color: rgba(181, 193, 147, 0.72);
+    background: rgba(57, 69, 48, 0.94);
+    color: #e2edc4;
   }
 
   .attack-button {
@@ -1016,6 +1024,13 @@ kbd {
     background: rgba(89, 43, 37, 0.94);
     color: #ffd2c6;
     box-shadow: 0 0 0 2px rgba(255, 132, 105, 0.16), 0 5px 15px rgba(17, 29, 24, 0.3);
+  }
+
+  .tank-fire-button {
+    min-width: 76px;
+    border-color: rgba(255, 132, 105, 0.72);
+    background: rgba(89, 43, 37, 0.94);
+    color: #ffd2c6;
   }
 
   .fish-button {

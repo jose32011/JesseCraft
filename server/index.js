@@ -135,6 +135,7 @@ function createVehicles(seed = 1) {
       y: terrainHeightAt(x, z, seed),
       z,
       yaw: 0,
+      turretYaw: 0,
       occupantId: null,
     },
   ]));
@@ -156,6 +157,9 @@ function restoreVehicles(savedVehicles, seed) {
       ...existing,
       ...savedVehicle,
       y: Number.isFinite(savedVehicle.y) ? savedVehicle.y : existing.y,
+      turretYaw: Number.isFinite(savedVehicle.turretYaw)
+        ? Math.atan2(Math.sin(savedVehicle.turretYaw), Math.cos(savedVehicle.turretYaw))
+        : Number.isFinite(savedVehicle.yaw) ? savedVehicle.yaw : existing.turretYaw,
       occupantId: null,
     });
   }
@@ -1432,7 +1436,10 @@ export function createGameServer({
         const east = wrapPlanetX(target.x - player.x) * Math.cos(latitude);
         const north = target.z - player.z;
         const distance = Math.hypot(east, north);
-        const facing = (east * -Math.sin(player.yaw) + north * Math.cos(player.yaw)) / Math.max(distance, 0.001);
+        const aimYaw = isTankAttack
+          ? vehicle.turretYaw ?? vehicle.yaw
+          : player.yaw;
+        const facing = (east * -Math.sin(aimYaw) + north * Math.cos(aimYaw)) / Math.max(distance, 0.001);
         if (distance > (isTankAttack ? TANK_ATTACK_RANGE : PLAYER_ATTACK_RANGE) || facing < 0.2) {
           writeJson(socket, {
             type: "attack_result",
@@ -1663,10 +1670,27 @@ export function createGameServer({
           : terrainHeightAt(player.x, player.z, room.seed) + 2.65;
         player.yaw = message.position.yaw;
         if (vehicle) {
+          const previousVehicleYaw = vehicle.yaw;
           vehicle.x = player.x;
           vehicle.y = player.y - 2.65;
           vehicle.z = player.z;
           vehicle.yaw = player.yaw;
+          if (vehicle.type === "tank" && Number.isFinite(message.position.turretYaw)) {
+            vehicle.turretYaw = Math.atan2(
+              Math.sin(message.position.turretYaw),
+              Math.cos(message.position.turretYaw),
+            );
+          } else if (vehicle.type === "tank") {
+            const turretYaw = vehicle.turretYaw ?? previousVehicleYaw;
+            const hullTurn = Math.atan2(
+              Math.sin(vehicle.yaw - previousVehicleYaw),
+              Math.cos(vehicle.yaw - previousVehicleYaw),
+            );
+            vehicle.turretYaw = Math.atan2(
+              Math.sin(turretYaw + hullTurn),
+              Math.cos(turretYaw + hullTurn),
+            );
+          }
         }
         broadcastToRoom(room, roomSnapshot(room));
         return;

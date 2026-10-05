@@ -303,6 +303,24 @@ test("tanks are drivable and their cannon requires a driver and a valid target",
     assert.equal((await entered).vehicleType, "tank");
     assert.equal(player.vehicleId, tank.id);
 
+    const turretAimedNorth = nextMessage(
+      connection.socket,
+      (message) => message.type === "snapshot" &&
+        message.vehicles?.some((vehicle) =>
+          vehicle.id === tank.id && Math.abs(vehicle.turretYaw) < 0.001),
+    );
+    connection.socket.send(JSON.stringify({
+      type: "move",
+      position: {
+        x: tank.x,
+        y: tank.y + 2.65,
+        z: tank.z,
+        yaw: Math.PI / 2,
+        turretYaw: 0,
+      },
+    }));
+    await turretAimedNorth;
+
     const fired = nextMessage(connection.socket, (message) => message.type === "attack_result");
     connection.socket.send(JSON.stringify({ type: "tank_fire", targetId: crab.id }));
     const result = await fired;
