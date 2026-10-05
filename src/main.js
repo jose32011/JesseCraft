@@ -2066,7 +2066,7 @@ function updateVehicles(current = []) {
 }
 
 function updateVehicleMesh(vehicle, mesh) {
-  const surfaceHeight = vehicle.y + (vehicle.type === "plane" ? 0.5 : 0.05);
+  const surfaceHeight = vehicle.y + 0.5;
   const point = planetPointAt(vehicle.x, surfaceHeight, vehicle.z);
   mesh.position.set(point.x, point.y, point.z);
   mesh.quaternion.copy(surfaceQuaternionAt(vehicle.x, vehicle.z, vehicle.yaw));
