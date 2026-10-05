@@ -58,6 +58,7 @@ const DEFAULT_PROFILE_STATS = {
 const PLAYER_ATTACK_DAMAGE = 20;
 const PLAYER_ATTACK_RANGE = 3.5;
 const PLAYER_ATTACK_COOLDOWN_MS = 650;
+const STARTING_COINS = 100;
 const TANK_ATTACK_RANGE = 48;
 const TANK_ATTACK_COOLDOWN_MS = 1800;
 const TANK_ATTACK_DAMAGE = 45;
@@ -1007,7 +1008,7 @@ export function createGameServer({
       health: MAX_PLAYER_HEALTH,
       xp: 0,
       level: 0,
-      coins: 0,
+      coins: STARTING_COINS,
       profileId: null,
       profileStats: { ...DEFAULT_PROFILE_STATS },
       lastAttackAt: 0,
@@ -1542,10 +1543,6 @@ export function createGameServer({
         const model = MODEL_ITEM_BY_ID.get(message.item);
         if (!model) {
           writeJson(socket, { type: "error", message: "That shop item is unavailable." });
-          return;
-        }
-        if (Math.hypot(wrapPlanetX(player.x), player.z) > 16) {
-          writeJson(socket, { type: "error", message: "Visit the village market to shop." });
           return;
         }
         if (room.mode !== "design" && player.coins < model.price) {

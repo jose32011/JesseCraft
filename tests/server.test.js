@@ -369,6 +369,7 @@ test("monster kills award XP and coins that buy placeable models at the village 
     const init = await started;
     const room = server.rooms.get(roomId);
     const player = server.players.get(init.id);
+    assert.equal(init.coins, 100);
     const crab = room.monsters.get("monster-crab");
     crab.x = 0;
     crab.z = 2;
@@ -384,20 +385,22 @@ test("monster kills award XP and coins that buy placeable models at the village 
     assert.deepEqual(attack.reward, {
       xp: 50,
       level: 0,
-      coins: 25,
+      coins: 125,
       xpGained: 50,
       coinsGained: 25,
     });
     assert.equal(player.xp, 50);
-    assert.equal(player.coins, 25);
+    assert.equal(player.coins, 125);
 
+    player.x = 40;
+    player.z = 40;
     const model = MODEL_ITEM_BY_ID.get("model_plant_001");
     const buyResult = nextMessage(connection.socket, (message) => message.type === "buy_result");
     const balance = nextMessage(connection.socket, (message) => message.type === "currency");
     const inventory = nextMessage(connection.socket, (message) => message.type === "inventory");
     connection.socket.send(JSON.stringify({ type: "buy_model", item: model.id }));
     assert.equal((await buyResult).item, model.id);
-    assert.equal((await balance).coins, 25 - model.price);
+    assert.equal((await balance).coins, 125 - model.price);
     assert.equal((await inventory).items.find(([item]) => item === model.id)?.[1], 1);
 
     const position = { x: -30, y: 100, z: -30 };
@@ -750,7 +753,7 @@ test("generates seeded terrain and shares chunk edits with joining players", asy
     assert.equal(monsterHit.reward.xpGained, 50);
     assert.equal(monsterHit.reward.coinsGained, 25);
     assert.equal(server.players.get(initial.id).xp, 52);
-    assert.equal(server.players.get(initial.id).coins, 25);
+    assert.equal(server.players.get(initial.id).coins, 125);
 
     crab.health = 60;
     server.players.get(initial.id).lastAttackAt = 0;

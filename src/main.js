@@ -2814,6 +2814,7 @@ function connect() {
       }
     } else if (message.type === "error") {
       if (profileDialog.open) profileStatus.textContent = message.message;
+      if (!shopPanel.hidden) shopNotice.textContent = message.message;
       if (resumeRequested) {
         localStorage.removeItem(activeRoomStorageKey);
         resumeRequested = false;
@@ -3098,20 +3099,14 @@ function renderInventory() {
       dropButton.textContent = "Drop 1";
       dropButton.setAttribute("aria-label", `Drop one ${itemName(id)}`);
       dropButton.addEventListener("click", () => sendInventoryAction({ type: "drop", item: id, count: 1 }));
-      const itemActions = [];
-      if (["wooden_sword", "stone_sword", "iron_sword", "steel_sword"].includes(id)) {
-        const equipButton = document.createElement("button");
-        equipButton.className = "drop-item";
-        equipButton.type = "button";
-        equipButton.textContent = state.selected === id ? "Equipped" : "Equip";
-        equipButton.disabled = state.selected === id;
-        equipButton.setAttribute("aria-label", `Equip ${itemName(id)}`);
-        equipButton.addEventListener("click", () => {
-          selectBlock(id);
-          notify(`${itemName(id)} equipped. Face an enemy and attack.`);
-        });
-        itemActions.push(equipButton);
-      }
+      const equipButton = document.createElement("button");
+      equipButton.className = "drop-item";
+      equipButton.type = "button";
+      equipButton.textContent = state.selected === id ? "Equipped" : "Equip";
+      equipButton.disabled = state.selected === id;
+      equipButton.setAttribute("aria-label", `Equip ${itemName(id)}`);
+      equipButton.addEventListener("click", () => equipInventoryItem(id));
+      const itemActions = [equipButton];
       if (FISH_TYPE_BY_ID.has(id)) {
         const sellButton = document.createElement("button");
         sellButton.className = "drop-item";
@@ -3257,10 +3252,8 @@ function renderShop() {
     (!category || (category === "imported" ? Boolean(model.assetKey) : model.category === category)) &&
     (!query || `${model.name} ${model.categoryLabel}`.toLowerCase().includes(query)),
   );
-  const atMarket = Math.hypot(wrapPlanetX(playerPosition.x), playerPosition.z) <= 16;
-  shopNotice.textContent = atMarket
-    ? `${filtered.length.toLocaleString()} models available. Imported assets are listed first. Choose one to decorate your home.`
-    : "Visit the village market near the world spawn to buy models.";
+  shopNotice.textContent =
+    `${filtered.length.toLocaleString()} models available anywhere. Balance: ${state.coins} coins. Earn coins by defeating monsters or selling fish.`;
   shopItems.replaceChildren();
   if (filtered.length === 0) {
     const empty = document.createElement("p");
@@ -3279,7 +3272,13 @@ function renderShop() {
     button.type = "button";
     const free = state.mode === "design";
     button.textContent = free ? "Add free" : `Buy · ${model.price}`;
-    button.disabled = !atMarket || (!free && state.coins < model.price);
+    const canAfford = free || state.coins >= model.price;
+    button.disabled = !canAfford;
+    button.title = !canAfford
+      ? `You need ${model.price} coins; your balance is ${state.coins}.`
+      : free
+        ? "Add this model to your inventory for free."
+        : `Buy for ${model.price} coins and add it to your inventory.`;
     button.addEventListener("click", () => {
       shopNotice.textContent = "Processing purchase…";
       sendInventoryAction({ type: "buy_model", item: model.id });
@@ -3292,6 +3291,32 @@ function renderShop() {
     more.className = "shop-notice";
     more.textContent = `Showing 100 of ${filtered.length.toLocaleString()} results. Search to narrow the list.`;
     shopItems.append(more);
+  }
+}
+
+function equipInventoryItem(item) {
+  if ((state.inventory.get(item) ?? 0) < 1) {
+    notify(`You do not have ${itemName(item)} to equip.`);
+    return;
+  }
+  const assignedIndex = hotbarItems.indexOf(item);
+  if (assignedIndex >= 0) {
+    selectBlock(item);
+    renderInventory();
+  } else {
+    const emptyIndex = hotbarItems.indexOf(null);
+    if (emptyIndex < 0) {
+      state.pendingHotbarItem = item;
+      renderInventory();
+      notify(`Hotbar full. Tap a hotbar slot to replace its item with ${itemName(item)}.`);
+      return;
+    }
+    assignHotbarSlot(emptyIndex, item, false);
+  }
+  if (["wooden_sword", "stone_sword", "iron_sword", "steel_sword"].includes(item)) {
+    notify(`${itemName(item)} equipped. Face an enemy and attack.`);
+  } else {
+    notify(`${itemName(item)} equipped in your hotbar.`);
   }
 }
 
@@ -3400,7 +3425,7 @@ function updateHotbar() {
   }
 }
 
-function assignHotbarSlot(index, item) {
+function assignHotbarSlot(index, item, notifyAssignment = true) {
   if (!blockChoiceById.has(item) && !MODEL_ITEM_BY_ID.has(item)) return;
   const existingIndex = hotbarItems.indexOf(item);
   if (existingIndex >= 0 && existingIndex !== index) {
@@ -3410,7 +3435,7 @@ function assignHotbarSlot(index, item) {
   state.pendingHotbarItem = null;
   updateHotbar();
   selectBlock(item);
-  notify(`${itemName(item)} assigned to slot ${index + 1}.`);
+  if (notifyAssignment) notify(`${itemName(item)} assigned to slot ${index + 1}.`);
   if (!inventoryPanel.hidden) renderInventory();
 }
 
