@@ -155,7 +155,38 @@ const MOD_PLANE_ASSET_FILES = [
   "stuntPlane",
 ];
 
+const QUATERNIUS_FURNITURE_ASSETS = [
+  "BedDouble",
+  "BedTwin",
+  "Bookcase_Books",
+  "Bookcase",
+  "Chair",
+  "Desk",
+  "NightStand",
+  "OfficeChair",
+  "Sofa",
+  "Sofa2",
+  "Stool",
+  "Table",
+];
+
+const QUATERNIUS_WEAPON_ASSETS = [
+  "Axe",
+  "Axe_Double",
+  "Bow_Golden",
+  "Bow_Wooden",
+  "Claymore",
+  "Dagger",
+  "Hammer_Small",
+  "Scythe",
+  "Spear",
+  "Sword",
+  "Sword_Golden",
+  "Shield_Round",
+];
+
 const humanizeModAssetName = (slug) => slug
+  .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
   .replace(/[-_]+/g, " ")
   .replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
 
@@ -181,6 +212,28 @@ const MOD_ASSET_CATALOG = [
     variant: index,
     assetKey: `mod-low-poly-plane/${slug}.fbx`,
     source: "Low Poly Plane Pack",
+  })),
+  ...QUATERNIUS_FURNITURE_ASSETS.map((slug, index) => ({
+    id: `quaternius_furniture_${slug.toLowerCase()}`,
+    name: humanizeModAssetName(slug),
+    category: "furniture",
+    categoryLabel: "Furniture",
+    color: index % 2 === 0 ? "#a96f48" : "#bd8a62",
+    price: 100 + (index % 4) * 15,
+    variant: index,
+    assetKey: `quaternius-furniture/${slug}.fbx`,
+    source: "Quaternius Ultimate Furniture Pack",
+  })),
+  ...QUATERNIUS_WEAPON_ASSETS.map((slug, index) => ({
+    id: `quaternius_weapon_${slug.toLowerCase()}`,
+    name: humanizeModAssetName(slug),
+    category: "weapon",
+    categoryLabel: "Weapons",
+    color: index % 2 === 0 ? "#c66c59" : "#927765",
+    price: 120 + (index % 4) * 20,
+    variant: index,
+    assetKey: `quaternius-medieval-weapons/${slug}.fbx`,
+    source: "Quaternius Modular Weapons Pack",
   })),
 ];
 

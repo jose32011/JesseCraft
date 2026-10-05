@@ -41,7 +41,7 @@ For local development, set `DATABASE_URL` in the shell before starting the serve
 - Item counts beyond 64 are split into separate 64-item stacks in the bag.
 - Drag an inventory item onto a hotbar slot to assign it. On touch screens, tap the inventory item, then tap a hotbar slot.
 - Craft planks from logs, glass from sand and stone, and campfires from logs and stone. Crafted/placeable blocks appear in the hotbar with their inventory counts.
-- New players start with 100 coins; defeating monsters awards 50 XP and 25 more coins. Open **World settings → Village market** anywhere to browse 1,000 procedural models, 40 supplied Block Bits models, 54 imported mod assets, and three Kenney blasters across furniture, plants, animals, monsters, dragons, armor, weapons, tools, crystals, and decor. Imported assets appear first in the market list and can be isolated with the **Imported assets** filter. Buy or add a model, equip it from your inventory to the hotbar, and place it in your world. The Kenney blasters can also be selected as held weapons.
+- New players start with 100 coins; defeating monsters awards 50 XP and 25 more coins. Open **World settings → Village market** anywhere to browse 1,000 procedural models, 40 supplied Block Bits models, 78 imported mod assets, and three Kenney blasters across furniture, plants, animals, monsters, dragons, armor, weapons, tools, crystals, and decor. Market entries include lazy-loaded 3D previews; imported assets appear first and can be isolated with the **Imported assets** filter. Buy or add a model, equip it from your inventory to the hotbar, and place it in your world. The Kenney blasters can also be selected as held weapons.
 - The harbor has a Kenney Pirate Kit ship and rowboat (CC0). New building, terrain, wood, and water textures from PixelTexturePack are applied to matching block materials; credit Jestan for those textures.
 - Open **World settings → Open map** and choose **Expand map** for a full-screen view. Select a location marker, then use **Teleport** to travel there.
 
@@ -71,4 +71,6 @@ In-game animals and fish use block-form meshes with species-specific colors and 
 The supplied Block Bits glTF models in `src/assets/Assets/gltf/` use the supplied texture atlas in `src/assets/Textures/`. No source or license metadata was included with those files; verify their redistribution terms before publishing the game or its assets.
 
 Three weapon models (blaster-a, blaster-b, and blaster-c) are from Kenney's [Blaster Kit](https://kenney.nl/assets/blaster-kit), licensed CC0 1.0. The pack's license is included at `src/assets/kenney-blaster-kit/License.txt`.
+
+The imported furniture and medieval weapons models in `src/assets/mods/quaternius-furniture/` and `src/assets/mods/quaternius-medieval-weapons/` are from Quaternius' [Ultimate Furniture Pack](https://quaternius.com/packs/ultimatefurniture.html) and [Modular Weapons Pack](https://quaternius.com/packs/medievalweapons.html), respectively. Both packs are licensed [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/).
 # JesseCraft

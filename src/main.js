@@ -149,6 +149,8 @@ const isCoarsePointer = window.matchMedia("(pointer: coarse)").matches;
 let healthHudHidden = localStorage.getItem("health-hud-visible") === "false";
 let lastSkyUpdateAt = 0;
 let lastUnderwaterUpdateAt = 0;
+let playerAttackTime = 0;
+const PLAYER_ATTACK_ANIMATION_DURATION = 0.38;
 
 function renderHealthHudVisibility() {
   healthHud.hidden = healthHudHidden;
@@ -365,6 +367,22 @@ cameraSword.position.set(0.38, -0.36, -0.72);
 cameraSword.rotation.set(-0.12, -0.2, 0.42);
 cameraSword.visible = false;
 camera.add(cameraSword);
+const cameraFist = new THREE.Group();
+const cameraFistSleeve = new THREE.Mesh(
+  new THREE.BoxGeometry(0.2, 0.37, 0.22),
+  new THREE.MeshLambertMaterial({ color: "#7eaa80" }),
+);
+cameraFistSleeve.position.y = -0.18;
+const cameraFistHand = new THREE.Mesh(
+  new THREE.BoxGeometry(0.23, 0.2, 0.24),
+  new THREE.MeshLambertMaterial({ color: "#ecd2b4" }),
+);
+cameraFistHand.position.set(0, -0.43, -0.025);
+cameraFist.add(cameraFistSleeve, cameraFistHand);
+cameraFist.position.set(0.34, -0.3, -0.68);
+cameraFist.rotation.set(-0.2, -0.16, 0.1);
+cameraFist.visible = false;
+camera.add(cameraFist);
 scene.add(camera);
 let rendererAvailable = true;
 let renderer;
@@ -480,6 +498,10 @@ const placedAssetModels = new Map();
 const placedAssetModelLoads = new Map();
 const placedAssetModelLoader = new GLTFLoader();
 const placedAssetFbxLoader = new FBXLoader();
+const modelPreviewImages = new Map();
+const modelPreviewLoads = new Map();
+let modelPreviewRenderer;
+let shopPreviewObserver;
 const assetModelFiles = new Map(
   Object.keys(blockBitsGltfSources).map((path) => [
     `block-bits/${path.split("/").at(-1).replace(/\.gltf$/, "")}`,
@@ -491,10 +513,14 @@ for (const path of Object.keys(kenneyBlasterUrls)) {
 }
 for (const path of Object.keys(modAssetUrls)) {
   const fileName = path.split("/").at(-1);
-  const assetKey = fileName.endsWith(".glb")
-    ? `mod-car-kit/${fileName}`
-    : `mod-low-poly-plane/${fileName}`;
-  assetModelFiles.set(assetKey, path);
+  const assetPrefix = path.includes("/quaternius-furniture/")
+    ? "quaternius-furniture"
+    : path.includes("/quaternius-medieval-weapons/")
+      ? "quaternius-medieval-weapons"
+      : fileName.endsWith(".glb")
+        ? "mod-car-kit"
+        : "mod-low-poly-plane";
+  assetModelFiles.set(`${assetPrefix}/${fileName}`, path);
 }
 const droppedItemMeshes = new Map();
 const marinePlantMeshes = [];
@@ -990,7 +1016,7 @@ function loadPlacedAssetModel(assetKey) {
   return loading;
 }
 
-function createPlacedAssetModel(model, x, y, z) {
+function createPlacedAssetModel(model, x, y, z, preview = false) {
   const assetScene = placedAssetModels.get(model.assetKey);
   if (!assetScene) {
     void loadPlacedAssetModel(model.assetKey);
@@ -1002,6 +1028,14 @@ function createPlacedAssetModel(model, x, y, z) {
   const bounds = new THREE.Box3().setFromObject(instance);
   const size = bounds.getSize(new THREE.Vector3());
   const center = bounds.getCenter(new THREE.Vector3());
+  if (preview) {
+    const scale = 0.9 / Math.max(size.x, size.y, size.z, 0.01);
+    instance.scale.setScalar(scale);
+    instance.position.set(-center.x * scale, -center.y * scale, -center.z * scale);
+    const group = new THREE.Group();
+    group.add(instance);
+    return group;
+  }
   const maximumHorizontalSize = Math.max(size.x, size.z, 0.01);
   const scale = Math.min(0.85 / maximumHorizontalSize, 1.8 / Math.max(size.y, 0.01));
   instance.scale.setScalar(scale);
@@ -1063,6 +1097,7 @@ function updateHeldAssetVisibility() {
 function updateHeldWeaponVisibility() {
   const isSword = ["wooden_sword", "stone_sword", "iron_sword", "steel_sword"].includes(state.selected);
   cameraSword.visible = isSword && !thirdPersonView;
+  cameraFist.visible = !isSword && !thirdPersonView && state.connected && !state.vehicleId;
   if (selfAvatar?.userData.sword) {
     selfAvatar.userData.sword.visible = isSword && thirdPersonView;
     if (isSword) {
@@ -1080,8 +1115,8 @@ function updateHeldWeaponVisibility() {
   }
 }
 
-function createPlacedModel(model, x, y, z) {
-  if (model.assetKey) return createPlacedAssetModel(model, x, y, z);
+function createPlacedModel(model, x, y, z, preview = false) {
+  if (model.assetKey) return createPlacedAssetModel(model, x, y, z, preview);
 
   const group = new THREE.Group();
   const color = new THREE.Color(model.color);
@@ -1095,9 +1130,11 @@ function createPlacedModel(model, x, y, z) {
     mesh.position.set(...position);
     mesh.scale.set(...scale);
     mesh.rotation.set(...rotation);
-    mesh.userData.blockCoordinates = [x, y, z];
     group.add(mesh);
-    modelTargetMeshes.push(mesh);
+    if (!preview) {
+      mesh.userData.blockCoordinates = [x, y, z];
+      modelTargetMeshes.push(mesh);
+    }
     return mesh;
   };
   const box = (material, position, scale, rotation) =>
@@ -1182,6 +1219,8 @@ function createPlacedModel(model, x, y, z) {
     box(primary, [0, 0.48, 0], [0.48, 0.48, 0.34]);
     sphere(accent, [0, 0.86, 0], [0.42, 0.4, 0.4]);
   }
+
+  if (preview) return group;
 
   const frame = planetFrameAt(x, z);
   const point = planetPointAt(x, y, z);
@@ -1515,8 +1554,8 @@ function makeAvatar(entity, isBot = false) {
   const legGeometry = new THREE.BoxGeometry(0.19, 0.48, 0.23);
   const bootGeometry = new THREE.BoxGeometry(0.2, 0.12, 0.25);
   const bootMaterial = new THREE.MeshLambertMaterial({ color: "#514d45" });
-  const leftArm = new THREE.Mesh(armGeometry, bodyMaterial);
-  const rightArm = new THREE.Mesh(armGeometry, bodyMaterial);
+  const leftArm = new THREE.Group();
+  const rightArm = new THREE.Group();
   const leftLeg = new THREE.Mesh(legGeometry, bodyMaterial);
   const rightLeg = new THREE.Mesh(legGeometry, bodyMaterial);
   const leftBoot = new THREE.Mesh(bootGeometry, bootMaterial);
@@ -1530,8 +1569,14 @@ function makeAvatar(entity, isBot = false) {
   headArmor.position.y = 1.55;
   headArmor.visible = false;
   const healthBar = avatarHealthBar(entity.health);
-  leftArm.position.set(-0.32, 0.8, 0);
-  rightArm.position.set(0.32, 0.8, 0);
+  leftArm.position.set(-0.32, 1.05, 0);
+  rightArm.position.set(0.32, 1.05, 0);
+  const leftArmMesh = new THREE.Mesh(armGeometry, bodyMaterial);
+  const rightArmMesh = new THREE.Mesh(armGeometry, bodyMaterial);
+  leftArmMesh.position.y = -0.275;
+  rightArmMesh.position.y = -0.275;
+  leftArm.add(leftArmMesh);
+  rightArm.add(rightArmMesh);
   leftLeg.position.set(-0.13, 0.26, 0);
   rightLeg.position.set(0.13, 0.26, 0);
   leftBoot.position.set(-0.13, 0.06, -0.015);
@@ -1554,23 +1599,23 @@ function makeAvatar(entity, isBot = false) {
   group.userData.headArmor = headArmor;
   if (!isBot && entity.id === state.id) {
     const fishingRod = createFishingRodModel();
-    fishingRod.position.set(0.36, 0.72, -0.18);
+    fishingRod.position.set(0.04, -0.33, -0.18);
     fishingRod.rotation.z = 0.45;
     fishingRod.scale.setScalar(0.68);
     fishingRod.visible = state.selected === "fishing_rod" && thirdPersonView;
-    group.add(fishingRod);
+    rightArm.add(fishingRod);
     group.userData.fishingRod = fishingRod;
     const assetWeapon = new THREE.Group();
-    assetWeapon.position.set(0.34, 0.68, -0.28);
+    assetWeapon.position.set(0.02, -0.37, -0.28);
     assetWeapon.rotation.set(0, Math.PI, 0.35);
     assetWeapon.visible = false;
-    group.add(assetWeapon);
+    rightArm.add(assetWeapon);
     group.userData.assetWeapon = assetWeapon;
     const sword = createSwordModel();
-    sword.position.set(0.36, 0.67, -0.2);
+    sword.position.set(0.04, -0.38, -0.2);
     sword.rotation.set(-0.1, Math.PI, 0.25);
     sword.visible = false;
-    group.add(sword);
+    rightArm.add(sword);
     group.userData.sword = sword;
   }
   group.userData.healthBar = healthBar;
@@ -1701,6 +1746,25 @@ function animateBots(delta) {
     bot.userData.leftArm.rotation.x = -stride * 0.7;
     bot.userData.rightArm.rotation.x = stride * 0.7;
   }
+}
+
+function animatePlayerAttack(delta) {
+  playerAttackTime = Math.max(0, playerAttackTime - delta);
+  const progress = 1 - playerAttackTime / PLAYER_ATTACK_ANIMATION_DURATION;
+  const strike = Math.sin(Math.PI * progress);
+  if (selfAvatar) {
+    selfAvatar.userData.gait += delta * (selfAvatar.userData.walking ? 10 : 2);
+    const stride = selfAvatar.userData.walking ? Math.sin(selfAvatar.userData.gait) * 0.55 : 0;
+    selfAvatar.userData.leftLeg.rotation.x = stride;
+    selfAvatar.userData.rightLeg.rotation.x = -stride;
+    selfAvatar.userData.leftArm.rotation.x = -stride * 0.7;
+    selfAvatar.userData.rightArm.rotation.x = stride * 0.7 + strike * 1.5;
+    selfAvatar.userData.rightArm.rotation.z = -strike * 0.32;
+  }
+  cameraFist.position.set(0.34 + strike * 0.05, -0.3 + strike * 0.04, -0.68 - strike * 0.34);
+  cameraFist.rotation.set(-0.2 + strike * 1.25, -0.16, 0.1 - strike * 0.12);
+  cameraSword.position.set(0.38 + strike * 0.1, -0.36 + strike * 0.08, -0.72 - strike * 0.12);
+  cameraSword.rotation.set(-0.12 - strike * 1.1, -0.2, 0.42 + strike * 0.65);
 }
 
 function makeAnimal(entity) {
@@ -2945,6 +3009,7 @@ thirdPersonToggle.addEventListener("change", () => {
   localStorage.setItem("camera-view-mode", thirdPersonView ? "third-person" : "first-person");
   updateFishingRodVisibility();
   updateHeldAssetVisibility();
+  updateHeldWeaponVisibility();
   updateCamera();
   updateLocalAvatar();
 });
@@ -3231,6 +3296,102 @@ function toggleInventory(open = inventoryPanel.hidden) {
 document.querySelector("#inventory-toggle").addEventListener("click", () => toggleInventory());
 document.querySelector("#close-inventory").addEventListener("click", () => toggleInventory(false));
 
+async function createModelPreviewImage(model) {
+  if (!modelPreviewRendererFailed && !modelPreviewRenderer) {
+    try {
+      modelPreviewRenderer = new THREE.WebGLRenderer({
+        alpha: true,
+        antialias: true,
+        preserveDrawingBuffer: true,
+        powerPreference: "low-power",
+      });
+      modelPreviewRenderer.setPixelRatio(1);
+      modelPreviewRenderer.setSize(96, 72, false);
+      modelPreviewRenderer.setClearColor(0x18251e, 0);
+    } catch (error) {
+      modelPreviewRendererFailed = true;
+      console.error("Unable to initialize model preview rendering.", error);
+      return null;
+    }
+  }
+  if (!modelPreviewRenderer) return null;
+
+  let modelObject;
+  if (model.assetKey) {
+    const assetScene = await loadPlacedAssetModel(model.assetKey);
+    if (!assetScene) return null;
+    modelObject = createPlacedAssetModel(model, 0, 0, 0, true);
+  } else {
+    modelObject = createPlacedModel(model, 0, 0, 0, true);
+  }
+  if (!modelObject) return null;
+
+  const bounds = new THREE.Box3().setFromObject(modelObject);
+  const center = bounds.getCenter(new THREE.Vector3());
+  const size = bounds.getSize(new THREE.Vector3());
+  const scale = 0.9 / Math.max(size.x, size.y, size.z, 0.01);
+  modelObject.scale.multiplyScalar(scale);
+  modelObject.position.set(-center.x * scale, -center.y * scale, -center.z * scale);
+
+  const previewScene = new THREE.Scene();
+  previewScene.add(modelObject);
+  previewScene.add(new THREE.HemisphereLight(0xffffff, 0x596451, 2));
+  const keyLight = new THREE.DirectionalLight(0xffffff, 2);
+  keyLight.position.set(-2, 3, 4);
+  previewScene.add(keyLight);
+  const fillLight = new THREE.DirectionalLight(0xb9d6ff, 0.8);
+  fillLight.position.set(3, 1, -2);
+  previewScene.add(fillLight);
+
+  const previewCamera = new THREE.PerspectiveCamera(32, 4 / 3, 0.01, 10);
+  previewCamera.position.set(1.8, 1.35, 2.4);
+  previewCamera.lookAt(0, 0, 0);
+  modelPreviewRenderer.render(previewScene, previewCamera);
+  const image = modelPreviewRenderer.domElement.toDataURL("image/png");
+
+  if (!model.assetKey) {
+    const geometries = new Set();
+    const materials = new Set();
+    modelObject.traverse((part) => {
+      if (!part.isMesh) return;
+      geometries.add(part.geometry);
+      for (const material of Array.isArray(part.material) ? part.material : [part.material]) {
+        materials.add(material);
+      }
+    });
+    for (const geometry of geometries) geometry.dispose();
+    for (const material of materials) material.dispose();
+  }
+  return image;
+}
+
+function requestModelPreview(model, previewImage) {
+  const cached = modelPreviewImages.get(model.id);
+  if (cached) {
+    previewImage.src = cached;
+    previewImage.closest(".shop-model-preview")?.classList.add("has-image");
+    return;
+  }
+
+  let loading = modelPreviewLoads.get(model.id);
+  if (!loading) {
+    loading = createModelPreviewImage(model);
+    modelPreviewLoads.set(model.id, loading);
+  }
+  void loading.then((image) => {
+    if (!image) return;
+    modelPreviewImages.set(model.id, image);
+    if (previewImage.isConnected && previewImage.dataset.modelId === model.id) {
+      previewImage.src = image;
+      previewImage.closest(".shop-model-preview")?.classList.add("has-image");
+    }
+  }).catch((error) => {
+    console.error(`Unable to render a market preview for "${model.name}".`, error);
+  }).finally(() => {
+    modelPreviewLoads.delete(model.id);
+  });
+}
+
 function renderShop() {
   renderHomeProperties();
   if (shopCategory.options.length === 0) {
@@ -3254,6 +3415,11 @@ function renderShop() {
   );
   shopNotice.textContent =
     `${filtered.length.toLocaleString()} models available anywhere. Balance: ${state.coins} coins. Earn coins by defeating monsters or selling fish.`;
+  if (shopPreviewObserver) {
+    for (const preview of shopItems.querySelectorAll(".shop-model-preview")) {
+      shopPreviewObserver.unobserve(preview);
+    }
+  }
   shopItems.replaceChildren();
   if (filtered.length === 0) {
     const empty = document.createElement("p");
@@ -3263,9 +3429,33 @@ function renderShop() {
     return;
   }
 
+  if (typeof IntersectionObserver !== "undefined" && !shopPreviewObserver) {
+    shopPreviewObserver = new IntersectionObserver((entries, observer) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        observer.unobserve(entry.target);
+        const model = MODEL_ITEM_BY_ID.get(entry.target.dataset.modelId);
+        const image = entry.target.querySelector("img");
+        if (model && image) requestModelPreview(model, image);
+      }
+    }, { root: shopItems, rootMargin: "80px" });
+  }
+
   for (const model of filtered.slice(0, 100)) {
     const row = document.createElement("div");
     row.className = "shop-item";
+    const preview = document.createElement("div");
+    preview.className = "shop-model-preview";
+    preview.dataset.modelId = model.id;
+    preview.style.setProperty("--preview-color", model.color);
+    const fallback = document.createElement("span");
+    fallback.textContent = model.categoryLabel;
+    const previewImage = document.createElement("img");
+    previewImage.alt = `${model.name} 3D model preview`;
+    previewImage.dataset.modelId = model.id;
+    preview.append(fallback, previewImage);
+    const details = document.createElement("div");
+    details.className = "shop-item-details";
     const name = document.createElement("span");
     name.textContent = `${model.name} · ${model.categoryLabel}`;
     const button = document.createElement("button");
@@ -3283,8 +3473,11 @@ function renderShop() {
       shopNotice.textContent = "Processing purchase…";
       sendInventoryAction({ type: "buy_model", item: model.id });
     });
-    row.append(name, button);
+    details.append(name);
+    row.append(preview, details, button);
     shopItems.append(row);
+    if (shopPreviewObserver) shopPreviewObserver.observe(preview);
+    else requestModelPreview(model, previewImage);
   }
   if (filtered.length > 100) {
     const more = document.createElement("p");
@@ -3503,13 +3696,15 @@ function findCombatTarget() {
 
 function attackPlayer() {
   if (!state.connected || state.health <= 0) return;
+  if (state.vehicleType === "tank") {
+    const target = findCombatTarget();
+    if (target) state.socket.send(JSON.stringify({ type: "tank_fire", targetId: target.id }));
+    return;
+  }
+  playerAttackTime = PLAYER_ATTACK_ANIMATION_DURATION;
   const target = findCombatTarget();
   if (!target) {
     notify("No enemy in reach. Face a nearby monster or player to attack.");
-    return;
-  }
-  if (state.vehicleType === "tank") {
-    state.socket.send(JSON.stringify({ type: "tank_fire", targetId: target.id }));
     return;
   }
   const weapon = ["wooden_sword", "stone_sword", "iron_sword", "steel_sword"].includes(state.selected)
@@ -4276,6 +4471,7 @@ function animate() {
   const delta = Math.min(clock.getDelta(), 0.05);
   pollGamepad(delta);
   updateMovement(delta);
+  animatePlayerAttack(delta);
   animateBots(delta);
   animateAnimals(delta);
   animateVehicles(delta);
