@@ -95,9 +95,99 @@ const BLASTER_CATALOG = ["a", "b", "c"].map((variant, index) => ({
   source: "Kenney Blaster Kit",
 }));
 
+const MOD_CAR_ASSET_FILES = [
+  "ambulance",
+  "box",
+  "cone-flat",
+  "cone",
+  "debris-bolt",
+  "debris-bumper",
+  "debris-door-window",
+  "debris-door",
+  "debris-drivetrain-axle",
+  "debris-drivetrain",
+  "debris-nut",
+  "debris-plate-a",
+  "debris-plate-b",
+  "debris-plate-small-a",
+  "debris-plate-small-b",
+  "debris-spoiler-a",
+  "debris-spoiler-b",
+  "debris-tire",
+  "delivery-flat",
+  "delivery",
+  "firetruck",
+  "garbage-truck",
+  "hatchback-sports",
+  "kart-oobi",
+  "kart-oodi",
+  "kart-ooli",
+  "kart-oopi",
+  "kart-oozi",
+  "police",
+  "race-future",
+  "race",
+  "sedan-sports",
+  "sedan",
+  "suv-luxury",
+  "suv",
+  "taxi",
+  "tractor-police",
+  "tractor-shovel",
+  "tractor",
+  "truck-flat",
+  "truck",
+  "van",
+  "wheel-dark",
+  "wheel-default",
+  "wheel-racing",
+  "wheel-tractor-back",
+  "wheel-tractor-dark-back",
+  "wheel-tractor-dark-front",
+  "wheel-tractor-front",
+  "wheel-truck",
+];
+
+const MOD_PLANE_ASSET_FILES = [
+  "basicPlane",
+  "biPlane",
+  "spaceShuttle",
+  "stuntPlane",
+];
+
+const humanizeModAssetName = (slug) => slug
+  .replace(/[-_]+/g, " ")
+  .replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
+
+const MOD_ASSET_CATALOG = [
+  ...MOD_CAR_ASSET_FILES.map((slug, index) => ({
+    id: `mod_car_${slug.replace(/[^a-z0-9]+/g, "_")}`,
+    name: humanizeModAssetName(slug),
+    category: "asset",
+    categoryLabel: "Imported assets",
+    color: index % 2 === 0 ? "#7d9485" : "#b7a777",
+    price: 55 + (index % 5) * 10,
+    variant: index,
+    assetKey: `mod-car-kit/${slug}.glb`,
+    source: "Kenney Car Kit",
+  })),
+  ...MOD_PLANE_ASSET_FILES.map((slug, index) => ({
+    id: `mod_plane_${slug.replace(/[^a-z0-9]+/g, "_")}`,
+    name: humanizeModAssetName(slug),
+    category: "asset",
+    categoryLabel: "Imported assets",
+    color: index % 2 === 0 ? "#b5c9d8" : "#d4b485",
+    price: 70 + (index % 4) * 12,
+    variant: index,
+    assetKey: `mod-low-poly-plane/${slug}.fbx`,
+    source: "Low Poly Plane Pack",
+  })),
+];
+
 export const MODEL_CATALOG = [
   ...BLOCK_BITS_CATALOG,
   ...BLASTER_CATALOG,
+  ...MOD_ASSET_CATALOG,
   ...PROCEDURAL_MODEL_CATALOG,
 ];
 

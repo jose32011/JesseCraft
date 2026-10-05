@@ -1,0 +1,217 @@
+{
+  "name": "MetaWorldOS Tank Battle 3D Asset Pack",
+  "version": "1.0.0",
+  "library": "https://metaworldos.com/en/game-assets/3d",
+  "assets": [
+    {
+      "filename": "models/tank-battle-wall-brick_ruined.glb",
+      "preview": null,
+      "name": "Wall Brick Ruined",
+      "license": "proprietary",
+      "author": null,
+      "sourceUrl": null,
+      "sizeBytes": 43445056,
+      "sourceId": "tank-battle-wall-brick_ruined"
+    },
+    {
+      "filename": "models/tank-battle-wall-brick_intact.glb",
+      "preview": null,
+      "name": "Wall Brick Intact",
+      "license": "proprietary",
+      "author": null,
+      "sourceUrl": null,
+      "sizeBytes": 45812196,
+      "sourceId": "tank-battle-wall-brick_intact"
+    },
+    {
+      "filename": "models/tank-battle-traffic-light.glb",
+      "preview": null,
+      "name": "Traffic Light",
+      "license": "proprietary",
+      "author": null,
+      "sourceUrl": null,
+      "sizeBytes": 39314136,
+      "sourceId": "tank-battle-traffic-light"
+    },
+    {
+      "filename": "models/tank-battle-tiger-1.glb",
+      "preview": null,
+      "name": "Tiger 1",
+      "license": "proprietary",
+      "author": null,
+      "sourceUrl": null,
+      "sizeBytes": 43616708,
+      "sourceId": "tank-battle-tiger-1"
+    },
+    {
+      "filename": "models/tank-battle-t-34.glb",
+      "preview": null,
+      "name": "T 34",
+      "license": "proprietary",
+      "author": null,
+      "sourceUrl": null,
+      "sizeBytes": 40521948,
+      "sourceId": "tank-battle-t-34"
+    },
+    {
+      "filename": "models/tank-battle-shipping-container_ruined.glb",
+      "preview": null,
+      "name": "Shipping Container Ruined",
+      "license": "proprietary",
+      "author": null,
+      "sourceUrl": null,
+      "sizeBytes": 38662192,
+      "sourceId": "tank-battle-shipping-container_ruined"
+    },
+    {
+      "filename": "models/tank-battle-shipping-container_intact.glb",
+      "preview": null,
+      "name": "Shipping Container Intact",
+      "license": "proprietary",
+      "author": null,
+      "sourceUrl": null,
+      "sizeBytes": 46490888,
+      "sourceId": "tank-battle-shipping-container_intact"
+    },
+    {
+      "filename": "models/tank-battle-sherman.glb",
+      "preview": null,
+      "name": "Sherman",
+      "license": "proprietary",
+      "author": null,
+      "sourceUrl": null,
+      "sizeBytes": 46615104,
+      "sourceId": "tank-battle-sherman"
+    },
+    {
+      "filename": "models/tank-battle-rubble-pile-b.glb",
+      "preview": null,
+      "name": "Rubble Pile B",
+      "license": "proprietary",
+      "author": null,
+      "sourceUrl": null,
+      "sizeBytes": 42422416,
+      "sourceId": "tank-battle-rubble-pile-b"
+    },
+    {
+      "filename": "models/tank-battle-rubble-pile-a.glb",
+      "preview": null,
+      "name": "Rubble Pile A",
+      "license": "proprietary",
+      "author": null,
+      "sourceUrl": null,
+      "sizeBytes": 46873472,
+      "sourceId": "tank-battle-rubble-pile-a"
+    },
+    {
+      "filename": "models/tank-battle-pillbox_ruined.glb",
+      "preview": null,
+      "name": "Pillbox Ruined",
+      "license": "proprietary",
+      "author": null,
+      "sourceUrl": null,
+      "sizeBytes": 33692336,
+      "sourceId": "tank-battle-pillbox_ruined"
+    },
+    {
+      "filename": "models/tank-battle-pillbox_intact.glb",
+      "preview": null,
+      "name": "Pillbox Intact",
+      "license": "proprietary",
+      "author": null,
+      "sourceUrl": null,
+      "sizeBytes": 43433168,
+      "sourceId": "tank-battle-pillbox_intact"
+    },
+    {
+      "filename": "models/tank-battle-panzer-iv.glb",
+      "preview": null,
+      "name": "Panzer Iv",
+      "license": "proprietary",
+      "author": null,
+      "sourceUrl": null,
+      "sizeBytes": 40143360,
+      "sourceId": "tank-battle-panzer-iv"
+    },
+    {
+      "filename": "models/tank-battle-panther.glb",
+      "preview": null,
+      "name": "Panther",
+      "license": "proprietary",
+      "author": null,
+      "sourceUrl": null,
+      "sizeBytes": 40993100,
+      "sourceId": "tank-battle-panther"
+    },
+    {
+      "filename": "models/tank-battle-lamppost.glb",
+      "preview": null,
+      "name": "Lamppost",
+      "license": "proprietary",
+      "author": null,
+      "sourceUrl": null,
+      "sizeBytes": 33157484,
+      "sourceId": "tank-battle-lamppost"
+    },
+    {
+      "filename": "models/tank-battle-is-2.glb",
+      "preview": null,
+      "name": "Is 2",
+      "license": "proprietary",
+      "author": null,
+      "sourceUrl": null,
+      "sizeBytes": 39932200,
+      "sourceId": "tank-battle-is-2"
+    },
+    {
+      "filename": "models/tank-battle-dumpster.glb",
+      "preview": null,
+      "name": "Dumpster",
+      "license": "proprietary",
+      "author": null,
+      "sourceUrl": null,
+      "sizeBytes": 39524352,
+      "sourceId": "tank-battle-dumpster"
+    },
+    {
+      "filename": "models/tank-battle-desert-mbt.glb",
+      "preview": null,
+      "name": "Desert Mbt",
+      "license": "proprietary",
+      "author": null,
+      "sourceUrl": null,
+      "sizeBytes": 42784528,
+      "sourceId": "tank-battle-desert-mbt"
+    },
+    {
+      "filename": "models/tank-battle-car-wreck_ruined.glb",
+      "preview": null,
+      "name": "Car Wreck Ruined",
+      "license": "proprietary",
+      "author": null,
+      "sourceUrl": null,
+      "sizeBytes": 39258252,
+      "sourceId": "tank-battle-car-wreck_ruined"
+    },
+    {
+      "filename": "models/tank-battle-car-wreck_intact.glb",
+      "preview": null,
+      "name": "Car Wreck Intact",
+      "license": "proprietary",
+      "author": null,
+      "sourceUrl": null,
+      "sizeBytes": 37233896,
+      "sourceId": "tank-battle-car-wreck_intact"
+    },
+    {
+      "filename": "models/tank-battle-barrel-fire.glb",
+      "preview": null,
+      "name": "Barrel Fire",
+      "license": "proprietary",
+      "author": null,
+      "sourceUrl": null,
+      "sizeBytes": 44657028,
+      "sourceId": "tank-battle-barrel-fire"
+    }
+  ]
+}

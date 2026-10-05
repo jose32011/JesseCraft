@@ -28,13 +28,15 @@ import {
 } from "../server/world.js";
 import { MODEL_CATALOG, MODEL_CATEGORIES_LIST, MODEL_ITEM_BY_ID } from "../shared/models.js";
 
-test("provides a thousand procedural models plus supplied and CC0 asset models", () => {
-  assert.equal(MODEL_CATALOG.length, 1043);
-  assert.equal(MODEL_ITEM_BY_ID.size, 1043);
-  assert.equal(new Set(MODEL_CATALOG.map(({ id }) => id)).size, 1043);
+test("provides a thousand procedural models plus supplied, CC0, and mod asset models", () => {
+  assert.equal(MODEL_CATALOG.length, 1097);
+  assert.equal(MODEL_ITEM_BY_ID.size, 1097);
+  assert.equal(new Set(MODEL_CATALOG.map(({ id }) => id)).size, 1097);
   assert.equal(new Set(MODEL_CATALOG.map(({ category }) => category)).size, 11);
   assert.equal(MODEL_CATALOG.filter(({ assetKey }) => assetKey?.startsWith("block-bits/")).length, 40);
   assert.equal(MODEL_CATALOG.filter(({ assetKey }) => assetKey?.startsWith("kenney-blaster-kit/")).length, 3);
+  assert.equal(MODEL_CATALOG.filter(({ assetKey }) => assetKey?.startsWith("mod-car-kit/")).length, 50);
+  assert.equal(MODEL_CATALOG.filter(({ assetKey }) => assetKey?.startsWith("mod-low-poly-plane/")).length, 4);
   assert.equal(MODEL_CATEGORIES_LIST[0].id, "imported");
   assert.ok(MODEL_CATALOG.slice(0, 43).every(({ assetKey }) => assetKey));
   for (const model of MODEL_CATALOG) {

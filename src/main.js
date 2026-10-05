@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import {
   BEDROCK_Y,
@@ -459,9 +460,22 @@ const kenneyBlasterUrls = import.meta.glob("./assets/kenney-blaster-kit/*.glb", 
   import: "default",
   eager: true,
 });
+const modAssetUrls = {
+  ...import.meta.glob("./assets/mods/**/*.glb", {
+    query: "?url",
+    import: "default",
+    eager: true,
+  }),
+  ...import.meta.glob("./assets/mods/**/*.fbx", {
+    query: "?url",
+    import: "default",
+    eager: true,
+  }),
+};
 const placedAssetModels = new Map();
 const placedAssetModelLoads = new Map();
 const placedAssetModelLoader = new GLTFLoader();
+const placedAssetFbxLoader = new FBXLoader();
 const assetModelFiles = new Map(
   Object.keys(blockBitsGltfSources).map((path) => [
     `block-bits/${path.split("/").at(-1).replace(/\.gltf$/, "")}`,
@@ -470,6 +484,13 @@ const assetModelFiles = new Map(
 );
 for (const path of Object.keys(kenneyBlasterUrls)) {
   assetModelFiles.set(`kenney-blaster-kit/${path.split("/").at(-1)}`, path);
+}
+for (const path of Object.keys(modAssetUrls)) {
+  const fileName = path.split("/").at(-1);
+  const assetKey = fileName.endsWith(".glb")
+    ? `mod-car-kit/${fileName}`
+    : `mod-low-poly-plane/${fileName}`;
+  assetModelFiles.set(assetKey, path);
 }
 const droppedItemMeshes = new Map();
 const marinePlantMeshes = [];
@@ -940,12 +961,13 @@ function loadPlacedAssetModel(assetKey) {
       const gltf = await placedAssetModelLoader.parseAsync(JSON.stringify(document), "");
       scene = gltf.scene;
     } else {
-      const url = kenneyBlasterUrls[sourcePath];
+      const url = modAssetUrls[sourcePath] ?? kenneyBlasterUrls[sourcePath];
       if (typeof url !== "string") {
-        throw new Error(`The Kenney model for ${assetKey} is unavailable.`);
+        throw new Error(`The model for ${assetKey} is unavailable.`);
       }
-      const gltf = await placedAssetModelLoader.loadAsync(url);
-      scene = gltf.scene;
+      const loader = sourcePath.endsWith(".fbx") ? placedAssetFbxLoader : placedAssetModelLoader;
+      const asset = await loader.loadAsync(url);
+      scene = asset.scene ?? asset;
     }
 
     placedAssetModels.set(assetKey, scene);
