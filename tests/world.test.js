@@ -8,6 +8,7 @@ import {
   canEditBlock,
   cityPropertyNear,
   createChunkBlocks,
+  findTravelRoute,
   getBaseBlockAt,
   isValidBlockPosition,
   MAX_PLANET_CHUNK_X,
@@ -19,8 +20,10 @@ import {
   PLANET_MIN_Z,
   PLANET_RADIUS,
   planetPointAt,
+  isNearBoatWorkshop,
   isNearHarbor,
   listCityProperties,
+  listCityShops,
   RECIPES,
   terrainHeightAt,
   wrapPlanetX,
@@ -60,6 +63,33 @@ test("generates repeatable terrain from a seed and varies terrain across seeds",
   assert.equal(terrainHeightAt(0, 0, 481516), 0);
 });
 
+test("generates seeded islands, ocean water, and connected landmark routes", () => {
+  const seed = 481516;
+  const island = terrainHeightAt(500, 52, seed);
+  const seaFloor = terrainHeightAt(700, 52, seed);
+  assert.ok(island > 0);
+  assert.ok(seaFloor <= -12 && seaFloor >= -20);
+  assert.equal(getBaseBlockAt(700, seaFloor + 1, 52, seed), "water");
+  assert.equal(getBaseBlockAt(700, seaFloor, 52, seed), "sand");
+  assert.equal(getBaseBlockAt(500, island, 52, seed), island <= 1 ? "sand" : "grass");
+  assert.ok(WORLD_LOCATIONS.some(({ id }) => id === "ember-village"));
+  assert.ok(WORLD_LOCATIONS.some(({ id }) => id === "verdant-dungeon"));
+  for (const id of ["ember-village", "storm-village", "verdant-village", "frost-village"]) {
+    const location = WORLD_LOCATIONS.find((entry) => entry.id === id);
+    assert.ok(terrainHeightAt(location.x, location.z, seed) > 0);
+  }
+  const islandChunk = createChunkBlocks(Math.floor(700 / 16), Math.floor(52 / 16), seed);
+  assert.equal(islandChunk.get(blockKey(700, seaFloor + 1, 52)), "water");
+  assert.equal(islandChunk.get(blockKey(700, seaFloor, 52)), "sand");
+  for (const [x, z] of [[94, 281], [-187, -262]]) {
+    const channelFloor = terrainHeightAt(x, z, seed);
+    assert.ok(channelFloor <= -12);
+    assert.equal(getBaseBlockAt(x, 0, z, seed), "water");
+    assert.equal(getBaseBlockAt(x, channelFloor, z, seed), "sand");
+  }
+  assert.ok(findTravelRoute("village", "frost-village"));
+});
+
 test("generates adjacent chunks within the finite planet", () => {
   const westernChunk = createChunkBlocks(-1, 0, 9);
   const easternChunk = createChunkBlocks(0, 0, 9);
@@ -67,7 +97,7 @@ test("generates adjacent chunks within the finite planet", () => {
   assert.ok(easternChunk.has(blockKey(0, 0, 0)));
   assert.equal(westernChunk.has(blockKey(0, 0, 0)), false);
   assert.equal(easternChunk.has(blockKey(-1, 0, 0)), false);
-  assert.equal(getBaseBlockAt(800, -1, -450, 9), "stone");
+  assert.equal(getBaseBlockAt(800, -1, -450, 9), "water");
   assert.equal(getBaseBlockAt(0, BEDROCK_Y, 0, 9), "stone");
   assert.throws(() => createChunkBlocks(MAX_PLANET_CHUNK_X + 1, 0, 9), RangeError);
   assert.throws(() => createChunkBlocks(0, MAX_PLANET_CHUNK_Z + 1, 9), RangeError);
@@ -174,6 +204,21 @@ test("generates city residences with floor plates, stair access, and entrance op
   assert.equal(getBaseBlockAt(property.x - 1, 2, property.z - 2, seed), "oak_planks");
   assert.equal(getBaseBlockAt(property.entranceX, 1, property.entranceZ + 1, seed), "oak_door");
   assert.equal(getBaseBlockAt(property.entranceX, 2, property.entranceZ + 1, seed), "oak_door");
+  const skyline = listCityProperties(seed).filter(({ height }) => height >= 46);
+  assert.ok(skyline.length > 0);
+  assert.ok(skyline.every(({ x, z, height }) => getBaseBlockAt(x, height + 5, z, seed) === "lantern"));
+});
+
+test("keeps shop signs outside storefront walls and returns city sign locations", () => {
+  const shops = listCityShops(12345);
+  assert.ok(shops.length >= 4);
+  assert.ok(shops.some(({ name }) => name === "MARKET"));
+  for (const shop of shops) {
+    const facade = getBaseBlockAt(shop.x, 5, shop.z + 1, 12345);
+    assert.ok(facade);
+    assert.notEqual(facade, "shop_sign");
+    assert.equal(shop.y, 5.8);
+  }
 });
 
 test("generates a named airport location with runway and terminal", () => {
@@ -228,6 +273,14 @@ test("generates harbor water, a walkable pier, and a fishing boundary", () => {
   assert.equal(oceanChunk.get(blockKey(160, seabed + 1, 0)), "water");
   assert.equal([...oceanChunk.values()].some((type) => type === "oak_log" || type === "leaves"), false);
   assert.equal(dockChunk.get(blockKey(0, 0, 140)), "oak_planks");
+  assert.equal(getBaseBlockAt(11, 1, 126, 12345), "oak_door");
+  assert.equal(getBaseBlockAt(11, 2, 126, 12345), "oak_door");
+  assert.equal(getBaseBlockAt(6, 2, 129, 12345), "glass");
+  assert.equal(getBaseBlockAt(11, 5, 132, 12345), "oak_planks");
+  assert.equal(isNearBoatWorkshop(11, 132), true);
+  assert.equal(isNearBoatWorkshop(11, 116), true);
+  assert.equal(isNearBoatWorkshop(11, 115), false);
+  assert.equal(isNearBoatWorkshop(80, 140), false);
   assert.equal(getBaseBlockAt(-17, 1, 132, 12345), "oak_log");
   assert.equal(isNearHarbor(0, 140), true);
   assert.equal(isNearHarbor(80, 140), false);

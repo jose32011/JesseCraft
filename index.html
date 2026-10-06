@@ -84,6 +84,7 @@
         <button type="button" id="save-world-button">Save world</button>
         <button type="button" id="open-world-map-button">Open map</button>
         <button type="button" id="open-shop-button">Village market</button>
+        <button type="button" id="open-boat-workshop-button">Boat workshop</button>
         <button type="button" id="go-home-button">Go to my home</button>
         <button type="button" id="toggle-health-hud-button" aria-pressed="false">Hide health &amp; XP bar</button>
         <label class="game-menu-view-toggle"><input type="checkbox" id="autosave-toggle" checked /><span>Autosave every minute</span></label>
@@ -152,12 +153,37 @@
         <footer><button type="button" id="save-profile-button">Save profile</button></footer>
       </dialog>
 
+      <dialog class="boat-workshop-dialog" id="boat-workshop-dialog" aria-labelledby="boat-workshop-title">
+        <header class="boat-workshop-heading">
+          <div><span class="eyebrow">HARBOR BOATYARD</span><h2 id="boat-workshop-title">Boat workshop</h2></div>
+          <button type="button" id="close-boat-workshop-button" aria-label="Close boat workshop">×</button>
+        </header>
+        <p class="boat-workshop-hint">Design a seaworthy boat, launch it at the pier, then board it with <kbd>E</kbd> or the Vehicle button. Use <kbd>W</kbd>/<kbd>S</kbd> to sail and <kbd>A</kbd>/<kbd>D</kbd> to steer.</p>
+        <canvas class="boat-design-preview" id="boat-design-preview" width="420" height="180" aria-label="Boat design preview"></canvas>
+        <form id="boat-workshop-form">
+          <label class="boat-design-field">Boat name<input name="name" maxlength="20" value="Sea Rover" autocomplete="off" /></label>
+          <label class="boat-design-field">Hull size<select name="size"><option value="skiff">Skiff · quick and nimble</option><option value="cutter" selected>Cutter · balanced explorer</option><option value="galleon">Galleon · large cargo boat</option></select></label>
+          <div class="boat-design-palette">
+            <label class="boat-design-field">Hull color<select name="hullColor"><option value="#765238">Walnut</option><option value="#a16c42">Oak</option><option value="#4b6173">Storm blue</option><option value="#7c3f3f">Red cedar</option><option value="#4d6949">Forest green</option></select></label>
+            <label class="boat-design-field">Sail color<select name="sailColor"><option value="#eee2c6">Canvas</option><option value="#b94a48">Crimson</option><option value="#426c83">Ocean blue</option><option value="#d4a84f">Gold</option><option value="#465348">Pine</option></select></label>
+          </div>
+          <label class="boat-design-field">Cabin windows<select name="windows"><option value="2">2 windows</option><option value="4" selected>4 windows</option><option value="6">6 windows</option></select></label>
+          <div class="boat-design-options">
+            <label><input name="cabin" type="checkbox" checked /> Cabin with a working doorway</label>
+            <label><input name="sail" type="checkbox" checked /> Add mast and sail</label>
+          </div>
+          <p class="boat-workshop-materials" id="boat-workshop-materials" role="status"></p>
+          <button class="boat-workshop-launch" type="submit">Build and launch boat</button>
+        </form>
+      </dialog>
+
       <section class="help-card" id="help-card" aria-label="Game controls" hidden>
         <button class="close-help" id="close-help" aria-label="Close controls">×</button>
         <strong>Welcome to your world</strong>
         <p><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Space</kbd> jump · <kbd>F</kbd> punch · drag to look</p>
         <p>While swimming: hold <kbd>Space</kbd> to rise or <kbd>Shift</kbd> to dive.</p>
         <p><kbd>R</kbd> fish from the harbor pier.</p>
+        <p>At the harbor Boat Workshop, design a skiff, cutter, or galleon. Board at the waterline with <kbd>E</kbd>, sail with <kbd>W</kbd>/<kbd>S</kbd>, and steer with <kbd>A</kbd>/<kbd>D</kbd>.</p>
         <p>Enable flight in world settings or tap <b>Fly</b>. Hold <kbd>Space</kbd> to rise and <kbd>Shift</kbd> to descend (<b>Up</b>/<b>Down</b> on touch).</p>
         <p>Tap <b>Break</b> or click to mine · <b>Place</b> or right-click to build</p>
         <p><kbd>I</kbd> inventory · mine blocks to collect materials and open your bag to craft.</p>

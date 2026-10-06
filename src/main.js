@@ -4,6 +4,7 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import {
   BEDROCK_Y,
   advancePlanetPosition,
+  BLOCK_TYPES,
   blockKey,
   canCraft,
   CHUNK_SIZE,
@@ -15,8 +16,10 @@ import {
   HARBOR_DOCK_MAX_Z,
   HARBOR_DOCK_MIN_Z,
   HARBOR_WATER_OUTER_RADIUS,
+  isNearBoatWorkshop,
   isNearHarbor,
   listCityProperties,
+  listCityShops,
   MAX_BUILD_HEIGHT,
   MAX_STACK_SIZE,
   MAX_PLANET_CHUNK_X,
@@ -59,6 +62,12 @@ import blueConcreteTextureUrl from "./assets/new/PixelTexturePack/Textures/Tech/
 import redConcreteTextureUrl from "./assets/blocks/own/red_concrete.png";
 import craftingTableTextureUrl from "./assets/blocks/vibes/table.png";
 import waterTextureUrl from "./assets/new/PixelTexturePack/Textures/Elements/WATER.png";
+import cityBrickTextureUrl from "./assets/new/ambientcg/Bricks060/Color.jpg";
+import cityPavingTextureUrl from "./assets/new/ambientcg/PavingStones036/Color.jpg";
+import furnitureWoodTextureUrl from "./assets/new/PixelTexturePack/Textures/Wood/WOODA.png";
+import metalTextureUrl from "./assets/new/PixelTexturePack/Textures/Industrial/METALTILE.png";
+import goldTextureUrl from "./assets/new/PixelTexturePack/Textures/Rocks/GOLDROCKS.png";
+import stoneTextureDetailUrl from "./assets/new/PixelTexturePack/Textures/Rocks/FLATSTONES.png";
 import blockBitsTextureUrl from "./assets/Textures/block_bits_texture.png?url";
 import pirateShipUrl from "./assets/new/eclair_pirate_ships_boats_11_cc0_native_glb_v1/Models/GLB format/ship-pirate-small.glb?url";
 import rowboatUrl from "./assets/new/eclair_pirate_ships_boats_11_cc0_native_glb_v1/Models/GLB format/boat-row-small.glb?url";
@@ -86,6 +95,11 @@ const startRoomButton = document.querySelector("#start-room-button");
 const gameMenu = document.querySelector("#game-menu");
 const gameMenuToggle = document.querySelector("#game-menu-toggle");
 const gameMenuStatus = document.querySelector("#game-menu-status");
+const boatWorkshopButton = document.querySelector("#open-boat-workshop-button");
+const boatWorkshopDialog = document.querySelector("#boat-workshop-dialog");
+const boatWorkshopForm = document.querySelector("#boat-workshop-form");
+const boatWorkshopPreview = document.querySelector("#boat-design-preview");
+const boatWorkshopMaterials = document.querySelector("#boat-workshop-materials");
 const shopPanel = document.querySelector("#shop-panel");
 const shopItems = document.querySelector("#shop-items");
 const shopCategory = document.querySelector("#shop-category");
@@ -175,7 +189,7 @@ if (!playerProfileId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-
   playerProfileId = createBrowserProfileId();
   localStorage.setItem("player-profile-id", playerProfileId);
 }
-let thirdPersonView = localStorage.getItem("camera-view-mode") === "third-person";
+let thirdPersonView = localStorage.getItem("camera-view-mode") !== "first-person";
 thirdPersonToggle.checked = thirdPersonView;
 document.documentElement.classList.toggle("first-person-view", !thirdPersonView);
 const activeRoomStorageKey = "active-room-id";
@@ -235,6 +249,153 @@ const textureLoader = new THREE.TextureLoader();
 const materials = new Map();
 const modelPlacementMeshes = [];
 const modelTargetMeshes = [];
+const cityShopSigns = [];
+const importedSurfaceTextures = new Map();
+let importedFabricTexture;
+const cityBrickTexture = textureLoader.load(cityBrickTextureUrl);
+cityBrickTexture.colorSpace = THREE.SRGBColorSpace;
+cityBrickTexture.wrapS = THREE.RepeatWrapping;
+cityBrickTexture.wrapT = THREE.RepeatWrapping;
+cityBrickTexture.magFilter = THREE.LinearFilter;
+cityBrickTexture.minFilter = THREE.LinearMipmapLinearFilter;
+cityBrickTexture.anisotropy = 4;
+const cityPavingTexture = textureLoader.load(cityPavingTextureUrl);
+cityPavingTexture.colorSpace = THREE.SRGBColorSpace;
+cityPavingTexture.wrapS = THREE.RepeatWrapping;
+cityPavingTexture.wrapT = THREE.RepeatWrapping;
+cityPavingTexture.magFilter = THREE.LinearFilter;
+cityPavingTexture.minFilter = THREE.LinearMipmapLinearFilter;
+cityPavingTexture.anisotropy = 4;
+
+function loadImportedSurfaceTexture(url) {
+  if (!importedSurfaceTextures.has(url)) {
+    importedSurfaceTextures.set(url, textureLoader.loadAsync(url).then((texture) => {
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.RepeatWrapping;
+      texture.magFilter = THREE.NearestFilter;
+      texture.minFilter = THREE.NearestMipmapNearestFilter;
+      return texture;
+    }));
+  }
+  return importedSurfaceTextures.get(url);
+}
+
+async function repairImportedFbxMaterials(scene) {
+  const updates = [];
+  scene.traverse((part) => {
+    if (!part.isMesh) return;
+    const hasMaterialArray = Array.isArray(part.material);
+    const sourceMaterials = hasMaterialArray ? part.material : [part.material];
+    const repairedMaterials = sourceMaterials.map((material) => {
+      const repaired = material.clone();
+      const name = material.name.toLowerCase();
+      let textureUrl = null;
+      let color = null;
+      if (name.includes("wood") || name.includes("leg")) {
+        textureUrl = furnitureWoodTextureUrl;
+        color = name.includes("dark") ? "#6a4931" : "#b18450";
+      } else if (name.includes("gold")) {
+        textureUrl = goldTextureUrl;
+        color = "#e0b849";
+      } else if (name.includes("steel") || name.includes("metal") || name.includes("grey")) {
+        textureUrl = metalTextureUrl;
+        color = name.includes("dark") ? "#687078" : "#c1c9d2";
+      } else if (name.includes("stone")) {
+        textureUrl = stoneTextureDetailUrl;
+        color = "#a9a69f";
+      } else {
+        textureUrl = null;
+        color = name.includes("mattress") || name.includes("pillow") ? "#eee4cf"
+          : name.includes("comforter") ? "#6482a0"
+            : name.includes("cush") ? "#bca88f"
+              : name.includes("cover") ? "#a44748"
+                : name.includes("page") ? "#d4c58f"
+                  : name.includes("sofa") ? "#6480a2"
+                    : name.includes("chair") ? "#486e9a"
+                      : name.includes("grey") ? "#aab1b6"
+                        : name.includes("black") ? "#34383d"
+                          : "#b2a393";
+      }
+      if (color) repaired.color.set(color);
+      repaired.opacity = 1;
+      repaired.transparent = false;
+      repaired.depthWrite = true;
+      if (textureUrl) {
+        updates.push(loadImportedSurfaceTexture(textureUrl).then((texture) => {
+          repaired.map = texture;
+          repaired.needsUpdate = true;
+        }));
+      } else {
+        repaired.map = importedFabricTexture ??= createFabricTexture();
+        repaired.needsUpdate = true;
+      }
+      return repaired;
+    });
+    part.material = hasMaterialArray ? repairedMaterials : repairedMaterials[0];
+  });
+  await Promise.all(updates);
+}
+
+function createFabricTexture() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 32;
+  canvas.height = 32;
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#e2ddd4";
+  context.fillRect(0, 0, 32, 32);
+  for (let y = 1; y < 32; y += 4) {
+    context.fillStyle = y % 8 === 1 ? "#cbc4b9" : "#f2eee7";
+    context.fillRect(0, y, 32, 1);
+  }
+  for (let x = 2; x < 32; x += 4) {
+    context.fillStyle = "#d5cec3";
+    context.fillRect(x, 0, 1, 32);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  return texture;
+}
+
+function createFallbackBlockTexture(itemId) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 16;
+  canvas.height = 16;
+  const context = canvas.getContext("2d");
+  const palettes = itemId.includes("copper") ? ["#73503f", "#c5794b", "#e1a176"]
+    : itemId.includes("gold") ? ["#74623c", "#d4ae4c", "#f3d676"]
+      : itemId.includes("silver") ? ["#606d73", "#aebac1", "#e0e5e7"]
+        : itemId.includes("iron") ? ["#625950", "#a79a8d", "#d0bca7"]
+          : itemId.includes("ruby") ? ["#5c303e", "#bd4f68", "#ef91a0"]
+            : itemId.includes("emerald") ? ["#285b4b", "#47a27b", "#a2d18c"]
+              : itemId.includes("coal") ? ["#272b2d", "#555b60", "#899095"]
+                : itemId.includes("wood") || itemId.includes("plank") ? ["#4b3427", "#9a6840", "#c89a60"]
+                    : itemId.includes("paper") || itemId === "map" ? ["#b39461", "#e8d39c", "#fff0c8"]
+                      : ["#444951", "#89939b", "#c7d0d4"];
+  context.fillStyle = palettes[0];
+  context.fillRect(0, 0, 16, 16);
+  for (let y = 0; y < 16; y += 1) {
+    for (let x = 0; x < 16; x += 1) {
+      const noise = (x * 17 + y * 31 + itemId.length * 13) % 11;
+      if (noise > 3) continue;
+      context.fillStyle = palettes[1 + (noise % 2)];
+      context.fillRect(x, y, 1 + (noise % 2), 1);
+    }
+  }
+  if (itemId.endsWith("_ore")) {
+    for (const [x, y] of [[3, 4], [10, 3], [7, 11], [13, 13]]) {
+      context.fillStyle = palettes[2];
+      context.fillRect(x, y, 2, 2);
+    }
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.magFilter = THREE.NearestFilter;
+  texture.minFilter = THREE.NearestFilter;
+  return texture;
+}
 
 function createFishTexture(color = "#91d8db") {
   const textureCanvas = document.createElement("canvas");
@@ -327,7 +488,9 @@ for (const [id, name, url] of blockChoices) {
           ? createFishTexture("#e4c15d")
           : id === "salmon"
             ? createFishTexture("#ff8a5b")
-            : createCampfireTexture();
+              : id === "campfire"
+                ? createCampfireTexture()
+                : createFallbackBlockTexture(id);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.magFilter = THREE.NearestFilter;
   texture.minFilter = THREE.NearestFilter;
@@ -342,6 +505,19 @@ for (const [id, name, url] of blockChoices) {
     }),
   );
 }
+for (const itemId of BLOCK_TYPES) {
+  if (materials.has(itemId)) continue;
+  const texture = createFallbackBlockTexture(itemId);
+  materials.set(itemId, new THREE.MeshLambertMaterial({ map: texture, side: THREE.DoubleSide }));
+}
+materials.get("brick").map = cityBrickTexture;
+materials.get("brick").needsUpdate = true;
+materials.get("white_concrete").map = cityBrickTexture;
+materials.get("white_concrete").color.set("#d9d6d0");
+materials.get("white_concrete").needsUpdate = true;
+materials.get("black_concrete").map = cityPavingTexture;
+materials.get("black_concrete").color.set("#90969a");
+materials.get("black_concrete").needsUpdate = true;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color("#a9d8ed");
@@ -452,7 +628,11 @@ const skyClouds = Array.from({ length: 7 }, (_, index) => {
 });
 
 const cubeGeometry = new THREE.BoxGeometry(1, 1, 1);
-const doorGeometry = new THREE.BoxGeometry(1, 1, 0.12);
+const doorGeometry = new THREE.BoxGeometry(1, 1, 1);
+const doorTrimMaterial = new THREE.MeshLambertMaterial({ color: "#4b2e1b" });
+const doorPanelMaterial = new THREE.MeshLambertMaterial({ color: "#95643a" });
+const doorInsetMaterial = new THREE.MeshLambertMaterial({ color: "#bd8a55" });
+const doorHandleMaterial = new THREE.MeshLambertMaterial({ color: "#e4bd67" });
 const waterSurfaceGeometry = new THREE.PlaneGeometry(1, 1);
 const waterSurfaceMaterial = new THREE.MeshLambertMaterial({
   color: "#5ca9c4",
@@ -494,13 +674,17 @@ const modAssetUrls = {
     eager: true,
   }),
 };
+const planeTextureUrls = import.meta.glob("./assets/mods/lowPolyPlanePack/**/*.png", {
+  query: "?url",
+  import: "default",
+  eager: true,
+});
 const placedAssetModels = new Map();
 const placedAssetModelLoads = new Map();
 const placedAssetModelLoader = new GLTFLoader();
 const placedAssetFbxLoader = new FBXLoader();
 const modelPreviewImages = new Map();
 const modelPreviewLoads = new Map();
-let modelPreviewRenderer;
 let shopPreviewObserver;
 const assetModelFiles = new Map(
   Object.keys(blockBitsGltfSources).map((path) => [
@@ -999,6 +1183,40 @@ function loadPlacedAssetModel(assetKey) {
       const loader = sourcePath.endsWith(".fbx") ? placedAssetFbxLoader : placedAssetModelLoader;
       const asset = await loader.loadAsync(url);
       scene = asset.scene ?? asset;
+      if (sourcePath.includes("/lowPolyPlanePack/")) {
+        const fileName = sourcePath.split("/").at(-1).replace(/\.fbx$/i, "");
+        const liveryName = {
+          basicPlane: "basicPlane.fbm/basicPlaneLivery1.png",
+          biPlane: "biPlane.fbm/BiPlaneLivery1.png",
+          spaceShuttle: "spaceShuttle.fbm/shuttleBaseColour.png",
+          stuntPlane: "stuntPlane.fbm/SPLivery1Diff.png",
+        }[fileName];
+        const textureUrl = liveryName
+          ? planeTextureUrls[`./assets/mods/lowPolyPlanePack/${liveryName}`]
+          : null;
+        if (typeof textureUrl !== "string") {
+          throw new Error(`The livery texture for ${fileName} is unavailable.`);
+        }
+        const texture = await textureLoader.loadAsync(textureUrl);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        scene.traverse((part) => {
+          if (!part.isMesh) return;
+          const hasMaterialArray = Array.isArray(part.material);
+          const sourceMaterials = hasMaterialArray ? part.material : [part.material];
+          const texturedMaterials = sourceMaterials.map((sourceMaterial) => {
+            const material = sourceMaterial.clone();
+            material.map = texture;
+            material.color.set("#ffffff");
+            material.needsUpdate = true;
+            return material;
+          });
+          part.material = hasMaterialArray ? texturedMaterials : texturedMaterials[0];
+        });
+      }
+    }
+
+    if (assetKey.startsWith("quaternius-furniture/") || assetKey.startsWith("quaternius-medieval-weapons/")) {
+      await repairImportedFbxMaterials(scene);
     }
 
     placedAssetModels.set(assetKey, scene);
@@ -1083,21 +1301,26 @@ function setHeldAssetModel(container, assetKey) {
 
 function updateHeldAssetVisibility() {
   const selectedModel = MODEL_ITEM_BY_ID.get(state.selected);
-  const assetKey = selectedModel?.assetKey?.startsWith("kenney-blaster-kit/")
+  const assetKey = selectedModel?.category === "weapon" && selectedModel.assetKey
     ? selectedModel.assetKey
     : null;
-  cameraAssetWeapon.visible = Boolean(assetKey && !thirdPersonView);
+  const isHeld = Boolean(assetKey && (state.inventory.get(state.selected) ?? 0) > 0);
+  cameraAssetWeapon.visible = Boolean(isHeld && !thirdPersonView);
   if (assetKey) setHeldAssetModel(cameraAssetWeapon, assetKey);
   if (selfAvatar?.userData.assetWeapon) {
-    selfAvatar.userData.assetWeapon.visible = Boolean(assetKey && thirdPersonView);
+    selfAvatar.userData.assetWeapon.visible = Boolean(isHeld && thirdPersonView);
     if (assetKey) setHeldAssetModel(selfAvatar.userData.assetWeapon, assetKey);
   }
 }
 
 function updateHeldWeaponVisibility() {
   const isSword = ["wooden_sword", "stone_sword", "iron_sword", "steel_sword"].includes(state.selected);
+  const selectedModel = MODEL_ITEM_BY_ID.get(state.selected);
+  const hasAssetWeapon = selectedModel?.category === "weapon"
+    && Boolean(selectedModel.assetKey)
+    && (state.inventory.get(state.selected) ?? 0) > 0;
   cameraSword.visible = isSword && !thirdPersonView;
-  cameraFist.visible = !isSword && !thirdPersonView && state.connected && !state.vehicleId;
+  cameraFist.visible = !isSword && !hasAssetWeapon && !thirdPersonView && state.connected && !state.vehicleId;
   if (selfAvatar?.userData.sword) {
     selfAvatar.userData.sword.visible = isSword && thirdPersonView;
     if (isSword) {
@@ -1242,7 +1465,100 @@ function createPlacedModel(model, x, y, z, preview = false) {
   return group;
 }
 
+function renderPublicBuildingFurniture(renderDistance, longitudeScale) {
+  const addFurniture = (x, floorY, z, kind) => {
+    let deltaX = wrapPlanetX(x - playerPosition.x);
+    if (deltaX > PLANET_LONGITUDE_BLOCKS / 2) deltaX -= PLANET_LONGITUDE_BLOCKS;
+    if (Math.hypot(deltaX * longitudeScale, z - playerPosition.z) > renderDistance) return;
+
+    const group = new THREE.Group();
+    const addPart = (color, position, dimensions) => {
+      const part = new THREE.Mesh(
+        new THREE.BoxGeometry(...dimensions),
+        new THREE.MeshLambertMaterial({ color }),
+      );
+      part.position.set(...position);
+      group.add(part);
+    };
+    if (kind === "bed") {
+      addPart("#553b2a", [0, 0.14, 0], [1.18, 0.2, 0.78]);
+      addPart("#e2d5bd", [0, 0.36, 0], [1.08, 0.24, 0.7]);
+      addPart("#9d4650", [0, 0.5, 0.17], [1.02, 0.08, 0.4]);
+      addPart("#f4ead5", [0, 0.53, -0.23], [0.46, 0.12, 0.38]);
+    } else {
+      const topColor = kind === "workbench" ? "#82532f" : "#9a7046";
+      addPart(topColor, [0, 0.76, 0], [1.12, 0.16, 0.76]);
+      for (const xSide of [-0.43, 0.43]) {
+        for (const zSide of [-0.27, 0.27]) {
+          addPart("#503823", [xSide, 0.39, zSide], [0.1, 0.74, 0.1]);
+        }
+      }
+      if (kind === "workbench") {
+        addPart("#aab2b3", [-0.2, 0.91, 0], [0.1, 0.14, 0.1]);
+        addPart("#d3a94f", [0.16, 0.9, 0.08], [0.34, 0.08, 0.08]);
+      } else {
+        for (const zSide of [-0.58, 0.58]) {
+          addPart("#704a2d", [0, 0.43, zSide], [0.64, 0.12, 0.38]);
+          addPart("#503823", [0, 0.22, zSide + (zSide < 0 ? -0.12 : 0.12)], [0.56, 0.42, 0.08]);
+        }
+      }
+    }
+
+    const frame = planetFrameAt(x, z);
+    const point = planetPointAt(x, floorY, z);
+    const orientation = new THREE.Matrix4().makeBasis(
+      new THREE.Vector3(frame.east.x, frame.east.y, frame.east.z),
+      new THREE.Vector3(frame.up.x, frame.up.y, frame.up.z),
+      new THREE.Vector3(-frame.north.x, -frame.north.y, -frame.north.z),
+    );
+    group.position.set(point.x, point.y, point.z);
+    group.quaternion.setFromRotationMatrix(orientation);
+    const blockRadius = PLANET_RADIUS + floorY;
+    group.scale.set(
+      Math.max(0.05, 2 * Math.cos(frame.latitude) * blockRadius * Math.tan(Math.PI / PLANET_LONGITUDE_BLOCKS)),
+      1,
+      2 * blockRadius * Math.tan(Math.PI / (2 * PLANET_LATITUDE_BLOCKS)),
+    );
+    scene.add(group);
+    modelPlacementMeshes.push(group);
+  };
+
+  addFurniture(4, 1, 4, "bed");
+  addFurniture(6, 1, 5, "table");
+  for (const location of WORLD_LOCATIONS) {
+    if (location.id === "boat-workshop") {
+      addFurniture(8, 1, 131, "workbench");
+      addFurniture(15, 1, 131, "workbench");
+      continue;
+    }
+    if (location.type !== "village") continue;
+    if (location.id !== "village" && ![
+      "ember-village", "storm-village", "verdant-village", "frost-village",
+    ].includes(location.id)) continue;
+    if (location.id === "village") continue;
+    const floorY = terrainHeightAt(location.x, location.z, state.seed) + 2;
+    addFurniture(location.x - 6, floorY, location.z - 5, "bed");
+    addFurniture(location.x + 6, floorY, location.z - 5, "table");
+  }
+}
+
 function renderWorld() {
+  for (const sign of cityShopSigns) {
+    scene.remove(sign);
+    sign.traverse((part) => {
+      part.geometry?.dispose();
+      if (Array.isArray(part.material)) {
+        for (const material of part.material) {
+          material.map?.dispose();
+          material.dispose();
+        }
+      } else if (part.material) {
+        part.material.map?.dispose();
+        part.material.dispose();
+      }
+    });
+  }
+  cityShopSigns.length = 0;
   for (const mesh of blockMeshes) {
     scene.remove(mesh);
   }
@@ -1345,34 +1661,53 @@ function renderWorld() {
     scene.add(mesh);
     blockMeshes.push(mesh);
   }
-  if (doorCoordinates.length > 0) {
-    const doorMesh = new THREE.InstancedMesh(doorGeometry, materials.get("oak_door"), doorCoordinates.length);
-    doorMesh.userData.coordinates = doorCoordinates;
-    doorMesh.userData.blockType = "oak_door";
-    for (let index = 0; index < doorCoordinates.length; index += 1) {
-      const [x, y, z] = doorCoordinates[index];
-      const frame = planetFrameAt(x, z);
-      const point = planetPointAt(x, y + 0.5, z);
-      east.set(frame.east.x, frame.east.y, frame.east.z);
-      up.set(frame.up.x, frame.up.y, frame.up.z);
-      westNorth.set(-frame.north.x, -frame.north.y, -frame.north.z);
-      basis.makeBasis(east, up, westNorth);
-      orientation.setFromRotationMatrix(basis);
-      const blockRadius = PLANET_RADIUS + y + 1;
-      scale.set(
-        Math.max(0.05, 2 * Math.cos(frame.latitude) * blockRadius * Math.tan(Math.PI / PLANET_LONGITUDE_BLOCKS)),
-        1,
-        2 * blockRadius * Math.tan(Math.PI / (2 * PLANET_LATITUDE_BLOCKS)),
-      );
-      matrix.position.set(point.x, point.y, point.z);
-      matrix.quaternion.copy(orientation);
-      matrix.scale.copy(scale);
-      matrix.updateMatrix();
-      doorMesh.setMatrixAt(index, matrix.matrix);
+  for (const [x, y, z] of doorCoordinates) {
+    if (worldBlocks.get(blockKey(x, y - 1, z)) === "oak_door") continue;
+    const height = worldBlocks.get(blockKey(x, y + 1, z)) === "oak_door" ? 2 : 1;
+    const frame = planetFrameAt(x, z);
+    const point = planetPointAt(x, y + height / 2, z);
+    const outward = new THREE.Vector3(-frame.north.x, -frame.north.y, -frame.north.z);
+    point.addScaledVector(outward, 0.07);
+    east.set(frame.east.x, frame.east.y, frame.east.z);
+    up.set(frame.up.x, frame.up.y, frame.up.z);
+    westNorth.set(-frame.north.x, -frame.north.y, -frame.north.z);
+    basis.makeBasis(east, up, westNorth);
+    orientation.setFromRotationMatrix(basis);
+    const blockRadius = PLANET_RADIUS + y + height / 2;
+    scale.set(
+      Math.max(0.05, 2 * Math.cos(frame.latitude) * blockRadius * Math.tan(Math.PI / PLANET_LONGITUDE_BLOCKS)),
+      1,
+      2 * blockRadius * Math.tan(Math.PI / (2 * PLANET_LATITUDE_BLOCKS)),
+    );
+    const door = new THREE.Group();
+    door.position.copy(point);
+    door.quaternion.copy(orientation);
+    door.scale.copy(scale);
+    const addDoorPart = (material, position, dimensions) => {
+      const part = new THREE.Mesh(doorGeometry, material);
+      part.position.set(...position);
+      part.scale.set(...dimensions);
+      part.userData.blockType = "oak_door";
+      part.userData.blockCoordinates = [x, y + (height === 2 && position[1] > 0 ? 1 : 0), z];
+      door.add(part);
+      blockMeshes.push(part);
+    };
+    const panelHeight = height === 2 ? 1.82 : 0.86;
+    addDoorPart(doorTrimMaterial, [-0.43, 0, 0], [0.09, height * 0.96, 0.12]);
+    addDoorPart(doorTrimMaterial, [0.43, 0, 0], [0.09, height * 0.96, 0.12]);
+    addDoorPart(doorTrimMaterial, [0, height * 0.46, 0], [0.95, 0.1, 0.12]);
+    addDoorPart(doorPanelMaterial, [0, 0, 0], [0.76, panelHeight, 0.09]);
+    if (height === 2) {
+      addDoorPart(doorInsetMaterial, [-0.2, 0.43, 0.052], [0.27, 0.58, 0.018]);
+      addDoorPart(doorInsetMaterial, [0.2, 0.43, 0.052], [0.27, 0.58, 0.018]);
+      addDoorPart(doorInsetMaterial, [-0.2, -0.42, 0.052], [0.27, 0.58, 0.018]);
+      addDoorPart(doorInsetMaterial, [0.2, -0.42, 0.052], [0.27, 0.58, 0.018]);
     }
-    scene.add(doorMesh);
-    blockMeshes.push(doorMesh);
+    addDoorPart(doorHandleMaterial, [0.26, 0, 0.11], [0.055, 0.12, 0.06]);
+    scene.add(door);
+    blockMeshes.push(door);
   }
+  renderPublicBuildingFurniture(renderDistance, longitudeScale);
   if (waterSurfaceCoordinates.length > 0) {
     const waterMesh = new THREE.InstancedMesh(
       waterSurfaceGeometry,
@@ -1404,6 +1739,56 @@ function renderWorld() {
     blockMeshes.push(waterMesh);
   }
   for (const [model, x, y, z] of placedModels) createPlacedModel(model, x, y, z);
+  for (const shop of listCityShops(state.seed)) {
+    let deltaX = wrapPlanetX(shop.x - playerPosition.x);
+    if (deltaX > PLANET_LONGITUDE_BLOCKS / 2) deltaX -= PLANET_LONGITUDE_BLOCKS;
+    if (Math.hypot(deltaX * longitudeScale, shop.z - playerPosition.z) > renderDistance) continue;
+    const signCanvas = document.createElement("canvas");
+    signCanvas.width = 384;
+    signCanvas.height = 128;
+    const context = signCanvas.getContext("2d");
+    context.fillStyle = "#302a25";
+    context.roundRect(4, 4, 376, 120, 20);
+    context.fill();
+    context.strokeStyle = "#e2b968";
+    context.lineWidth = 8;
+    context.roundRect(12, 12, 360, 104, 14);
+    context.stroke();
+    context.fillStyle = "#f2d794";
+    context.font = "bold 42px system-ui, sans-serif";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(shop.name, 192, 51, 330);
+    context.fillStyle = "#f5eee0";
+    context.font = "bold 19px system-ui, sans-serif";
+    context.fillText("OPEN DAILY  ·  CITY MARKET", 192, 91);
+    const texture = new THREE.CanvasTexture(signCanvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    const sign = new THREE.Group();
+    const frameMaterial = new THREE.MeshLambertMaterial({ color: "#302a25" });
+    const bracketMaterial = new THREE.MeshLambertMaterial({ color: "#b88a42" });
+    const board = new THREE.Mesh(new THREE.BoxGeometry(3.7, 1.2, 0.16), frameMaterial);
+    board.position.z = 0.05;
+    sign.add(board);
+    const signFace = new THREE.Mesh(new THREE.PlaneGeometry(3.48, 0.98), new THREE.MeshBasicMaterial({
+      map: texture,
+      transparent: true,
+      side: THREE.DoubleSide,
+      toneMapped: false,
+    }));
+    signFace.position.z = 0.14;
+    sign.add(signFace);
+    for (const side of [-1, 1]) {
+      const bracket = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 1.1), bracketMaterial);
+      bracket.position.set(side * 1.35, 0.28, -0.5);
+      sign.add(bracket);
+    }
+    const point = planetPointAt(shop.x, shop.y, shop.z);
+    sign.position.set(point.x, point.y, point.z);
+    sign.quaternion.copy(surfaceQuaternionAt(shop.x, shop.z));
+    scene.add(sign);
+    cityShopSigns.push(sign);
+  }
 }
 
 function scheduleWorldRender() {
@@ -1666,6 +2051,60 @@ function makeMonster(entity) {
     }
     addPart(new THREE.BoxGeometry(0.2, 0.055, 0.035), darkMaterial, [0, 0.46, -0.52], [1, 1, 1]);
     addPart(new THREE.SphereGeometry(0.16, 8, 6), shellMaterial, [0, 1.03, 0.05], [1.3, 0.5, 1]);
+  } else if (entity.species === "spider") {
+    addPart(new THREE.SphereGeometry(0.38, 10, 8), shellMaterial, [0, 0.52, 0.1], [1.45, 0.8, 1.3]);
+    addPart(new THREE.SphereGeometry(0.25, 10, 8), darkMaterial, [0, 0.56, -0.37], [1.1, 0.9, 0.9]);
+    for (const side of [-1, 1]) {
+      addPart(new THREE.SphereGeometry(0.065, 8, 6), eyeMaterial, [side * 0.12, 0.68, -0.57], [1, 1, 0.7]);
+      for (let leg = 0; leg < 4; leg += 1) {
+        const joint = addPart(new THREE.CylinderGeometry(0.035, 0.055, 0.62, 6), darkMaterial,
+          [side * (0.36 + leg * 0.025), 0.34, -0.38 + leg * 0.25], [1, 1, 1]);
+        joint.rotation.z = side * (0.85 - leg * 0.18);
+      }
+    }
+  } else if (entity.species === "golem") {
+    addPart(new THREE.BoxGeometry(0.92, 1.04, 0.72), shellMaterial, [0, 0.82, 0]);
+    addPart(new THREE.BoxGeometry(0.62, 0.58, 0.56), glowMaterial, [0, 1.57, -0.03]);
+    addPart(new THREE.BoxGeometry(0.32, 0.1, 0.06), eyeMaterial, [0, 1.61, -0.32]);
+    for (const side of [-1, 1]) {
+      addPart(new THREE.BoxGeometry(0.36, 0.82, 0.42), darkMaterial, [side * 0.61, 0.84, 0]);
+      addPart(new THREE.BoxGeometry(0.32, 0.52, 0.4), shellMaterial, [side * 0.29, 0.26, 0.02]);
+    }
+    addPart(new THREE.BoxGeometry(0.2, 0.42, 0.1), glowMaterial, [0, 0.92, -0.39]);
+  } else if (entity.species === "phantom") {
+    addPart(new THREE.SphereGeometry(0.42, 12, 9), glowMaterial, [0, 0.93, 0], [0.9, 1.2, 0.8]);
+    addPart(new THREE.SphereGeometry(0.27, 10, 8), shellMaterial, [0, 1.27, -0.1], [1, 0.8, 0.9]);
+    for (const side of [-1, 1]) {
+      const wing = addPart(new THREE.BoxGeometry(0.95, 0.08, 0.42), glowMaterial, [side * 0.62, 1.03, 0.12], [1, 1, 1]);
+      wing.rotation.z = side * -0.32;
+      addPart(new THREE.SphereGeometry(0.08, 8, 6), eyeMaterial, [side * 0.13, 1.32, -0.31], [1, 1, 0.7]);
+    }
+  } else if (entity.species === "skeleton") {
+    addPart(new THREE.BoxGeometry(0.44, 0.58, 0.3), shellMaterial, [0, 0.95, 0]);
+    addPart(new THREE.SphereGeometry(0.28, 10, 8), shellMaterial, [0, 1.52, -0.02]);
+    addPart(new THREE.BoxGeometry(0.3, 0.1, 0.07), eyeMaterial, [0, 1.55, -0.27]);
+    for (const ribY of [0.78, 0.94, 1.1]) {
+      addPart(new THREE.BoxGeometry(0.62, 0.07, 0.34), shellMaterial, [0, ribY, -0.02]);
+    }
+    for (const side of [-1, 1]) {
+      const arm = addPart(new THREE.CylinderGeometry(0.07, 0.08, 0.62, 6), shellMaterial, [side * 0.38, 0.98, 0]);
+      arm.rotation.z = side * 0.24;
+      addPart(new THREE.CylinderGeometry(0.08, 0.09, 0.68, 6), shellMaterial, [side * 0.18, 0.35, 0]);
+    }
+  } else if (entity.species === "warden" || entity.species === "boss") {
+    addPart(new THREE.BoxGeometry(0.9, 1.14, 0.7), shellMaterial, [0, 0.82, 0]);
+    addPart(new THREE.BoxGeometry(0.64, 0.62, 0.58), glowMaterial, [0, 1.62, -0.04]);
+    addPart(new THREE.BoxGeometry(0.38, 0.12, 0.08), eyeMaterial, [0, 1.66, -0.34]);
+    for (const side of [-1, 1]) {
+      addPart(new THREE.ConeGeometry(0.2, 0.48, 5), shellMaterial, [side * 0.43, 1.81, 0.06]);
+      addPart(new THREE.BoxGeometry(0.38, 0.86, 0.46), shellMaterial, [side * 0.62, 0.83, 0]);
+      addPart(new THREE.CylinderGeometry(0.1, 0.13, 0.62, 7), darkMaterial, [side * 0.28, 0.26, 0]);
+    }
+    if (entity.species === "boss") {
+      for (let spike = 0; spike < 5; spike += 1) {
+        addPart(new THREE.ConeGeometry(0.15, 0.42, 5), glowMaterial, [(spike - 2) * 0.18, 1.48, 0.33]);
+      }
+    }
   } else {
     addPart(new THREE.SphereGeometry(0.48, 12, 9), glowMaterial, [0, 0.87, 0], [0.85, 1.15, 0.85]);
     const wispTail = addPart(new THREE.ConeGeometry(0.42, 0.85, 8), glowMaterial, [0, 0.35, 0.08], [1, 1, 1]);
@@ -1676,7 +2115,11 @@ function makeMonster(entity) {
     }
   }
 
-  const labelColor = entity.species === "crab" ? "#ffd18b" : entity.species === "slime" ? "#caff9c" : "#a5f7ff";
+  const labelColors = {
+    crab: "#ffd18b", slime: "#caff9c", spider: "#f6b18d", golem: "#e7d3bc",
+    phantom: "#d8c8ff", skeleton: "#e6edf2", warden: "#b8f7e6", boss: "#ffcc8a",
+  };
+  const labelColor = labelColors[entity.species] ?? "#a5f7ff";
   group.add(avatarLabel(entity.name, labelColor));
   const healthBar = avatarHealthBar(entity.health);
   group.add(healthBar);
@@ -1765,6 +2208,8 @@ function animatePlayerAttack(delta) {
   cameraFist.rotation.set(-0.2 + strike * 1.25, -0.16, 0.1 - strike * 0.12);
   cameraSword.position.set(0.38 + strike * 0.1, -0.36 + strike * 0.08, -0.72 - strike * 0.12);
   cameraSword.rotation.set(-0.12 - strike * 1.1, -0.2, 0.42 + strike * 0.65);
+  cameraAssetWeapon.position.set(0.34 + strike * 0.1, -0.3 + strike * 0.06, -0.68 - strike * 0.2);
+  cameraAssetWeapon.rotation.set(-0.1 - strike * 1.1, -0.15, 0.1 + strike * 0.6);
 }
 
 function makeAnimal(entity) {
@@ -1805,6 +2250,18 @@ function makeAnimal(entity) {
           : [0.9, 0.66, 0.62];
   const bodyY = entity.model === "alpaca" ? 0.88 : entity.model === "horse" ? 0.8 : 0.72;
   const body = addBox(group, bodySize, [0, bodyY, 0], bodyMaterial);
+  const wings = [];
+  if (entity.model === "dragon") {
+    for (const side of [-1, 1]) {
+      const wing = new THREE.Group();
+      wing.position.set(side * 0.42, 0.98, 0.08);
+      const upper = addBox(wing, [1.24, 0.08, 0.12], [side * 0.48, 0, 0.18], accentMaterial);
+      upper.rotation.y = side * 0.2;
+      addBox(wing, [0.76, 0.07, 0.1], [side * 0.56, -0.02, -0.5], accentMaterial).rotation.y = side * 0.62;
+      group.add(wing);
+      wings.push(wing);
+    }
+  }
   const head = new THREE.Group();
   const headPosition = entity.model === "alpaca" ? [0, 1.22, -0.3]
     : entity.model === "cow" ? [0, 0.96, -0.48]
@@ -1870,6 +2327,8 @@ function makeAnimal(entity) {
   group.userData.legs = legs;
   group.userData.tail = tail;
   group.userData.body = body;
+  group.userData.wings = wings;
+  group.userData.flying = Boolean(entity.flying);
   group.userData.bodyBaseY = bodyY;
   group.userData.gait = Math.random() * Math.PI * 2;
   group.userData.walking = Boolean(entity.walking);
@@ -1926,10 +2385,19 @@ function makeFish(entity) {
   return group;
 }
 
+function isAircraftType(type) {
+  return type === "plane" || type === "jet";
+}
+
 function makeVehicle(vehicle) {
   const group = new THREE.Group();
-  const paint = new THREE.MeshLambertMaterial({ color: vehicle.type === "plane" ? "#e9eee8" : "#c84e3f" });
-  const trim = new THREE.MeshLambertMaterial({ color: "#343c40" });
+  const design = vehicle.design ?? {};
+  const paint = new THREE.MeshLambertMaterial({
+    color: vehicle.type === "boat"
+      ? design.hullColor ?? "#765238"
+      : vehicle.color ?? (vehicle.type === "plane" || vehicle.type === "jet" ? "#e9eee8" : "#c84e3f"),
+  });
+  const trim = new THREE.MeshLambertMaterial({ color: vehicle.accent ?? "#343c40" });
   const glass = new THREE.MeshLambertMaterial({
     color: "#83c9dc",
     transparent: true,
@@ -1942,7 +2410,160 @@ function makeVehicle(vehicle) {
     return mesh;
   };
 
-  if (vehicle.type === "plane") {
+  if (vehicle.type === "boat") {
+    const dimensions = design.size === "galleon"
+      ? { width: 3.8, length: 7.2 }
+      : design.size === "skiff" ? { width: 1.8, length: 3.6 } : { width: 2.8, length: 5.4 };
+    const { width, length } = dimensions;
+    const hullShape = new THREE.Shape();
+    hullShape.moveTo(-width * 0.42, length * 0.35);
+    hullShape.lineTo(-width * 0.3, -length * 0.27);
+    hullShape.lineTo(0, -length * 0.5);
+    hullShape.lineTo(width * 0.3, -length * 0.27);
+    hullShape.lineTo(width * 0.42, length * 0.35);
+    hullShape.lineTo(width * 0.28, length * 0.5);
+    hullShape.lineTo(-width * 0.28, length * 0.5);
+    hullShape.closePath();
+    const hull = new THREE.Mesh(
+      new THREE.ExtrudeGeometry(hullShape, { depth: 0.42, bevelEnabled: false }),
+      paint,
+    );
+    hull.rotation.x = Math.PI / 2;
+    hull.position.y = 0.78;
+    group.add(hull);
+    const deck = new THREE.Mesh(
+      new THREE.ShapeGeometry(hullShape),
+      new THREE.MeshLambertMaterial({ color: "#bd9b70" }),
+    );
+    deck.rotation.x = -Math.PI / 2;
+    deck.position.y = 0.78;
+    group.add(deck);
+    const boatTrim = new THREE.MeshLambertMaterial({ color: "#e0bd7c" });
+    const cabinMaterial = new THREE.MeshLambertMaterial({ color: design.hullColor ?? "#765238" });
+    const windowMaterial = new THREE.MeshLambertMaterial({
+      color: "#7dd7e8",
+      emissive: "#153941",
+      transparent: true,
+      opacity: 0.86,
+    });
+    const addBoatBox = (size, position, material = boatTrim) => addBox(size, position, material);
+    const railHeight = 1.02;
+    for (const side of [-1, 1]) {
+      addBoatBox([0.09, 0.23, length * 0.64], [side * width * 0.37, railHeight, length * 0.12]);
+    }
+    if (design.cabin !== false) {
+      const cabinWidth = Math.min(width * 0.62, 1.75);
+      const cabinLength = Math.min(length * 0.4, 1.7);
+      const cabinY = 1.2;
+      const windowCount = design.windows ?? 4;
+      const panesPerSide = Math.max(1, Math.ceil(windowCount / 2));
+      for (const side of [-1, 1]) {
+        addBoatBox([0.12, 0.24, cabinLength], [side * cabinWidth / 2, cabinY - 0.24, 0.25], cabinMaterial);
+        addBoatBox([0.12, 0.12, cabinLength], [side * cabinWidth / 2, cabinY + 0.3, 0.25], cabinMaterial);
+        for (let index = 0; index < panesPerSide; index += 1) {
+          const z = 0.25 - cabinLength * 0.27 + index * (cabinLength * 0.54 / Math.max(1, panesPerSide - 1));
+          addBoatBox([0.025, 0.25, 0.28], [side * (cabinWidth / 2 + 0.066), cabinY + 0.025, z], windowMaterial);
+          addBoatBox([0.04, 0.045, 0.34], [side * (cabinWidth / 2 + 0.09), cabinY - 0.11, z], boatTrim);
+          addBoatBox([0.04, 0.045, 0.34], [side * (cabinWidth / 2 + 0.09), cabinY + 0.16, z], boatTrim);
+        }
+        for (let index = 0; index <= panesPerSide; index += 1) {
+          const z = 0.25 - cabinLength * 0.42 + index * (cabinLength * 0.84 / panesPerSide);
+          addBoatBox([0.045, 0.48, 0.07], [side * (cabinWidth / 2 + 0.09), cabinY, z], cabinMaterial);
+        }
+      }
+      const front = 0.25 - cabinLength / 2;
+      addBoatBox([cabinWidth, 0.72, 0.12], [0, cabinY, front], cabinMaterial);
+      if (design.size === "galleon") {
+        for (let index = 0; index < 3; index += 1) {
+          addBoatBox([0.58, 0.46, 0.48], [index === 1 ? 0 : index === 0 ? -0.72 : 0.72, 1.02, length * 0.27], cabinMaterial);
+        }
+      }
+      const doorwayWidth = cabinWidth * 0.42;
+      const rear = 0.25 + cabinLength / 2;
+      addBoatBox([(cabinWidth - doorwayWidth) / 2, 0.72, 0.12], [-(cabinWidth + doorwayWidth) / 4, cabinY, rear], cabinMaterial);
+      addBoatBox([(cabinWidth - doorwayWidth) / 2, 0.72, 0.12], [(cabinWidth + doorwayWidth) / 4, cabinY, rear], cabinMaterial);
+      addBoatBox([doorwayWidth, 0.12, 0.12], [0, cabinY + 0.3, rear], cabinMaterial);
+      const door = addBoatBox([doorwayWidth * 0.72, 0.61, 0.055], [0, cabinY - 0.055, rear - 0.045], paint);
+      addBoatBox([0.045, 0.045, 0.025], [doorwayWidth * 0.18, cabinY - 0.08, rear - 0.08], boatTrim);
+      door.userData.isBoatDoor = true;
+      addBoatBox([cabinWidth + 0.25, 0.12, cabinLength + 0.3], [0, cabinY + 0.42, 0.25], boatTrim);
+    }
+    if (design.sail !== false) {
+      const mast = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.06, 0.08, length * 0.58, 7),
+        boatTrim,
+      );
+      mast.position.set(0, 1.25 + length * 0.29, -length * 0.22);
+      group.add(mast);
+      const sail = new THREE.Mesh(
+        new THREE.PlaneGeometry(width * 0.8, length * 0.42),
+        new THREE.MeshLambertMaterial({
+          color: design.sailColor ?? "#eee2c6",
+          side: THREE.DoubleSide,
+        }),
+      );
+      sail.position.set(0, 1.35 + length * 0.27, -length * 0.22);
+      group.add(sail);
+      addBoatBox([width * 0.95, 0.08, 0.08], [0, 1.25 + length * 0.49, -length * 0.22], boatTrim);
+    }
+    group.add(avatarLabel(design.name ?? "Sea Rover", "#fff0d0"));
+  } else if (vehicle.type === "jet") {
+    const metal = new THREE.MeshLambertMaterial({ color: "#8998a2", metalness: 0.35 });
+    const darkMetal = new THREE.MeshLambertMaterial({ color: "#424c54", metalness: 0.25 });
+    const engineGlow = new THREE.MeshBasicMaterial({ color: "#8ce5ff" });
+    const fuselage = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.34, 4.7, 8), paint);
+    fuselage.rotation.x = Math.PI / 2;
+    fuselage.position.set(0, 0.56, -0.1);
+    group.add(fuselage);
+    const nose = new THREE.Mesh(new THREE.ConeGeometry(0.19, 1.25, 8), metal);
+    nose.rotation.x = -Math.PI / 2;
+    nose.position.set(0, 0.56, -3.05);
+    group.add(nose);
+    const wingShape = new THREE.Shape();
+    wingShape.moveTo(-0.32, -0.4);
+    wingShape.lineTo(-2.45, 1.65);
+    wingShape.lineTo(-2.72, 1.88);
+    wingShape.lineTo(-2.53, 2.08);
+    wingShape.lineTo(-0.42, 0.92);
+    wingShape.lineTo(0.42, 0.92);
+    wingShape.lineTo(2.53, 2.08);
+    wingShape.lineTo(2.72, 1.88);
+    wingShape.lineTo(2.45, 1.65);
+    wingShape.lineTo(0.32, -0.4);
+    wingShape.closePath();
+    const wings = new THREE.Mesh(new THREE.ShapeGeometry(wingShape), paint);
+    wings.rotation.x = -Math.PI / 2;
+    wings.position.y = 0.61;
+    group.add(wings);
+    addBox([0.16, 0.08, 3.25], [0, 0.62, 0.15], metal);
+    addBox([1.4, 0.1, 0.68], [0, 0.88, 1.68], paint);
+    for (const side of [-1, 1]) {
+      addBox([0.28, 0.12, 1.25], [side * 1.22, 0.42, 0.92], darkMetal);
+      const missile = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.92, 7), metal);
+      missile.rotation.x = Math.PI / 2;
+      missile.position.set(side * 1.25, 0.38, -0.28);
+      group.add(missile);
+      const engine = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.25, 0.55, 10), darkMetal);
+      engine.rotation.x = Math.PI / 2;
+      engine.position.set(side * 0.38, 0.48, 1.95);
+      group.add(engine);
+      const exhaust = new THREE.Mesh(new THREE.CircleGeometry(0.15, 10), engineGlow);
+      exhaust.position.set(side * 0.38, 0.48, 2.24);
+      group.add(exhaust);
+    }
+    const canopy = new THREE.Mesh(
+      new THREE.SphereGeometry(0.36, 10, 8, 0, Math.PI * 2, 0, Math.PI / 2),
+      glass,
+    );
+    canopy.scale.set(0.8, 1, 1.5);
+    canopy.rotation.x = Math.PI / 2;
+    canopy.position.set(0, 0.83, -0.95);
+    group.add(canopy);
+    group.userData.jetExhausts = [];
+    group.traverse((part) => {
+      if (part.material === engineGlow) group.userData.jetExhausts.push(part);
+    });
+  } else if (vehicle.type === "plane") {
     addBox([0.62, 0.58, 3.2], [0, 0.48, 0], paint);
     addBox([4.6, 0.12, 0.82], [0, 0.58, 0.14], paint);
     addBox([1.6, 0.1, 0.58], [0, 1.05, 1.18], paint);
@@ -1956,11 +2577,11 @@ function makeVehicle(vehicle) {
     group.userData.propeller = propeller;
   } else {
     if (vehicle.type === "tank") {
-      const hull = new THREE.MeshLambertMaterial({ color: "#687a45" });
-      const armor = new THREE.MeshLambertMaterial({ color: "#829458" });
+      const hull = new THREE.MeshLambertMaterial({ color: vehicle.color ?? "#687a45" });
+      const armor = new THREE.MeshLambertMaterial({ color: vehicle.accent ?? "#829458" });
       const darkMetal = new THREE.MeshLambertMaterial({ color: "#303735" });
       const track = new THREE.MeshLambertMaterial({ color: "#252c2b" });
-      const detail = new THREE.MeshLambertMaterial({ color: "#b18b4b" });
+      const detail = new THREE.MeshLambertMaterial({ color: vehicle.accent ?? "#b18b4b" });
       addBox([2.15, 0.62, 3.5], [0, 0.76, 0], hull);
       addBox([1.62, 0.2, 2.2], [0, 1.16, 0.02], armor);
       for (const side of [-1, 1]) {
@@ -1994,6 +2615,11 @@ function makeVehicle(vehicle) {
       addBox([1.85, 0.48, 3.2], [0, 0.55, 0], paint);
       addBox([1.35, 0.66, 1.45], [0, 1.08, 0.22], glass);
       addBox([1.95, 0.16, 1.25], [0, 0.88, -0.95], paint);
+      for (const side of [-1, 1]) {
+        addBox([0.035, 0.09, 1.45], [side * 0.93, 0.63, 0.12], trim);
+        addBox([0.04, 0.045, 1.5], [side * 0.94, 0.37, 0.12], paint);
+        addBox([0.13, 0.08, 0.35], [side * 0.83, 0.88, -0.56], trim);
+      }
       for (const x of [-0.98, 0.98]) {
         for (const z of [-1.05, 1.08]) {
           const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.22, 10), trim);
@@ -2006,6 +2632,7 @@ function makeVehicle(vehicle) {
   }
   group.userData.vehicleType = vehicle.type;
   group.userData.propeller = group.userData.propeller ?? null;
+  group.userData.jetExhausts = group.userData.jetExhausts ?? [];
   scene.add(group);
   return group;
 }
@@ -2072,6 +2699,41 @@ async function loadHarborDecoration(url, x, z, yaw, scale, height) {
 }
 
 function loadHarborFleet() {
+  const signCanvas = document.createElement("canvas");
+  signCanvas.width = 512;
+  signCanvas.height = 128;
+  const signContext = signCanvas.getContext("2d");
+  signContext.fillStyle = "#33271d";
+  signContext.fillRect(0, 0, signCanvas.width, signCanvas.height);
+  signContext.strokeStyle = "#d9ae64";
+  signContext.lineWidth = 8;
+  signContext.strokeRect(8, 8, signCanvas.width - 16, signCanvas.height - 16);
+  signContext.fillStyle = "#fff0d0";
+  signContext.font = "bold 48px system-ui, sans-serif";
+  signContext.textAlign = "center";
+  signContext.textBaseline = "middle";
+  signContext.fillText("BOAT WORKSHOP", signCanvas.width / 2, signCanvas.height / 2);
+  const signTexture = new THREE.CanvasTexture(signCanvas);
+  signTexture.colorSpace = THREE.SRGBColorSpace;
+  const workshopSign = new THREE.Group();
+  const frame = new THREE.Mesh(new THREE.BoxGeometry(5.2, 1.35, 0.18), new THREE.MeshLambertMaterial({ color: "#593d27" }));
+  workshopSign.add(frame);
+  const face = new THREE.Mesh(new THREE.PlaneGeometry(4.92, 1.08), new THREE.MeshBasicMaterial({
+    map: signTexture,
+    side: THREE.DoubleSide,
+  }));
+  face.position.z = 0.105;
+  workshopSign.add(face);
+  for (const side of [-1, 1]) {
+    const bracket = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.72), new THREE.MeshLambertMaterial({ color: "#d9ae64" }));
+    bracket.position.set(side * 1.8, -0.72, -0.3);
+    workshopSign.add(bracket);
+  }
+  const workshopPoint = planetPointAt(11, 4.4, 125);
+  workshopSign.position.set(workshopPoint.x, workshopPoint.y, workshopPoint.z);
+  workshopSign.quaternion.copy(surfaceQuaternionAt(11, 125));
+  scene.add(workshopSign);
+
   const assets = [
     loadHarborDecoration(pirateShipUrl, -30, 158, Math.PI / 2, 0.58, 0.45),
     loadHarborDecoration(rowboatUrl, 23, 156, Math.PI / 2, 1, 0.15),
@@ -2105,18 +2767,18 @@ function updateVehicleButton() {
   const nearby = current ? null : nearestAvailableVehicle();
   vehicleButton.hidden = !current && !nearby;
   vehicleButton.textContent = current
-    ? `Exit ${current.type === "tank" ? "tank" : "vehicle"}`
+    ? `Exit ${current.type}`
     : nearby
-      ? `Enter ${nearby.type === "plane" ? "plane" : nearby.type}`
+      ? `Enter ${nearby.type}`
       : "Vehicle";
   vehicleButton.setAttribute("aria-label", vehicleButton.textContent);
   attackButton.textContent = state.vehicleType === "tank" ? "Fire" : "Punch";
   attackButton.setAttribute("aria-label", state.vehicleType === "tank" ? "Fire tank cannon" : "Punch");
-  const canFlyVertically = state.isFlying || state.vehicleType === "plane";
+  const canFlyVertically = state.isFlying || isAircraftType(state.vehicleType);
   flyUpButton.hidden = !canFlyVertically;
   flyDownButton.hidden = !canFlyVertically;
-  flyButton.hidden = state.vehicleType === "plane";
-  desktopFlyButton.hidden = state.vehicleType === "plane";
+  flyButton.hidden = isAircraftType(state.vehicleType);
+  desktopFlyButton.hidden = isAircraftType(state.vehicleType);
   tankAimLeftButton.hidden = state.vehicleType !== "tank";
   tankAimRightButton.hidden = state.vehicleType !== "tank";
   tankFireButton.hidden = state.vehicleType !== "tank";
@@ -2144,7 +2806,7 @@ function updateVehicles(current = []) {
 }
 
 function updateVehicleMesh(vehicle, mesh) {
-  const surfaceHeight = vehicle.y + 1.05;
+  const surfaceHeight = vehicle.y + (vehicle.type === "boat" ? 0 : 1.05);
   const point = planetPointAt(vehicle.x, surfaceHeight, vehicle.z);
   mesh.position.set(point.x, point.y, point.z);
   mesh.quaternion.copy(surfaceQuaternionAt(vehicle.x, vehicle.z, vehicle.yaw));
@@ -2156,6 +2818,10 @@ function updateVehicleMesh(vehicle, mesh) {
 function animateVehicles(delta) {
   for (const vehicle of vehicleMeshes.values()) {
     if (vehicle.userData.propeller) vehicle.userData.propeller.rotation.z += delta * 18;
+    if (vehicle.userData.jetExhausts?.length) {
+      const flicker = 0.9 + Math.sin(performance.now() * 0.024) * 0.12;
+      for (const exhaust of vehicle.userData.jetExhausts) exhaust.scale.setScalar(flicker);
+    }
   }
 }
 
@@ -2192,6 +2858,12 @@ function updateAnimals(current = []) {
 function animateAnimals(delta) {
   for (const animal of animalAvatars.values()) {
     animal.userData.gait += delta * (animal.userData.walking ? 10 : 2);
+    if (animal.userData.wings?.length) {
+      const flap = Math.sin(animal.userData.gait * 4) * 0.65;
+      animal.userData.wings.forEach((wing, index) => {
+        wing.rotation.z = (index === 0 ? -1 : 1) * flap;
+      });
+    }
     if (animal.userData.tail && !animal.userData.legs) {
       animal.userData.tail.rotation.y = Math.sin(animal.userData.gait) * 0.45;
       continue;
@@ -2230,6 +2902,7 @@ function updateCharacterArmor() {
     selfAvatar.userData.headArmor.visible = hasGuardianHelm;
     selfAvatar.userData.headArmor.material.color.set(helmetColor);
   }
+  updateHeldAssetVisibility();
   updateHeldWeaponVisibility();
 }
 
@@ -2707,6 +3380,9 @@ function connect() {
       desktopFlyButton.textContent = state.isFlying ? "Land" : "Fly";
       updateVehicleButton();
       notify(message.message);
+    } else if (message.type === "boat_result") {
+      if (message.success) boatWorkshopDialog.close();
+      notify(message.message);
     } else if (message.type === "vehicle_result") {
       state.vehicleId = message.vehicleId;
       state.vehicleType = message.vehicleType ?? null;
@@ -2973,6 +3649,11 @@ profileColorInput.addEventListener("input", () => {
   profileCharacterModel.style.setProperty("--character-color", profileColorInput.value);
 });
 function requestFlight(enabled) {
+  if (enabled && state.vehicleType === "boat") {
+    flyToggle.checked = false;
+    notify("Leave your boat before taking off.");
+    return;
+  }
   if (!state.connected) {
     flyToggle.checked = state.isFlying;
     notify("Start a world before enabling flight.");
@@ -2993,6 +3674,116 @@ function useVehicleOrPlace() {
   }
   sendEdit("place");
 }
+function boatDesignFromForm() {
+  const form = new FormData(boatWorkshopForm);
+  return {
+    name: String(form.get("name") ?? ""),
+    size: String(form.get("size") ?? ""),
+    hullColor: String(form.get("hullColor") ?? ""),
+    sailColor: String(form.get("sailColor") ?? ""),
+    windows: Number(form.get("windows")),
+    cabin: form.has("cabin"),
+    sail: form.has("sail"),
+  };
+}
+
+function renderBoatWorkshopPreview() {
+  const design = boatDesignFromForm();
+  const context = boatWorkshopPreview.getContext("2d");
+  const width = boatWorkshopPreview.width;
+  const height = boatWorkshopPreview.height;
+  const dimensions = design.size === "galleon"
+    ? { hull: 92, length: 148, planks: 40 }
+    : design.size === "skiff" ? { hull: 50, length: 92, planks: 12 } : { hull: 70, length: 120, planks: 24 };
+  context.clearRect(0, 0, width, height);
+  context.fillStyle = "#d1edf0";
+  context.font = "12px system-ui, sans-serif";
+  context.fillText("BOW", width / 2 - 12, 18);
+  const centerX = width / 2;
+  const centerY = height / 2 + 10;
+  const halfWidth = dimensions.hull / 2;
+  const halfLength = dimensions.length / 2;
+  context.beginPath();
+  context.moveTo(centerX - halfWidth, centerY + halfLength * 0.58);
+  context.lineTo(centerX - halfWidth * 0.7, centerY - halfLength * 0.65);
+  context.lineTo(centerX, centerY - halfLength);
+  context.lineTo(centerX + halfWidth * 0.7, centerY - halfLength * 0.65);
+  context.lineTo(centerX + halfWidth, centerY + halfLength * 0.58);
+  context.lineTo(centerX + halfWidth * 0.65, centerY + halfLength);
+  context.lineTo(centerX - halfWidth * 0.65, centerY + halfLength);
+  context.closePath();
+  context.fillStyle = design.hullColor;
+  context.fill();
+  context.lineWidth = 3;
+  context.strokeStyle = "#dfbf83";
+  context.stroke();
+  context.fillStyle = "#c9a578";
+  context.fillRect(centerX - halfWidth * 0.72, centerY - halfLength * 0.4, halfWidth * 1.44, halfLength * 1.16);
+  if (design.cabin) {
+    context.fillStyle = "#63462f";
+    context.fillRect(centerX - halfWidth * 0.42, centerY - halfLength * 0.12, halfWidth * 0.84, halfLength * 0.44);
+    context.fillStyle = "#7dd7e8";
+    const paneCount = Math.max(1, Math.ceil(design.windows / 2));
+    for (const side of [-1, 1]) {
+      for (let pane = 0; pane < paneCount; pane += 1) {
+        context.fillRect(
+          centerX + side * halfWidth * 0.3 - 4,
+          centerY - halfLength * 0.15 + pane * 24 - (paneCount - 1) * 12,
+          5,
+          12,
+        );
+      }
+    }
+    context.fillStyle = "#a97947";
+    context.fillRect(centerX - 7, centerY + halfLength * 0.13, 14, halfLength * 0.18);
+    context.strokeStyle = "#f0d4a1";
+    context.strokeRect(centerX - 7, centerY + halfLength * 0.13, 14, halfLength * 0.18);
+  }
+  if (design.sail) {
+    context.fillStyle = design.sailColor;
+    context.beginPath();
+    context.moveTo(centerX + halfWidth * 0.08, centerY - halfLength * 0.64);
+    context.lineTo(centerX + halfWidth * 0.78, centerY - halfLength * 0.08);
+    context.lineTo(centerX + halfWidth * 0.08, centerY - halfLength * 0.08);
+    context.closePath();
+    context.fill();
+    context.fillStyle = "#dfbf83";
+    context.fillRect(centerX + halfWidth * 0.05, centerY - halfLength * 0.7, 4, halfLength * 0.78);
+  }
+  const glass = design.cabin ? design.windows : 0;
+  boatWorkshopMaterials.textContent = state.mode === "design"
+    ? "Design mode: materials are free."
+    : `${dimensions.planks} oak planks${glass ? ` · ${glass} glass` : ""}${design.cabin ? " · 1 oak door" : ""} required`;
+}
+
+boatWorkshopForm.addEventListener("input", renderBoatWorkshopPreview);
+boatWorkshopForm.addEventListener("change", renderBoatWorkshopPreview);
+boatWorkshopForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (!isNearBoatWorkshop(playerPosition.x, playerPosition.z)) {
+    notify("Return to the harbor Boat Workshop to launch your design.");
+    return;
+  }
+  sendLobbyMessage({ type: "boat_build", design: boatDesignFromForm() });
+});
+boatWorkshopButton.addEventListener("click", () => {
+  gameMenu.hidden = true;
+  gameMenuToggle.setAttribute("aria-expanded", "false");
+  if (!state.connected) {
+    notify("Start a world before using the Boat Workshop.");
+    return;
+  }
+  if (!isNearBoatWorkshop(playerPosition.x, playerPosition.z)) {
+    notify("The Boat Workshop is the glass-windowed boathouse on the harbor pier.");
+    return;
+  }
+  renderBoatWorkshopPreview();
+  boatWorkshopDialog.showModal();
+});
+document.querySelector("#close-boat-workshop-button").addEventListener("click", () => boatWorkshopDialog.close());
+document.querySelector("#boat-workshop-dialog").addEventListener("click", (event) => {
+  if (event.target === boatWorkshopDialog) boatWorkshopDialog.close();
+});
 flyToggle.addEventListener("change", () => requestFlight(flyToggle.checked));
 flyButton.addEventListener("click", () => requestFlight(!state.isFlying));
 desktopFlyButton.addEventListener("click", () => requestFlight(!state.isFlying));
@@ -3297,25 +4088,6 @@ document.querySelector("#inventory-toggle").addEventListener("click", () => togg
 document.querySelector("#close-inventory").addEventListener("click", () => toggleInventory(false));
 
 async function createModelPreviewImage(model) {
-  if (!modelPreviewRendererFailed && !modelPreviewRenderer) {
-    try {
-      modelPreviewRenderer = new THREE.WebGLRenderer({
-        alpha: true,
-        antialias: true,
-        preserveDrawingBuffer: true,
-        powerPreference: "low-power",
-      });
-      modelPreviewRenderer.setPixelRatio(1);
-      modelPreviewRenderer.setSize(96, 72, false);
-      modelPreviewRenderer.setClearColor(0x18251e, 0);
-    } catch (error) {
-      modelPreviewRendererFailed = true;
-      console.error("Unable to initialize model preview rendering.", error);
-      return null;
-    }
-  }
-  if (!modelPreviewRenderer) return null;
-
   let modelObject;
   if (model.assetKey) {
     const assetScene = await loadPlacedAssetModel(model.assetKey);
@@ -3333,21 +4105,124 @@ async function createModelPreviewImage(model) {
   modelObject.scale.multiplyScalar(scale);
   modelObject.position.set(-center.x * scale, -center.y * scale, -center.z * scale);
 
-  const previewScene = new THREE.Scene();
-  previewScene.add(modelObject);
-  previewScene.add(new THREE.HemisphereLight(0xffffff, 0x596451, 2));
-  const keyLight = new THREE.DirectionalLight(0xffffff, 2);
-  keyLight.position.set(-2, 3, 4);
-  previewScene.add(keyLight);
-  const fillLight = new THREE.DirectionalLight(0xb9d6ff, 0.8);
-  fillLight.position.set(3, 1, -2);
-  previewScene.add(fillLight);
+  const imageCanvas = document.createElement("canvas");
+  imageCanvas.width = 124;
+  imageCanvas.height = 96;
+  const context = imageCanvas.getContext("2d");
+  if (!context) throw new Error("A 2D canvas is unavailable for market previews.");
+  context.clearRect(0, 0, imageCanvas.width, imageCanvas.height);
+  context.fillStyle = "rgba(0, 0, 0, 0.18)";
+  context.beginPath();
+  context.ellipse(62, 79, 31, 7, 0, 0, Math.PI * 2);
+  context.fill();
 
-  const previewCamera = new THREE.PerspectiveCamera(32, 4 / 3, 0.01, 10);
-  previewCamera.position.set(1.8, 1.35, 2.4);
-  previewCamera.lookAt(0, 0, 0);
-  modelPreviewRenderer.render(previewScene, previewCamera);
-  const image = modelPreviewRenderer.domElement.toDataURL("image/png");
+  const cameraPosition = new THREE.Vector3(1.8, 1.35, 2.4).normalize();
+  const forward = cameraPosition.clone().negate();
+  const right = forward.clone().cross(new THREE.Vector3(0, 1, 0)).normalize();
+  const up = right.clone().cross(forward).normalize();
+  const focalLength = imageCanvas.height / (2 * Math.tan(THREE.MathUtils.degToRad(32) / 2));
+  const triangles = [];
+  const project = (x, y, z, matrix) => {
+    const elements = matrix.elements;
+    const worldX = elements[0] * x + elements[4] * y + elements[8] * z + elements[12];
+    const worldY = elements[1] * x + elements[5] * y + elements[9] * z + elements[13];
+    const worldZ = elements[2] * x + elements[6] * y + elements[10] * z + elements[14];
+    const depth = 2.7 - (worldX * forward.x + worldY * forward.y + worldZ * forward.z);
+    if (depth <= 0.05) return null;
+    return {
+      x: 62 + (worldX * right.x + worldY * right.y + worldZ * right.z) * focalLength / depth,
+      y: 47 - (worldX * up.x + worldY * up.y + worldZ * up.z) * focalLength / depth,
+      z: worldX,
+      worldY,
+      worldZ,
+      depth,
+    };
+  };
+  const boxCorners = [];
+  for (const x of [bounds.min.x, bounds.max.x]) {
+    for (const y of [bounds.min.y, bounds.max.y]) {
+      for (const z of [bounds.min.z, bounds.max.z]) boxCorners.push([x, y, z]);
+    }
+  }
+  let bestYaw = 0;
+  let bestProjectedArea = 0;
+  for (let step = 0; step < 24; step += 1) {
+    modelObject.rotation.y = step * Math.PI / 12;
+    modelObject.updateMatrixWorld(true);
+    const corners = boxCorners.map(([x, y, z]) => project(x, y, z, modelObject.matrixWorld)).filter(Boolean);
+    if (corners.length !== boxCorners.length) continue;
+    const width = Math.max(...corners.map(({ x }) => x)) - Math.min(...corners.map(({ x }) => x));
+    const height = Math.max(...corners.map(({ y }) => y)) - Math.min(...corners.map(({ y }) => y));
+    const projectedArea = width * height;
+    if (projectedArea <= bestProjectedArea) continue;
+    bestProjectedArea = projectedArea;
+    bestYaw = modelObject.rotation.y;
+  }
+  modelObject.rotation.y = bestYaw;
+  modelObject.updateMatrixWorld(true);
+  const colorChannels = (color) => [
+    Math.round(((color >> 16) & 255)),
+    Math.round(((color >> 8) & 255)),
+    Math.round(color & 255),
+  ];
+
+  modelObject.traverse((part) => {
+    if (!part.isMesh || !part.geometry?.attributes?.position) return;
+    const geometry = part.geometry;
+    const positions = geometry.attributes.position;
+    const vertexColors = geometry.attributes.color;
+    const indices = geometry.index;
+    const materials = Array.isArray(part.material) ? part.material : [part.material];
+    const ranges = geometry.groups.length
+      ? geometry.groups
+      : [{ start: 0, count: indices?.count ?? positions.count, materialIndex: 0 }];
+    for (const range of ranges) {
+      const material = materials[range.materialIndex] ?? materials[0];
+      if (!material || material.visible === false || material.opacity === 0) continue;
+      const materialColor = material.color?.getHex() ?? 0xcccccc;
+      const [baseRed, baseGreen, baseBlue] = colorChannels(materialColor);
+      const start = Math.max(range.start, geometry.drawRange.start);
+      const end = Math.min(range.start + range.count, geometry.drawRange.start + geometry.drawRange.count);
+      for (let index = start; index + 2 < end; index += 3) {
+        const vertexIndices = [0, 1, 2].map((offset) => indices ? indices.getX(index + offset) : index + offset);
+        const points = vertexIndices.map((vertexIndex) => project(
+          positions.getX(vertexIndex),
+          positions.getY(vertexIndex),
+          positions.getZ(vertexIndex),
+          part.matrixWorld,
+        ));
+        if (points.some((point) => !point)) continue;
+        const [a, b, c] = points;
+        const ab = new THREE.Vector3(b.z - a.z, b.worldY - a.worldY, b.worldZ - a.worldZ);
+        const ac = new THREE.Vector3(c.z - a.z, c.worldY - a.worldY, c.worldZ - a.worldZ);
+        const normal = ab.cross(ac).normalize();
+        const light = Math.min(1.25, 0.72 + Math.max(0, normal.dot(new THREE.Vector3(-0.35, 0.8, 0.65).normalize())) * 0.5);
+        const vertexTint = vertexColors
+          ? vertexIndices.reduce((sum, vertexIndex) => sum + (vertexColors.getX(vertexIndex) + vertexColors.getY(vertexIndex) + vertexColors.getZ(vertexIndex)) / 3, 0) / 3
+          : 1;
+        triangles.push({
+          points,
+          depth: (a.depth + b.depth + c.depth) / 3,
+          fill: `rgb(${Math.round(baseRed * light * vertexTint)}, ${Math.round(baseGreen * light * vertexTint)}, ${Math.round(baseBlue * light * vertexTint)})`,
+          opacity: material.opacity ?? 1,
+        });
+      }
+    }
+  });
+  triangles.sort((a, b) => b.depth - a.depth);
+  for (const triangle of triangles) {
+    context.globalAlpha = triangle.opacity;
+    context.fillStyle = triangle.fill;
+    context.beginPath();
+    context.moveTo(triangle.points[0].x, triangle.points[0].y);
+    context.lineTo(triangle.points[1].x, triangle.points[1].y);
+    context.lineTo(triangle.points[2].x, triangle.points[2].y);
+    context.closePath();
+    context.fill();
+  }
+  context.globalAlpha = 1;
+  if (!triangles.length) throw new Error(`The ${model.name} preview has no renderable triangles.`);
+  const image = imageCanvas.toDataURL("image/png");
 
   if (!model.assetKey) {
     const geometries = new Set();
@@ -3381,9 +4256,10 @@ function requestModelPreview(model, previewImage) {
   void loading.then((image) => {
     if (!image) return;
     modelPreviewImages.set(model.id, image);
-    if (previewImage.isConnected && previewImage.dataset.modelId === model.id) {
-      previewImage.src = image;
-      previewImage.closest(".shop-model-preview")?.classList.add("has-image");
+    for (const imageElement of shopItems.querySelectorAll("img[data-model-id]")) {
+      if (imageElement.dataset.modelId !== model.id) continue;
+      imageElement.src = image;
+      imageElement.closest(".shop-model-preview")?.classList.add("has-image");
     }
   }).catch((error) => {
     console.error(`Unable to render a market preview for "${model.name}".`, error);
@@ -3864,17 +4740,17 @@ window.addEventListener("keydown", (event) => {
   }
   if (event.code === "Space") {
     event.preventDefault();
-    if (state.isFlying || state.vehicleType === "plane") state.flyVerticalDirection = 1;
+    if (state.isFlying || isAircraftType(state.vehicleType)) state.flyVerticalDirection = 1;
     else if (state.isSwimming) state.swimDirection = 1;
     else if (!state.vehicleId && !event.repeat) jump();
     return;
   }
-  if (event.code === "PageUp" && (state.isFlying || state.vehicleType === "plane")) {
+  if (event.code === "PageUp" && (state.isFlying || isAircraftType(state.vehicleType))) {
     event.preventDefault();
     state.flyVerticalDirection = 1;
     return;
   }
-  if (event.code === "PageDown" && (state.isFlying || state.vehicleType === "plane")) {
+  if (event.code === "PageDown" && (state.isFlying || isAircraftType(state.vehicleType))) {
     event.preventDefault();
     state.flyVerticalDirection = -1;
     return;
@@ -3886,7 +4762,7 @@ window.addEventListener("keydown", (event) => {
   }
   if (
     (event.code === "ShiftLeft" || event.code === "ShiftRight") &&
-    (state.isFlying || state.vehicleType === "plane")
+    (state.isFlying || isAircraftType(state.vehicleType))
   ) {
     event.preventDefault();
     state.flyVerticalDirection = -1;
@@ -4265,9 +5141,9 @@ function pollGamepad(delta) {
   const descendButtonPressed = Boolean(gamepad.buttons[1]?.pressed || (gamepad.buttons[1]?.value ?? 0) > 0.5);
   const leftTrigger = gamepad.buttons[6]?.value ?? 0;
   const rightTrigger = gamepad.buttons[7]?.value ?? 0;
-  if (state.isFlying || state.vehicleType === "plane") {
+  if (state.isFlying || isAircraftType(state.vehicleType)) {
     state.flyVerticalDirection = jumpButtonPressed ? 1 : descendButtonPressed ? -1 : 0;
-    if (state.vehicleType === "plane") {
+    if (isAircraftType(state.vehicleType)) {
       if (rightTrigger > 0.25) state.flyVerticalDirection = 1;
       else if (leftTrigger > 0.25) state.flyVerticalDirection = -1;
     }
@@ -4302,7 +5178,7 @@ window.addEventListener("gamepaddisconnected", (event) => {
 });
 
 function updateMovement(delta) {
-  if (!state.connected || !gameMenu.hidden || !worldMapPanel.hidden || !shopPanel.hidden) return;
+  if (!state.connected || !gameMenu.hidden || !worldMapPanel.hidden || !shopPanel.hidden || boatWorkshopDialog.open) return;
   if (playerOccupiesSolidBlock(playerPosition.x, playerPosition.z, playerPosition.y)) {
     let safeEyeY = groundEyeAt(playerPosition.x, playerPosition.z, playerPosition.y);
     while (
@@ -4330,17 +5206,21 @@ function updateMovement(delta) {
 
   const activeVehicle = state.vehicles.find(({ id }) => id === state.vehicleId);
   if (activeVehicle && strafeInput !== 0) {
-    look.yaw -= strafeInput * delta * (activeVehicle.type === "plane" ? 1.6 : 2.1);
+    look.yaw -= strafeInput * delta * (isAircraftType(activeVehicle.type) ? 1.6 : 2.1);
     strafeInput = 0;
   }
   const speed = (
-    activeVehicle?.type === "plane"
-      ? 16
-      : activeVehicle?.type === "car"
-        ? 9
-        : activeVehicle?.type === "tank"
-          ? 7
-          : 4.2
+    activeVehicle?.type === "jet"
+      ? 24
+      : activeVehicle?.type === "plane"
+        ? 16
+        : activeVehicle?.type === "car"
+          ? 9
+          : activeVehicle?.type === "tank"
+            ? 7
+            : activeVehicle?.type === "boat"
+              ? activeVehicle.design?.size === "galleon" ? 5.5 : activeVehicle.design?.size === "skiff" ? 8 : 7
+              : 4.2
   ) * delta;
   const eastDistance = (-Math.sin(look.yaw) * forwardInput + Math.cos(look.yaw) * strafeInput) * speed;
   const northDistance = (Math.cos(look.yaw) * forwardInput + Math.sin(look.yaw) * strafeInput) * speed;
@@ -4353,7 +5233,18 @@ function updateMovement(delta) {
   );
   const nextX = nextPosition.x;
   const nextZ = nextPosition.z;
-  if (state.isFlying || activeVehicle?.type === "plane") {
+  if (activeVehicle?.type === "boat") {
+    if (
+      terrainHeightAt(nextX, nextZ, state.seed) < 0 &&
+      !hasWallAt(nextX, nextZ, activeVehicle.y + 2.65)
+    ) {
+      playerPosition.x = nextX;
+      playerPosition.z = nextZ;
+      look.yaw = nextPosition.yaw;
+    }
+    playerPosition.y = activeVehicle.y + 2.65;
+    state.jumpVelocity = 0;
+  } else if (state.isFlying || isAircraftType(activeVehicle?.type)) {
     if (!hasWallAt(nextX, nextZ, playerPosition.y)) {
       playerPosition.x = nextX;
       playerPosition.z = nextZ;
@@ -4434,7 +5325,12 @@ function updateMovement(delta) {
     playerPosition.y <= waterSurfaceEyeY + 0.3;
   state.isSwimming = swimming;
   waterControls.hidden = !swimming;
-  if (state.isFlying || activeVehicle?.type === "plane") {
+  if (activeVehicle?.type === "boat") {
+    state.isSwimming = false;
+    state.swimDirection = 0;
+    waterControls.hidden = true;
+    playerPosition.y = activeVehicle.y + 2.65;
+  } else if (state.isFlying || isAircraftType(activeVehicle?.type)) {
     state.isSwimming = false;
     state.swimDirection = 0;
     waterControls.hidden = true;

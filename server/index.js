@@ -34,12 +34,13 @@ import {
   PLANET_MIN_Z,
   RECIPES,
   WORLD_LOCATIONS,
+  isNearBoatWorkshop,
   isNearHarbor,
   rollFishReward,
   terrainHeightAt,
   wrapPlanetX,
 } from "./world.js";
-import { MODEL_ITEM_BY_ID } from "../shared/models.js";
+import { MODEL_CATALOG, MODEL_ITEM_BY_ID } from "../shared/models.js";
 import { CREATURE_HABITATS, getCreatureSpecies } from "../shared/creatures.js";
 
 const GAME_DIR = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -77,12 +78,91 @@ const MONSTER_ATTACK_COOLDOWN_MS = 1400;
 const MONSTER_RESPAWN_MS = 8000;
 const MAX_PLAYER_MAGIC_POTION_STACK = 3;
 const VEHICLE_SPAWNS = [
-  { id: "starter-car", type: "car", x: -12, z: 0 },
+  { id: "starter-car", type: "car", x: -12, z: 0, color: "#d84f43", accent: "#f4d76a" },
   { id: "airport-plane", type: "plane", x: 70, z: -72 },
-  { id: "airport-car", type: "car", x: 83, z: -62 },
-  { id: "city-tank-1", type: "tank", x: 0, z: 90 },
-  { id: "city-tank-2", type: "tank", x: 80, z: 0 },
+  { id: "airport-jet-1", type: "jet", x: 71, z: -81, color: "#dfe6e8", accent: "#45a3c6" },
+  { id: "airport-jet-2", type: "jet", x: 71, z: -88, color: "#46505d", accent: "#e05d43" },
+  { id: "airport-jet-3", type: "jet", x: 71, z: -95, color: "#d7d2c8", accent: "#738854" },
+  { id: "airport-car", type: "car", x: 83, z: -62, color: "#4385c5", accent: "#dcecff" },
+  { id: "city-tank-1", type: "tank", x: 0, z: 90, color: "#687a45", accent: "#d0b16c" },
+  { id: "city-tank-2", type: "tank", x: 80, z: 0, color: "#52614c", accent: "#d7d2bc" },
+  { id: "city-tank-3", type: "tank", x: -80, z: 0, color: "#53677a", accent: "#d9b468" },
+  { id: "city-tank-4", type: "tank", x: 0, z: -80, color: "#786242", accent: "#c8d0d4" },
+  { id: "city-tank-5", type: "tank", x: 0, z: 80, color: "#596b53", accent: "#b7c2a1" },
 ];
+const CITY_CAR_PAINTS = [
+  ["#d84f43", "#f4d76a"],
+  ["#4385c5", "#dcecff"],
+  ["#43a57b", "#f0d37a"],
+  ["#e1a640", "#563f5c"],
+  ["#865bb0", "#e4d0f0"],
+  ["#e7e5df", "#303944"],
+  ["#29333e", "#df5146"],
+  ["#e77e48", "#fff0cf"],
+  ["#ce5f88", "#f3d4df"],
+  ["#52a8b5", "#eaf8ef"],
+];
+const BOAT_SIZES = new Map([
+  ["skiff", { width: 1.8, length: 3.6, planks: 12 }],
+  ["cutter", { width: 2.8, length: 5.4, planks: 24 }],
+  ["galleon", { width: 3.8, length: 7.2, planks: 40 }],
+]);
+const BOAT_HULL_COLORS = new Set(["#765238", "#a16c42", "#4b6173", "#7c3f3f", "#4d6949"]);
+const BOAT_SAIL_COLORS = new Set(["#eee2c6", "#b94a48", "#426c83", "#d4a84f", "#465348"]);
+
+function normalizeBoatDesign(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  const size = BOAT_SIZES.has(input.size) ? input.size : null;
+  const windows = [2, 4, 6].includes(input.windows) ? input.windows : null;
+  const hullColor = BOAT_HULL_COLORS.has(input.hullColor) ? input.hullColor : null;
+  const sailColor = BOAT_SAIL_COLORS.has(input.sailColor) ? input.sailColor : null;
+  if (
+    !size ||
+    windows === null ||
+    !hullColor ||
+    !sailColor ||
+    typeof input.cabin !== "boolean" ||
+    typeof input.sail !== "boolean"
+  ) return null;
+  const name = typeof input.name === "string"
+    ? input.name.replace(/[^\p{L}\p{N} -]/gu, "").trim().slice(0, 20)
+    : "";
+  return {
+    name: name || "Sea Rover",
+    size,
+    windows,
+    hullColor,
+    sailColor,
+    cabin: input.cabin,
+    sail: input.sail,
+  };
+}
+
+function boatMaterials(design) {
+  const size = BOAT_SIZES.get(design.size);
+  return {
+    oak_planks: size.planks,
+    glass: design.cabin ? design.windows : 0,
+    oak_door: design.cabin ? 1 : 0,
+  };
+}
+
+function createBoatSpawn(room) {
+  for (let z = 164; z <= 184; z += 4) {
+    for (let x = 17; x >= -17; x -= 5) {
+      const surfaceKey = blockKey(x, 0, z);
+      const surfaceBlock = room.blocks.has(surfaceKey)
+        ? room.blocks.get(surfaceKey)
+        : getBaseBlockAt(x, 0, z, room.seed);
+      if (surfaceBlock !== "water") continue;
+      const occupied = [...room.vehicles.values()].some((vehicle) =>
+        Math.hypot(wrapPlanetX(vehicle.x - x), vehicle.z - z) < 7,
+      );
+      if (!occupied) return { x, z };
+    }
+  }
+  return null;
+}
 const MIME_TYPES = new Map([
   [".css", "text/css; charset=utf-8"],
   [".html", "text/html; charset=utf-8"],
@@ -122,16 +202,37 @@ function createVehicles(seed = 1) {
       cityRoadCandidates.push({ x, z });
     }
   }
+  let tankIndex = 0;
+  for (const candidate of cityRoadCandidates) {
+    if (tankIndex >= 4) break;
+    if (spawns.some((spawn) => Math.hypot(spawn.x - candidate.x, spawn.z - candidate.z) < 12)) continue;
+    const [color, accent] = [
+      ["#53677a", "#d9b468"],
+      ["#786242", "#c8d0d4"],
+      ["#596b53", "#b7c2a1"],
+      ["#73514e", "#d1a768"],
+    ][tankIndex];
+    spawns.push({
+      id: `city-tank-${tankIndex + 6}`,
+      type: "tank",
+      ...candidate,
+      color,
+      accent,
+    });
+    tankIndex += 1;
+  }
   for (let index = 0; index < Math.min(20, cityRoadCandidates.length); index += 1) {
     const candidate = cityRoadCandidates[Math.floor((index + 0.5) * cityRoadCandidates.length / 20)];
     if (!candidate) continue;
-    spawns.push({ id: `city-car-${index + 1}`, type: "car", ...candidate });
+    const [color, accent] = CITY_CAR_PAINTS[index % CITY_CAR_PAINTS.length];
+    spawns.push({ id: `city-car-${index + 1}`, type: "car", ...candidate, color, accent });
   }
-  return new Map(spawns.map(({ id, type, x, z }) => [
+  return new Map(spawns.map(({ id, type, x, z, color, accent }) => [
     id,
     {
       id,
       type,
+      ...(color ? { color, accent } : {}),
       x,
       y: terrainHeightAt(x, z, seed),
       z,
@@ -149,11 +250,31 @@ function restoreVehicles(savedVehicles, seed) {
     if (
       !savedVehicle ||
       typeof savedVehicle.id !== "string" ||
-      !vehicles.has(savedVehicle.id) ||
       !Number.isFinite(savedVehicle.x) ||
       !Number.isFinite(savedVehicle.z)
     ) continue;
     const existing = vehicles.get(savedVehicle.id);
+    if (!existing) {
+      const design = savedVehicle.type === "boat" ? normalizeBoatDesign(savedVehicle.design) : null;
+      if (
+        !design ||
+        !/^player-boat-[0-9a-f-]{36}$/i.test(savedVehicle.id) ||
+        typeof savedVehicle.ownerId !== "string" ||
+        !Number.isFinite(savedVehicle.yaw)
+      ) continue;
+      vehicles.set(savedVehicle.id, {
+        id: savedVehicle.id,
+        type: "boat",
+        x: wrapPlanetX(savedVehicle.x),
+        y: 0,
+        z: savedVehicle.z,
+        yaw: savedVehicle.yaw,
+        design,
+        ownerId: savedVehicle.ownerId,
+        occupantId: null,
+      });
+      continue;
+    }
     vehicles.set(savedVehicle.id, {
       ...existing,
       ...savedVehicle,
@@ -197,11 +318,48 @@ function createAnimals(seed = 1) {
       });
     });
   }
+  const dragonHomes = [
+    { x: 484, z: 52, name: "Emberwing" },
+    { x: -516, z: -100, name: "Stormscale" },
+    { x: 112, z: 350, name: "Cloudfire" },
+    { x: 30, z: 64, name: "Sunstreak" },
+    { x: -180, z: 250, name: "Peakflame" },
+    { x: -270, z: -336, name: "Frostglide" },
+  ];
+  dragonHomes.forEach((home, index) => {
+    const x = home.x + ((seed >>> 0) % 13) - 6;
+    const z = home.z + (((seed >>> 4) >>> 0) % 13) - 6;
+    const id = `animal-dragon-${index}`;
+    animals.set(id, {
+      id,
+      species: `dragon-${index}`,
+      name: home.name,
+      model: "dragon",
+      color: ["#c85d3a", "#6879bf", "#d69b4c", "#e7a83d", "#8a5eb5", "#8dc9dc"][index],
+      habitat: "sky",
+      aquatic: false,
+      flying: true,
+      scale: 1.4,
+      pattern: index,
+      x,
+      y: terrainHeightAt(x, z, seed) + 24,
+      z,
+      yaw: 0,
+      homeX: x,
+      homeZ: z,
+      targetX: x,
+      targetZ: z,
+      walking: false,
+      flightPhase: index * 2,
+      flightAltitude: 24 + index * 3,
+      flightSpeed: 0.16 + index * 0.02,
+    });
+  });
   return animals;
 }
 
 function serializeAnimals(room) {
-  return [...room.animals.values()].map(({ id, species, name, model, color, habitat, aquatic, scale, pattern, x, y, z, yaw, walking }) => ({
+  return [...room.animals.values()].map(({ id, species, name, model, color, habitat, aquatic, flying, scale, pattern, x, y, z, yaw, walking }) => ({
     id,
     species,
     name,
@@ -209,6 +367,7 @@ function serializeAnimals(room) {
     color,
     habitat,
     aquatic,
+    flying,
     scale,
     pattern,
     x,
@@ -244,6 +403,18 @@ function createMonsters() {
     ["boss-ashen-king", {
       id: "boss-ashen-king", name: "Ashen King", species: "boss", x: 160, z: -120, yaw: 0, color: "#ffb166",
       homeX: 160, homeZ: -120, targetX: 160, targetZ: -120, health: 220, maxHealth: 220, lastAttackAt: 0, respawnAt: 0, boss: true, active: false,
+    }],
+    ["monster-spider", {
+      id: "monster-spider", name: "Thicket Spider", species: "spider", x: 12, z: 222, yaw: 0, color: "#a56e52",
+      homeX: 12, homeZ: 222, targetX: 12, targetZ: 222, health: 75, maxHealth: 75, lastAttackAt: 0, respawnAt: 0, boss: false, active: false,
+    }],
+    ["monster-golem", {
+      id: "monster-golem", name: "Ashvault Golem", species: "golem", x: 523, z: 35, yaw: 0, color: "#92776b",
+      homeX: 523, homeZ: 35, targetX: 523, targetZ: 35, health: 160, maxHealth: 160, lastAttackAt: 0, respawnAt: 0, boss: false, active: false,
+    }],
+    ["monster-phantom", {
+      id: "monster-phantom", name: "Dragonpeak Phantom", species: "phantom", x: -180, z: 250, yaw: 0, color: "#8872d6",
+      homeX: -180, homeZ: 250, targetX: -180, targetZ: 250, health: 110, maxHealth: 110, lastAttackAt: 0, respawnAt: 0, boss: false, active: false,
     }],
   ]);
 }
@@ -291,7 +462,16 @@ function safeName(value) {
 }
 
 function createInventory(mode = "survival") {
-  return mode === "design" ? new Map([...BLOCK_TYPES].map((block) => [block, 1])) : new Map();
+  return mode === "design"
+    ? new Map([...new Set([...BLOCK_TYPES, ...MODEL_CATALOG.map(({ id }) => id)])].map((item) => [item, 64]))
+    : new Map();
+}
+
+function fillDesignInventory(inventory) {
+  for (const [item, count] of createInventory("design")) {
+    inventory.set(item, Math.max(Number(inventory.get(item)) || 0, count));
+  }
+  return inventory;
 }
 
 function addItems(inventory, item, amount) {
@@ -443,7 +623,7 @@ function restoreSavedRoom(saved) {
       ...player,
       xp: Number.isFinite(Number(player.xp)) ? Number(player.xp) : 0,
       level: Number.isFinite(Number(player.level)) ? Number(player.level) : 0,
-      coins: Number.isFinite(Number(player.coins)) ? Number(player.coins) : 0,
+      coins: saved.mode === "design" ? 20_000 : Number.isFinite(Number(player.coins)) ? Number(player.coins) : 0,
     }]));
   return {
     id: saved.id,
@@ -877,6 +1057,28 @@ export function createGameServer({
         }
       }
       for (const animal of room.animals.values()) {
+        if (animal.flying) {
+          animal.flightPhase += 0.12;
+          if (Math.hypot(animal.targetX - animal.x, animal.targetZ - animal.z) < 8) {
+            const angle = Math.random() * Math.PI * 2;
+            const radius = 18 + Math.random() * 32;
+            animal.targetX = animal.homeX + Math.cos(angle) * radius;
+            animal.targetZ = animal.homeZ + Math.sin(angle) * radius;
+          }
+          const dx = animal.targetX - animal.x;
+          const dz = animal.targetZ - animal.z;
+          const distance = Math.hypot(dx, dz);
+          const step = Math.min(animal.flightSpeed, distance);
+          if (distance > 0) {
+            animal.x = wrapPlanetX(animal.x + dx / distance * step);
+            animal.z += dz / distance * step;
+            animal.yaw = Math.atan2(-dx, dz);
+          }
+          animal.y = terrainHeightAt(animal.x, animal.z, room.seed)
+            + animal.flightAltitude + Math.sin(animal.flightPhase) * 2;
+          animal.walking = false;
+          continue;
+        }
         const deltaX = animal.targetX - animal.x;
         const deltaZ = animal.targetZ - animal.z;
         const distance = Math.hypot(deltaX, deltaZ);
@@ -1077,6 +1279,7 @@ export function createGameServer({
         rooms.set(roomId, room);
         player.roomId = roomId;
         player.inventory = createInventory(room.mode);
+        if (room.mode === "design") player.coins = 20_000;
         writeJson(socket, { type: "room_created", room: roomSummary(room), hostId: room.hostId });
         sendRoomState(room);
         sendLobbyRooms();
@@ -1103,6 +1306,10 @@ export function createGameServer({
         player.inventory = savedPlayer
           ? new Map(savedPlayer.inventory)
           : createInventory(room.mode);
+        if (room.mode === "design") {
+          fillDesignInventory(player.inventory);
+          player.coins = 20_000;
+        }
         if (savedPlayer) {
           player.x = savedPlayer.x;
           const currentSurfaceEyeY = terrainHeightAt(savedPlayer.x, savedPlayer.z, room.seed) + 2.65;
@@ -1116,7 +1323,9 @@ export function createGameServer({
           player.yaw = savedPlayer.yaw;
           player.xp = Number.isFinite(Number(savedPlayer.xp)) ? Number(savedPlayer.xp) : 0;
           player.level = Number.isFinite(Number(savedPlayer.level)) ? Number(savedPlayer.level) : 0;
-          player.coins = Number.isFinite(Number(savedPlayer.coins)) ? Number(savedPlayer.coins) : 0;
+          player.coins = room.mode === "design"
+            ? 20_000
+            : Number.isFinite(Number(savedPlayer.coins)) ? Number(savedPlayer.coins) : 0;
           player.health = Math.max(1, Math.min(MAX_PLAYER_HEALTH, savedPlayer.health ?? MAX_PLAYER_HEALTH));
         }
         if (!room.hostId) room.hostId = player.id;
@@ -1646,6 +1855,16 @@ export function createGameServer({
         const vehicle = room?.vehicles.get(player.vehicleId);
         if (player.vehicleId && vehicle?.occupantId !== player.id) return;
         if (
+          vehicle?.type === "boat" &&
+          terrainHeightAt(message.position.x, message.position.z, room.seed) >= 0
+        ) {
+          writeJson(socket, {
+            type: "move_rejected",
+            position: { x: player.x, y: player.y, z: player.z, yaw: player.yaw },
+          });
+          return;
+        }
+        if (
           !room ||
           !playerCanOccupy(
             room,
@@ -1665,6 +1884,7 @@ export function createGameServer({
         player.y = Number.isFinite(message.position.y)
           ? message.position.y
           : terrainHeightAt(player.x, player.z, room.seed) + 2.65;
+        if (vehicle?.type === "boat") player.y = vehicle.y + 2.65;
         player.yaw = message.position.yaw;
         if (vehicle) {
           const previousVehicleYaw = vehicle.yaw;
@@ -1689,6 +1909,69 @@ export function createGameServer({
             );
           }
         }
+        broadcastToRoom(room, roomSnapshot(room));
+        return;
+      }
+
+      if (message.type === "boat_build") {
+        const room = rooms.get(player.roomId);
+        const design = normalizeBoatDesign(message.design);
+        if (!room?.started || player.health <= 0) {
+          writeJson(socket, { type: "boat_result", success: false, message: "Start a world before building a boat." });
+          return;
+        }
+        if (!isNearBoatWorkshop(player.x, player.z)) {
+          writeJson(socket, { type: "boat_result", success: false, message: "Build boats at the harbor Boat Workshop." });
+          return;
+        }
+        if (!design) {
+          writeJson(socket, { type: "boat_result", success: false, message: "That boat design is invalid." });
+          return;
+        }
+        const ownedBoats = [...room.vehicles.values()].filter(({ ownerId }) => ownerId === player.id).length;
+        if (ownedBoats >= 4) {
+          writeJson(socket, { type: "boat_result", success: false, message: "You can launch up to four boats. Remove one before building another." });
+          return;
+        }
+        const spawn = createBoatSpawn(room);
+        if (!spawn) {
+          writeJson(socket, { type: "boat_result", success: false, message: "The harbor launch is full. Try again when a boat has moved away." });
+          return;
+        }
+        const materials = boatMaterials(design);
+        if (room.mode !== "design") {
+          const missing = Object.entries(materials).find(([item, count]) => (player.inventory.get(item) ?? 0) < count);
+          if (missing) {
+            writeJson(socket, {
+              type: "boat_result",
+              success: false,
+              message: `You need ${materials.oak_planks} planks, ${materials.glass} glass${design.cabin ? " and one door" : ""} to build this boat.`,
+            });
+            return;
+          }
+          for (const [item, count] of Object.entries(materials)) {
+            if (count > 0) removeItems(player.inventory, item, count);
+          }
+          writeJson(socket, { type: "inventory", items: inventoryItems(player.inventory) });
+        }
+        const boat = {
+          id: `player-boat-${randomUUID()}`,
+          type: "boat",
+          x: spawn.x,
+          y: 0,
+          z: spawn.z,
+          yaw: 0,
+          design,
+          ownerId: player.id,
+          occupantId: null,
+        };
+        room.vehicles.set(boat.id, boat);
+        writeJson(socket, {
+          type: "boat_result",
+          success: true,
+          vehicleId: boat.id,
+          message: `${design.name} launched! Walk to the waterline and press E or Vehicle to board.`,
+        });
         broadcastToRoom(room, roomSnapshot(room));
         return;
       }
