@@ -10,6 +10,8 @@ import {
   CHUNK_SIZE,
   cityPropertyNear,
   CITY_BEACH_OUTER_RADIUS,
+  CITY_BLOCK_SIZE,
+  CITY_POLICE_STATION,
   CITY_RADIUS,
   createChunkBlocks,
   FISH_TYPE_BY_ID,
@@ -75,6 +77,8 @@ import pirateShipTextureUrl from "./assets/new/eclair_pirate_ships_boats_11_cc0_
 import "./style.css";
 
 const canvas = document.querySelector("#world");
+const rainOverlay = document.querySelector("#rain-overlay");
+const weatherHud = document.querySelector("#weather-hud");
 const statusText = document.querySelector("#connection-status");
 const statusDot = document.querySelector("#connection-dot");
 const toast = document.querySelector("#toast");
@@ -116,7 +120,10 @@ const flyUpButton = document.querySelector("#fly-up-button");
 const flyDownButton = document.querySelector("#fly-down-button");
 const tankAimLeftButton = document.querySelector("#tank-aim-left-button");
 const tankAimRightButton = document.querySelector("#tank-aim-right-button");
+const tankAimUpButton = document.querySelector("#tank-aim-up-button");
+const tankAimDownButton = document.querySelector("#tank-aim-down-button");
 const tankFireButton = document.querySelector("#tank-fire-button");
+const jumpButton = document.querySelector("#jump-button");
 const autosaveToggle = document.querySelector("#autosave-toggle");
 const profileDialog = document.querySelector("#profile-dialog");
 const profileNameInput = document.querySelector("#profile-name");
@@ -154,6 +161,9 @@ const respawnOverlay = document.querySelector("#respawn-overlay");
 const respawnButton = document.querySelector("#respawn-button");
 const attackButton = document.querySelector("#attack-button");
 const fishButton = document.querySelector("#fish-button");
+const fishMenuButton = document.querySelector("#fish-menu-button");
+const breakButton = document.querySelector("#break-button");
+const placeButton = document.querySelector("#place-button");
 const vehicleButton = document.querySelector("#vehicle-button");
 const waterControls = document.querySelector("#water-controls");
 const waterRiseButton = document.querySelector("#water-rise-button");
@@ -520,9 +530,14 @@ materials.get("black_concrete").color.set("#90969a");
 materials.get("black_concrete").needsUpdate = true;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color("#a9d8ed");
+const daySkyColor = new THREE.Color("#a9d8ed");
+const nightSkyColor = new THREE.Color("#111b35");
+const nightHemisphereColor = new THREE.Color("#4c5f8a");
+const nightGroundColor = new THREE.Color("#171d32");
+const nightSunlightColor = new THREE.Color("#8597c8");
+scene.background = daySkyColor.clone();
 const renderDistance = isCoarsePointer ? 27 : 43;
-scene.fog = new THREE.Fog("#a9d8ed", renderDistance * 0.58, renderDistance);
+scene.fog = new THREE.Fog(daySkyColor, renderDistance * 0.58, renderDistance);
 const camera = new THREE.PerspectiveCamera(74, 1, 0.1, 90);
 camera.far = renderDistance + 8;
 camera.updateProjectionMatrix();
@@ -589,7 +604,8 @@ try {
 }
 renderer.shadowMap.enabled = false;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-scene.add(new THREE.HemisphereLight("#e6f5ff", "#566147", 2.1));
+const hemisphereLight = new THREE.HemisphereLight("#e6f5ff", "#566147", 2.1);
+scene.add(hemisphereLight);
 const sunlight = new THREE.DirectionalLight("#fff1ce", 2.2);
 sunlight.position.set(-10, 18, 9);
 scene.add(sunlight);
@@ -598,6 +614,11 @@ const sunMesh = new THREE.Mesh(
   new THREE.MeshBasicMaterial({ color: "#ffd475" }),
 );
 scene.add(sunMesh);
+const moonMesh = new THREE.Mesh(
+  new THREE.SphereGeometry(2.3, 16, 12),
+  new THREE.MeshBasicMaterial({ color: "#dce8ff" }),
+);
+scene.add(moonMesh);
 const cloudMaterial = new THREE.MeshBasicMaterial({
   color: "#f7fbf2",
   transparent: true,
@@ -642,11 +663,14 @@ const waterSurfaceMaterial = new THREE.MeshLambertMaterial({
   side: THREE.DoubleSide,
 });
 const blockMeshes = [];
+const cityLightSources = [];
+const cityInfrastructureMeshes = [];
 const remotePlayers = new Map();
 const botAvatars = new Map();
 const monsterAvatars = new Map();
 const animalAvatars = new Map();
 const vehicleMeshes = new Map();
+const tankShells = [];
 const blockBitsGltfSources = import.meta.glob("./assets/Assets/gltf/*.gltf", {
   query: "?raw",
   import: "default",
@@ -719,6 +743,8 @@ const renderCandidatesByChunk = new Map();
 const pendingChunks = new Set();
 let chunkGeneration = 0;
 const raycaster = new THREE.Raycaster();
+const tankRaycaster = new THREE.Raycaster();
+const tankRayObjects = [];
 const cameraRayOrigin = new THREE.Vector3();
 const cameraRaySample = new THREE.Vector3();
 const cameraRayOffset = new THREE.Vector3();
@@ -759,6 +785,7 @@ const state = {
   inventory: new Map(),
   roomAnimals: [],
   roomMonsters: [],
+  openDoors: new Set(),
   vehicles: [],
   vehicleId: null,
   vehicleType: null,
@@ -766,7 +793,9 @@ const state = {
   fishingCast: null,
   isFlying: false,
   flyVerticalDirection: 0,
+  aircraftAltitudeTarget: null,
   tankTurretDirection: 0,
+  tankTurretPitchDirection: 0,
 };
 let lobbyRoom = null;
 let toastTimer;
@@ -786,12 +815,32 @@ function updateCamera() {
   const up = new THREE.Vector3(frame.up.x, frame.up.y, frame.up.z);
   const east = new THREE.Vector3(frame.east.x, frame.east.y, frame.east.z);
   const north = new THREE.Vector3(frame.north.x, frame.north.y, frame.north.z);
-  const forward = north.multiplyScalar(Math.cos(look.yaw)).addScaledVector(east, -Math.sin(look.yaw));
-  forward.multiplyScalar(Math.cos(look.pitch)).addScaledVector(up, Math.sin(look.pitch));
+  const tank = state.vehicleType === "tank"
+    ? state.vehicles.find(({ id }) => id === state.vehicleId)
+    : null;
+  const cameraYaw = tank?.turretYaw ?? look.yaw;
+  const cameraPitch = tank?.turretPitch ?? look.pitch;
+  const forward = north.multiplyScalar(Math.cos(cameraYaw)).addScaledVector(east, -Math.sin(cameraYaw));
+  forward.multiplyScalar(Math.cos(cameraPitch)).addScaledVector(up, Math.sin(cameraPitch));
   camera.up.copy(up);
   if (thirdPersonView || state.vehicleType === "tank") {
     const target = planetPointAt(playerPosition.x, playerPosition.y + 0.2, playerPosition.z);
-    camera.position.set(target.x, target.y, target.z).addScaledVector(forward, -4.5).addScaledVector(up, 1.7);
+    if (tank) {
+      const hullForward = north.clone()
+        .multiplyScalar(Math.cos(tank.yaw))
+        .addScaledVector(east, -Math.sin(tank.yaw));
+      const levelAimForward = north.clone()
+        .multiplyScalar(Math.cos(cameraYaw))
+        .addScaledVector(east, -Math.sin(cameraYaw));
+      camera.position.set(target.x, target.y, target.z)
+        .addScaledVector(hullForward, -5)
+        .addScaledVector(up, 2.2);
+      camera.lookAt(new THREE.Vector3(target.x, target.y, target.z).addScaledVector(levelAimForward, 10));
+    } else {
+      camera.position.set(target.x, target.y, target.z)
+        .addScaledVector(forward, -4.5)
+        .addScaledVector(up, 1.7);
+    }
     cameraRayOrigin.set(target.x, target.y, target.z);
     cameraRayOffset.subVectors(camera.position, cameraRayOrigin);
     const cameraDistance = cameraRayOffset.length();
@@ -819,7 +868,7 @@ function updateCamera() {
         break;
       }
     }
-    camera.lookAt(target.x, target.y, target.z);
+    if (!tank) camera.lookAt(target.x, target.y, target.z);
   } else {
     camera.position.set(point.x, point.y, point.z);
     camera.lookAt(camera.position.clone().add(forward));
@@ -842,10 +891,44 @@ function updateSkyObjects(now) {
   const frame = planetFrameAt(playerPosition.x, playerPosition.z);
   const east = new THREE.Vector3(frame.east.x, frame.east.y, frame.east.z);
   const north = new THREE.Vector3(frame.north.x, frame.north.y, frame.north.z);
+  const up = new THREE.Vector3(frame.up.x, frame.up.y, frame.up.z);
+  const dayPhase = (now % 240_000) / 240_000;
+  const solarAngle = dayPhase * Math.PI * 2;
+  const daylight = THREE.MathUtils.smoothstep(Math.sin(solarAngle), -0.12, 0.3);
+  const night = 1 - daylight;
+  const rainPhase = (now % 180_000) / 180_000;
+  const raining = rainPhase >= 0.58 && rainPhase < 0.82;
+  scene.background.copy(daySkyColor).lerp(nightSkyColor, night);
+  scene.fog.color.copy(scene.background);
+  hemisphereLight.intensity = 0.35 + daylight * 1.75;
+  hemisphereLight.color.set("#e6f5ff").lerp(nightHemisphereColor, night);
+  hemisphereLight.groundColor.set("#566147").lerp(nightGroundColor, night);
+  sunlight.intensity = 0.08 + daylight * (raining ? 1.1 : 2.12);
+  sunlight.color.set("#fff1ce").lerp(nightSunlightColor, night);
+  sunMesh.visible = daylight > 0.025;
+  moonMesh.visible = night > 0.25;
+  rainOverlay.classList.toggle("active", raining);
+  weatherHud.textContent = `${night > 0.5 ? "NIGHT" : "DAY"}${raining ? " · RAIN" : ""}`;
+  for (const light of cityLightSources) {
+    light.intensity = night * (raining ? 2.8 : 2.2);
+  }
+  const activeVehicle = vehicleMeshes.get(state.vehicleId);
+  for (const vehicle of vehicleMeshes.values()) {
+    for (const headlight of vehicle.userData.headlights ?? []) {
+      headlight.intensity = vehicle === activeVehicle ? night * (raining ? 46 : 38) : 0;
+    }
+  }
   const sunPosition = planetPointAt(playerPosition.x, playerPosition.y + 43, playerPosition.z);
-  sunMesh.position.copy(sunPosition).addScaledVector(north, 34);
+  sunMesh.position.copy(sunPosition)
+    .addScaledVector(north, Math.cos(solarAngle) * 34)
+    .addScaledVector(up, Math.sin(solarAngle) * 34);
   sunlight.position.copy(sunMesh.position);
+  const moonPosition = planetPointAt(playerPosition.x, playerPosition.y + 43, playerPosition.z);
+  moonMesh.position.copy(moonPosition)
+    .addScaledVector(north, -Math.cos(solarAngle) * 34)
+    .addScaledVector(up, -Math.sin(solarAngle) * 34);
   const orientation = surfaceQuaternionAt(playerPosition.x, playerPosition.z);
+  cloudMaterial.opacity = raining ? 0.96 : 0.82;
   for (const cloud of skyClouds) {
     const cloudPosition = planetPointAt(playerPosition.x, playerPosition.y + cloud.height, playerPosition.z);
     const drift = Math.sin(now * 0.00008 + cloud.phase) * 5;
@@ -943,12 +1026,18 @@ function resize() {
   renderer.setSize(width, height, false);
   camera.aspect = width / height;
   camera.updateProjectionMatrix();
+  updateTankAimCrosshair();
 }
 window.addEventListener("resize", resize);
 resize();
 
 function chunkKey(chunkX, chunkZ) {
   return `${chunkX},${chunkZ}`;
+}
+
+function isDoorOpenAt(x, y, z) {
+  const doorKey = blockKey(x, y, z);
+  return state.openDoors.has(doorKey) || state.openDoors.has(blockKey(x, y - 1, z));
 }
 
 function wrapPlanetChunkX(chunkX) {
@@ -1108,7 +1197,7 @@ function updateChunkWindow(force = false) {
   lastChunkX = chunkX;
   lastChunkZ = chunkZ;
 
-  const loadRadius = isCoarsePointer ? 1 : 2;
+  const loadRadius = state.vehicleId ? 1 : isCoarsePointer ? 1 : 2;
   const unloadRadius = loadRadius + 1;
   let changed = false;
   let unloaded = false;
@@ -1543,6 +1632,29 @@ function renderPublicBuildingFurniture(renderDistance, longitudeScale) {
 }
 
 function renderWorld() {
+  const activeRenderDistance = state.vehicleId ? Math.min(renderDistance, 32) : renderDistance;
+  const cityGeometries = new Set();
+  const cityMaterials = new Set();
+  const cityTextures = new Set();
+  for (const mesh of cityInfrastructureMeshes) {
+    scene.remove(mesh);
+    mesh.traverse((part) => {
+      if (part.geometry) cityGeometries.add(part.geometry);
+      if (Array.isArray(part.material)) {
+        part.material.forEach((material) => cityMaterials.add(material));
+      } else if (part.material) {
+        cityMaterials.add(part.material);
+      }
+    });
+  }
+  for (const material of cityMaterials) {
+    if (material.map) cityTextures.add(material.map);
+    material.dispose();
+  }
+  for (const geometry of cityGeometries) geometry.dispose();
+  for (const texture of cityTextures) texture.dispose();
+  cityInfrastructureMeshes.length = 0;
+  cityLightSources.length = 0;
   for (const sign of cityShopSigns) {
     scene.remove(sign);
     sign.traverse((part) => {
@@ -1590,7 +1702,7 @@ function renderWorld() {
       let deltaX = wrapPlanetX(x - playerPosition.x);
       if (deltaX > PLANET_LONGITUDE_BLOCKS / 2) deltaX -= PLANET_LONGITUDE_BLOCKS;
       const mapDistance = Math.hypot(deltaX * longitudeScale, z - playerPosition.z);
-      if (mapDistance > renderDistance) continue;
+      if (mapDistance > activeRenderDistance) continue;
       if (model) {
         placedModels.push([model, x, y, z]);
         continue;
@@ -1665,7 +1777,8 @@ function renderWorld() {
     if (worldBlocks.get(blockKey(x, y - 1, z)) === "oak_door") continue;
     const height = worldBlocks.get(blockKey(x, y + 1, z)) === "oak_door" ? 2 : 1;
     const frame = planetFrameAt(x, z);
-    const point = planetPointAt(x, y + height / 2, z);
+    const worldPoint = planetPointAt(x, y + height / 2, z);
+    const point = new THREE.Vector3(worldPoint.x, worldPoint.y, worldPoint.z);
     const outward = new THREE.Vector3(-frame.north.x, -frame.north.y, -frame.north.z);
     point.addScaledVector(outward, 0.07);
     east.set(frame.east.x, frame.east.y, frame.east.z);
@@ -1680,6 +1793,7 @@ function renderWorld() {
       2 * blockRadius * Math.tan(Math.PI / (2 * PLANET_LATITUDE_BLOCKS)),
     );
     const door = new THREE.Group();
+    door.rotation.y = isDoorOpenAt(x, y, z) ? Math.PI / 2 : 0;
     door.position.copy(point);
     door.quaternion.copy(orientation);
     door.scale.copy(scale);
@@ -1707,7 +1821,7 @@ function renderWorld() {
     scene.add(door);
     blockMeshes.push(door);
   }
-  renderPublicBuildingFurniture(renderDistance, longitudeScale);
+  renderPublicBuildingFurniture(activeRenderDistance, longitudeScale);
   if (waterSurfaceCoordinates.length > 0) {
     const waterMesh = new THREE.InstancedMesh(
       waterSurfaceGeometry,
@@ -1742,7 +1856,7 @@ function renderWorld() {
   for (const shop of listCityShops(state.seed)) {
     let deltaX = wrapPlanetX(shop.x - playerPosition.x);
     if (deltaX > PLANET_LONGITUDE_BLOCKS / 2) deltaX -= PLANET_LONGITUDE_BLOCKS;
-    if (Math.hypot(deltaX * longitudeScale, shop.z - playerPosition.z) > renderDistance) continue;
+    if (Math.hypot(deltaX * longitudeScale, shop.z - playerPosition.z) > activeRenderDistance) continue;
     const signCanvas = document.createElement("canvas");
     signCanvas.width = 384;
     signCanvas.height = 128;
@@ -1789,11 +1903,137 @@ function renderWorld() {
     scene.add(sign);
     cityShopSigns.push(sign);
   }
+  const addCityFixture = (group, x, y, z) => {
+    let deltaX = wrapPlanetX(x - playerPosition.x);
+    if (deltaX > PLANET_LONGITUDE_BLOCKS / 2) deltaX -= PLANET_LONGITUDE_BLOCKS;
+    if (Math.hypot(deltaX * longitudeScale, z - playerPosition.z) > activeRenderDistance + 10) return false;
+    const frame = planetFrameAt(x, z);
+    const point = planetPointAt(x, y, z);
+    const orientation = new THREE.Matrix4().makeBasis(
+      new THREE.Vector3(frame.east.x, frame.east.y, frame.east.z),
+      new THREE.Vector3(frame.up.x, frame.up.y, frame.up.z),
+      new THREE.Vector3(-frame.north.x, -frame.north.y, -frame.north.z),
+    );
+    group.position.copy(point);
+    group.quaternion.setFromRotationMatrix(orientation);
+    const blockRadius = PLANET_RADIUS + y;
+    group.scale.set(
+      Math.max(0.05, 2 * Math.cos(frame.latitude) * blockRadius * Math.tan(Math.PI / PLANET_LONGITUDE_BLOCKS)),
+      1,
+      2 * blockRadius * Math.tan(Math.PI / (2 * PLANET_LATITUDE_BLOCKS)),
+    );
+    scene.add(group);
+    cityInfrastructureMeshes.push(group);
+    return true;
+  };
+  const isCityFixtureNearby = (x, z) => {
+    let deltaX = wrapPlanetX(x - playerPosition.x);
+    if (deltaX > PLANET_LONGITUDE_BLOCKS / 2) deltaX -= PLANET_LONGITUDE_BLOCKS;
+    return Math.hypot(deltaX * longitudeScale, z - playerPosition.z) <= activeRenderDistance + 10;
+  };
+  const streetLampPole = new THREE.MeshLambertMaterial({ color: "#343d46" });
+  const streetLampGlow = new THREE.MeshBasicMaterial({ color: "#ffe8a0" });
+  const streetLampPoleGeometry = new THREE.CylinderGeometry(0.08, 0.13, 4.2, 7);
+  const streetLampArmGeometry = new THREE.BoxGeometry(0.12, 0.12, 0.8);
+  const streetLampFixtureGeometry = new THREE.BoxGeometry(0.48, 0.16, 0.4);
+  const addStreetLamp = (x, z) => {
+    if (!isCityFixtureNearby(x, z)) return;
+    const lamp = new THREE.Group();
+    const pole = new THREE.Mesh(streetLampPoleGeometry, streetLampPole);
+    pole.position.y = 2.1;
+    lamp.add(pole);
+    const arm = new THREE.Mesh(streetLampArmGeometry, streetLampPole);
+    arm.position.set(0.2, 4.05, 0);
+    lamp.add(arm);
+    const fixture = new THREE.Mesh(streetLampFixtureGeometry, streetLampGlow);
+    fixture.position.set(0.42, 3.93, 0);
+    lamp.add(fixture);
+    if (cityLightSources.length < 4) {
+      const bulb = new THREE.PointLight("#ffd987", 0, 15, 2);
+      bulb.position.set(0.42, 3.78, 0);
+      lamp.add(bulb);
+      if (addCityFixture(lamp, x, terrainHeightAt(x, z, state.seed), z)) cityLightSources.push(bulb);
+      return;
+    }
+    addCityFixture(lamp, x, terrainHeightAt(x, z, state.seed), z);
+  };
+  const streetLampPositions = new Set();
+  for (let street = -4; street <= 4; street += 1) {
+    for (const side of [-1, 1]) {
+      const streetX = street * CITY_BLOCK_SIZE + side * 11;
+      const streetZ = street * CITY_BLOCK_SIZE + side * 11;
+      for (let alongStreet = -108; alongStreet <= 108; alongStreet += 24) {
+        if (Math.hypot(streetX, alongStreet) <= CITY_RADIUS) {
+          streetLampPositions.add(`${streetX},${alongStreet}`);
+        }
+        if (Math.hypot(alongStreet, streetZ) <= CITY_RADIUS) {
+          streetLampPositions.add(`${alongStreet},${streetZ}`);
+        }
+      }
+    }
+  }
+  for (const position of [...streetLampPositions]
+    .map((value) => value.split(",").map(Number))
+    .sort((left, right) => Math.hypot(left[0] - playerPosition.x, left[1] - playerPosition.z)
+      - Math.hypot(right[0] - playerPosition.x, right[1] - playerPosition.z))) {
+    const [x, z] = position;
+    addStreetLamp(x, z);
+  }
+  for (const x of [-22, 22]) {
+    for (const z of [110, 122, 134]) addStreetLamp(x, z);
+  }
+  const stationX = CITY_POLICE_STATION.x;
+  const stationZ = CITY_POLICE_STATION.z;
+  let stationDeltaX = wrapPlanetX(stationX - playerPosition.x);
+  if (stationDeltaX > PLANET_LONGITUDE_BLOCKS / 2) stationDeltaX -= PLANET_LONGITUDE_BLOCKS;
+  if (Math.hypot(stationDeltaX * longitudeScale, stationZ - playerPosition.z) <= activeRenderDistance + 10) {
+    const stationSignCanvas = document.createElement("canvas");
+    stationSignCanvas.width = 512;
+    stationSignCanvas.height = 128;
+    const stationSignContext = stationSignCanvas.getContext("2d");
+    stationSignContext.fillStyle = "#143568";
+    stationSignContext.fillRect(0, 0, 512, 128);
+    stationSignContext.fillStyle = "#dbe8ff";
+    stationSignContext.font = "bold 58px system-ui, sans-serif";
+    stationSignContext.textAlign = "center";
+    stationSignContext.textBaseline = "middle";
+    stationSignContext.fillText("POLICE", 256, 66);
+    stationSignContext.fillStyle = "#d64e52";
+    stationSignContext.fillRect(0, 0, 512, 12);
+    stationSignContext.fillStyle = "#568ce2";
+    stationSignContext.fillRect(0, 116, 512, 12);
+    const stationSignTexture = new THREE.CanvasTexture(stationSignCanvas);
+    stationSignTexture.colorSpace = THREE.SRGBColorSpace;
+    const stationSign = new THREE.Group();
+    const signBoard = new THREE.Mesh(
+      new THREE.BoxGeometry(5.2, 1.35, 0.16),
+      new THREE.MeshLambertMaterial({ color: "#172b48" }),
+    );
+    stationSign.add(signBoard);
+    const signFace = new THREE.Mesh(
+      new THREE.PlaneGeometry(5, 1.15),
+      new THREE.MeshBasicMaterial({ map: stationSignTexture, toneMapped: false }),
+    );
+    signFace.position.z = 0.09;
+    stationSign.add(signFace);
+    addCityFixture(stationSign, stationX, 4.8, stationZ - 8.15);
+    const entranceLamps = new THREE.Group();
+    for (const side of [-1, 1]) {
+      const entranceLight = new THREE.PointLight("#9dbfff", 0, 11, 2);
+      entranceLight.position.set(side * 4.4, 4.2, 0);
+      entranceLamps.add(entranceLight);
+      cityLightSources.push(entranceLight);
+    }
+    addCityFixture(entranceLamps, stationX, 0, stationZ - 8.7);
+  }
 }
 
 function scheduleWorldRender() {
-  window.clearTimeout(worldRenderTimer);
-  worldRenderTimer = window.setTimeout(renderWorld, 100);
+  if (worldRenderTimer !== undefined) return;
+  worldRenderTimer = window.setTimeout(() => {
+    worldRenderTimer = undefined;
+    renderWorld();
+  }, state.vehicleId ? 400 : 100);
 }
 
 function avatarLabel(text, color) {
@@ -2389,6 +2629,10 @@ function isAircraftType(type) {
   return type === "plane" || type === "jet";
 }
 
+function isCarType(type) {
+  return type === "car" || type === "police";
+}
+
 function makeVehicle(vehicle) {
   const group = new THREE.Group();
   const design = vehicle.design ?? {};
@@ -2628,11 +2872,28 @@ function makeVehicle(vehicle) {
           group.add(wheel);
         }
       }
+      if (vehicle.type === "police") {
+        addBox([0.68, 0.1, 0.22], [0, 1.47, 0.22], trim);
+        const redLight = new THREE.Mesh(
+          new THREE.BoxGeometry(0.25, 0.16, 0.2),
+          new THREE.MeshBasicMaterial({ color: "#ff3048" }),
+        );
+        redLight.position.set(-0.2, 1.58, 0.22);
+        group.add(redLight);
+        const blueLight = new THREE.Mesh(
+          new THREE.BoxGeometry(0.25, 0.16, 0.2),
+          new THREE.MeshBasicMaterial({ color: "#3284ff" }),
+        );
+        blueLight.position.set(0.2, 1.58, 0.22);
+        group.add(blueLight);
+        group.userData.policeLights = [redLight, blueLight];
+      }
     }
   }
   group.userData.vehicleType = vehicle.type;
   group.userData.propeller = group.userData.propeller ?? null;
   group.userData.jetExhausts = group.userData.jetExhausts ?? [];
+  group.userData.policeLights = group.userData.policeLights ?? [];
   scene.add(group);
   return group;
 }
@@ -2762,9 +3023,84 @@ function nearestAvailableVehicle() {
   return nearest;
 }
 
+function updateTankAimCrosshair() {
+  const vehicle = state.vehicles.find(({ id }) => id === state.vehicleId);
+  if (!vehicle || vehicle.type !== "tank") {
+    aimCrosshair.style.top = "";
+    aimCrosshair.style.left = "";
+    return;
+  }
+  const pitch = vehicle.turretPitch ?? 0;
+  const projectedOffset = Math.tan(pitch) * window.innerHeight /
+    (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
+  const crosshairY = THREE.MathUtils.clamp(
+    window.innerHeight / 2 - projectedOffset,
+    18,
+    window.innerHeight - 18,
+  );
+  aimCrosshair.style.left = `${window.innerWidth / 2}px`;
+  aimCrosshair.style.top = `${crosshairY}px`;
+}
+
+function updateVehicleHeadlights() {
+  const activeId = state.vehicleId;
+  for (const [id, mesh] of vehicleMeshes) {
+    const shouldHaveHeadlights = id === activeId &&
+      (isAircraftType(mesh.userData.vehicleType) || isCarType(mesh.userData.vehicleType));
+    if (shouldHaveHeadlights && !mesh.userData.headlights?.length) {
+      mesh.userData.headlights = [];
+      mesh.userData.headlightParts = [];
+      for (const x of [-0.48, 0.48]) {
+        const headlight = new THREE.SpotLight("#fff1cf", 0, 48, Math.PI / 5, 0.45, 1.4);
+        headlight.position.set(x, 0.58, -1.45);
+        headlight.target.position.set(x, 0, -30);
+        headlight.castShadow = false;
+        const lens = new THREE.Mesh(
+          new THREE.SphereGeometry(0.1, 8, 6),
+          new THREE.MeshBasicMaterial({ color: "#fff2c4" }),
+        );
+        lens.position.set(x, 0.58, -1.5);
+        mesh.add(headlight, headlight.target, lens);
+        mesh.userData.headlights.push(headlight);
+        mesh.userData.headlightParts.push(headlight.target, lens);
+      }
+    } else if (!shouldHaveHeadlights && mesh.userData.headlights?.length) {
+      for (const headlight of mesh.userData.headlights) {
+        mesh.remove(headlight);
+      }
+      for (const part of mesh.userData.headlightParts) {
+        mesh.remove(part);
+        part.geometry?.dispose();
+        if (Array.isArray(part.material)) part.material.forEach((material) => material.dispose());
+        else part.material?.dispose();
+      }
+      mesh.userData.headlights = [];
+      mesh.userData.headlightParts = [];
+    }
+  }
+}
+
 function updateVehicleButton() {
   const current = state.vehicles.find(({ id }) => id === state.vehicleId);
   const nearby = current ? null : nearestAvailableVehicle();
+  const inVehicle = Boolean(current);
+  const activeAircraft = current && isAircraftType(current.type) ? current : null;
+  updateVehicleHeadlights();
+  document.documentElement.classList.toggle("tank-aiming", state.vehicleType === "tank");
+  document.documentElement.classList.toggle("aircraft-aiming", Boolean(activeAircraft?.airborne));
+  if (state.vehicleType === "tank") {
+    center.set(0, 0);
+    updateTankAimCrosshair();
+  } else {
+    state.tankTurretDirection = 0;
+    state.tankTurretPitchDirection = 0;
+    updateTankAimCrosshair();
+  }
+  flyToggle.closest(".game-menu-view-toggle").hidden = inVehicle;
+  breakButton.hidden = inVehicle;
+  placeButton.hidden = inVehicle;
+  fishButton.hidden = inVehicle;
+  fishMenuButton.hidden = inVehicle;
   vehicleButton.hidden = !current && !nearby;
   vehicleButton.textContent = current
     ? `Exit ${current.type}`
@@ -2772,15 +3108,26 @@ function updateVehicleButton() {
       ? `Enter ${nearby.type}`
       : "Vehicle";
   vehicleButton.setAttribute("aria-label", vehicleButton.textContent);
-  attackButton.textContent = state.vehicleType === "tank" ? "Fire" : "Punch";
-  attackButton.setAttribute("aria-label", state.vehicleType === "tank" ? "Fire tank cannon" : "Punch");
-  const canFlyVertically = state.isFlying || isAircraftType(state.vehicleType);
-  flyUpButton.hidden = !canFlyVertically;
+  attackButton.textContent = state.vehicleType === "tank"
+    ? "Fire"
+    : activeAircraft ? "Shoot" : "Punch";
+  attackButton.setAttribute("aria-label", state.vehicleType === "tank"
+    ? "Fire tank cannon"
+    : activeAircraft ? "Fire aircraft guns" : "Punch");
+  const canFlyVertically = state.isFlying || Boolean(activeAircraft?.airborne);
+  jumpButton.hidden = inVehicle;
+  flyUpButton.hidden = !canFlyVertically && !activeAircraft;
   flyDownButton.hidden = !canFlyVertically;
-  flyButton.hidden = isAircraftType(state.vehicleType);
-  desktopFlyButton.hidden = isAircraftType(state.vehicleType);
+  flyButton.hidden = inVehicle && !activeAircraft;
+  desktopFlyButton.hidden = inVehicle && !activeAircraft;
+  if (activeAircraft) {
+    flyButton.textContent = activeAircraft.airborne ? "Land" : "Take Off";
+    desktopFlyButton.textContent = activeAircraft.airborne ? "Land" : "Take Off";
+  }
   tankAimLeftButton.hidden = state.vehicleType !== "tank";
   tankAimRightButton.hidden = state.vehicleType !== "tank";
+  tankAimUpButton.hidden = state.vehicleType !== "tank";
+  tankAimDownButton.hidden = state.vehicleType !== "tank";
   tankFireButton.hidden = state.vehicleType !== "tank";
   attackButton.hidden = state.vehicleType === "tank";
 }
@@ -2812,6 +3159,7 @@ function updateVehicleMesh(vehicle, mesh) {
   mesh.quaternion.copy(surfaceQuaternionAt(vehicle.x, vehicle.z, vehicle.yaw));
   if (mesh.userData.turret) {
     mesh.userData.turret.rotation.y = (vehicle.turretYaw ?? vehicle.yaw) - vehicle.yaw;
+    mesh.userData.turret.rotation.x = vehicle.turretPitch ?? 0;
   }
 }
 
@@ -2822,6 +3170,131 @@ function animateVehicles(delta) {
       const flicker = 0.9 + Math.sin(performance.now() * 0.024) * 0.12;
       for (const exhaust of vehicle.userData.jetExhausts) exhaust.scale.setScalar(flicker);
     }
+    if (vehicle.userData.policeLights?.length) {
+      const flash = Math.floor(performance.now() / 180) % 2;
+      vehicle.userData.policeLights[0].visible = flash === 0;
+      vehicle.userData.policeLights[1].visible = flash === 1;
+    }
+  }
+}
+
+function fireTankShell(target, impact) {
+  const vehicle = state.vehicles.find(({ id }) => id === state.vehicleId);
+  if (!vehicle || vehicle.type !== "tank") return;
+  const tankMesh = vehicleMeshes.get(vehicle.id);
+  tankMesh?.updateMatrixWorld(true);
+  const aimYaw = vehicle.turretYaw ?? vehicle.yaw;
+  const forwardEast = -Math.sin(aimYaw);
+  const forwardNorth = Math.cos(aimYaw);
+  const frame = planetFrameAt(vehicle.x, vehicle.z);
+  const direction = new THREE.Vector3(frame.east.x, frame.east.y, frame.east.z)
+    .multiplyScalar(forwardEast)
+    .addScaledVector(new THREE.Vector3(frame.north.x, frame.north.y, frame.north.z), forwardNorth)
+    .multiplyScalar(Math.cos(vehicle.turretPitch ?? 0))
+    .addScaledVector(new THREE.Vector3(frame.up.x, frame.up.y, frame.up.z), Math.sin(vehicle.turretPitch ?? 0))
+    .normalize();
+  const turret = tankMesh?.userData.turret;
+  const fallbackOrigin = planetPointAt(vehicle.x, vehicle.y + 2.3, vehicle.z);
+  const origin = turret
+    ? turret.localToWorld(new THREE.Vector3(0, 0.06, -2.5))
+    : new THREE.Vector3(fallbackOrigin.x, fallbackOrigin.y, fallbackOrigin.z);
+  const endpoint = impact?.point
+    ? new THREE.Vector3(impact.point.x, impact.point.y, impact.point.z)
+    : new THREE.Vector3().copy(origin).addScaledVector(direction, 48);
+  if (!impact?.point && target) {
+    const targetGround = terrainHeightAt(target.x, target.z, state.seed);
+    const targetPoint = planetPointAt(
+      target.x,
+      Number.isFinite(target.y) ? Math.max(targetGround + 1, target.y - 1.15) : targetGround + 1.2,
+      target.z,
+    );
+    const targetVector = new THREE.Vector3(targetPoint.x, targetPoint.y, targetPoint.z);
+    const distanceAlongShot = THREE.MathUtils.clamp(
+      targetVector.sub(origin).dot(direction),
+      0,
+      48,
+    );
+    endpoint.copy(origin).addScaledVector(direction, distanceAlongShot);
+  }
+  const shell = new THREE.Mesh(
+    new THREE.SphereGeometry(0.16, 8, 8),
+    new THREE.MeshBasicMaterial({ color: "#ffd16a" }),
+  );
+  shell.position.copy(origin);
+  shell.userData.start = origin.clone();
+  shell.userData.end = new THREE.Vector3(endpoint.x, endpoint.y, endpoint.z);
+  shell.userData.age = 0;
+  shell.userData.duration = Math.max(0.08, origin.distanceTo(shell.userData.end) / 180);
+  scene.add(shell);
+  tankShells.push(shell);
+}
+
+function findTankImpact() {
+  const vehicle = state.vehicles.find(({ id }) => id === state.vehicleId);
+  if (!vehicle || vehicle.type !== "tank") return null;
+  const mesh = vehicleMeshes.get(vehicle.id);
+  if (!mesh?.userData.turret) return null;
+  mesh.updateMatrixWorld(true);
+  const frame = planetFrameAt(vehicle.x, vehicle.z);
+  const aimYaw = vehicle.turretYaw ?? vehicle.yaw;
+  const east = -Math.sin(aimYaw);
+  const north = Math.cos(aimYaw);
+  const direction = new THREE.Vector3(frame.east.x, frame.east.y, frame.east.z)
+    .multiplyScalar(east)
+    .addScaledVector(new THREE.Vector3(frame.north.x, frame.north.y, frame.north.z), north)
+    .multiplyScalar(Math.cos(vehicle.turretPitch ?? 0))
+    .addScaledVector(new THREE.Vector3(frame.up.x, frame.up.y, frame.up.z), Math.sin(vehicle.turretPitch ?? 0))
+    .normalize();
+  const origin = mesh.userData.turret.localToWorld(new THREE.Vector3(0, 0.06, -2.5));
+  tankRaycaster.set(origin, direction);
+  tankRaycaster.near = 0;
+  tankRaycaster.far = 48;
+  tankRayObjects.length = 0;
+  tankRayObjects.push(...blockMeshes, ...modelTargetMeshes);
+  for (const [id, vehicleMesh] of vehicleMeshes) {
+    if (id === vehicle.id) continue;
+    vehicleMesh.userData.targetVehicleId = id;
+    tankRayObjects.push(vehicleMesh);
+  }
+  const hits = tankRaycaster.intersectObjects(tankRayObjects, true);
+  const hit = hits.find((candidate) => {
+    let object = candidate.object;
+    while (object && object !== scene) {
+      if (object.userData.targetVehicleId) return true;
+      object = object.parent;
+    }
+    return candidate.object.userData.blockType !== "water" &&
+      (candidate.instanceId !== undefined || candidate.object.userData.blockCoordinates);
+  });
+  if (!hit) return null;
+  let hitObject = hit.object;
+  while (hitObject && !hitObject.userData.targetVehicleId) hitObject = hitObject.parent;
+  if (hitObject?.userData.targetVehicleId) {
+    return {
+      targetVehicleId: hitObject.userData.targetVehicleId,
+      point: { x: hit.point.x, y: hit.point.y, z: hit.point.z },
+    };
+  }
+  const coords = hit.instanceId !== undefined
+    ? hit.object.userData.coordinates[hit.instanceId]
+    : hit.object.userData.blockCoordinates;
+  return {
+    coords,
+    point: { x: hit.point.x, y: hit.point.y, z: hit.point.z },
+  };
+}
+
+function animateTankShells(delta) {
+  for (let index = tankShells.length - 1; index >= 0; index -= 1) {
+    const shell = tankShells[index];
+    shell.userData.age += delta;
+    const progress = Math.min(1, shell.userData.age / shell.userData.duration);
+    shell.position.lerpVectors(shell.userData.start, shell.userData.end, progress);
+    if (progress < 1) continue;
+    scene.remove(shell);
+    shell.geometry.dispose();
+    shell.material.dispose();
+    tankShells.splice(index, 1);
   }
 }
 
@@ -2947,11 +3420,26 @@ function applySnapshot(message) {
   state.roomPlayers = playerList;
   state.properties = message.properties ?? state.properties;
   state.roomMonsters = message.monsters ?? [];
+  if (Array.isArray(message.openDoors)) {
+    const nextOpenDoors = new Set(message.openDoors);
+    if (
+      nextOpenDoors.size !== state.openDoors.size ||
+      [...nextOpenDoors].some((key) => !state.openDoors.has(key))
+    ) {
+      state.openDoors = nextOpenDoors;
+      scheduleWorldRender();
+    }
+  }
   updateVehicles(message.vehicles ?? state.vehicles);
   const self = playerList.find((player) => player.id === state.id);
   if (self?.name) state.playerName = self.name;
+  const previousVehicleId = state.vehicleId;
   state.vehicleId = self?.vehicleId ?? null;
   state.vehicleType = state.vehicles.find(({ id }) => id === state.vehicleId)?.type ?? null;
+  if (previousVehicleId !== state.vehicleId) {
+    updateChunkWindow(true);
+    scheduleWorldRender();
+  }
   updateVehicleButton();
   if (self) {
     const previousHealth = state.health;
@@ -3372,7 +3860,18 @@ function connect() {
       profileStatus.textContent = "Profile saved and synced.";
     } else if (message.type === "fly_result") {
       state.isFlying = message.enabled === true;
-      if (!state.isFlying) state.flyVerticalDirection = 0;
+      const aircraft = state.vehicles.find(({ id }) => id === message.vehicleId);
+      if (aircraft && isAircraftType(aircraft.type)) {
+        aircraft.airborne = state.isFlying;
+        if (message.position && !state.isFlying) {
+          playerPosition.set(message.position.x, message.position.y, message.position.z);
+          aircraft.y = message.position.y - 2.65;
+        }
+      }
+      if (!state.isFlying) {
+        state.flyVerticalDirection = 0;
+        state.aircraftAltitudeTarget = null;
+      }
       flyToggle.checked = state.isFlying;
       flyButton.setAttribute("aria-pressed", String(state.isFlying));
       flyButton.textContent = state.isFlying ? "Land" : "Fly";
@@ -3407,6 +3906,8 @@ function connect() {
       updateCamera();
       updateLocalAvatar();
       notify(message.message);
+    } else if (message.type === "door_result") {
+      notify(message.message);
     } else if (message.type === "autosave_result") {
       autosaveToggle.checked = message.enabled;
       gameMenuStatus.textContent = message.message;
@@ -3418,7 +3919,24 @@ function connect() {
       }
       notify(message.message);
     } else if (message.type === "attack_result") {
-      if (message.hit && message.killed && message.reward) {
+      if (message.tank && Array.isArray(message.loot)) {
+        if (Array.isArray(message.inventory)) updateInventory(message.inventory);
+        if (message.loot.length > 0) {
+          const collected = message.loot
+            .map(({ item, count }) => `${itemName(item)} ×${count}`)
+            .join(", ");
+          const totals = message.loot
+            .map(({ item, total }) => `${itemName(item)} ×${total}`)
+            .join(", ");
+          notify(`Collected ${collected}. Inventory: ${totals}.`);
+        } else if (message.message) notify(message.message);
+      } else if (message.vehicleHit) {
+        notify(message.message);
+      } else if (message.hitByAircraft) {
+        notify(message.message);
+      } else if (message.aircraft && message.message) {
+        notify(message.message);
+      } else if (message.hit && message.killed && message.reward) {
         updateXp(message.reward.xp, message.reward.level);
         updateCoins(message.reward.coins);
         notify(`${message.tank ? "Tank defeated a monster!" : "Monster defeated!"} +${message.reward.xpGained} XP · +${message.reward.coinsGained} coins.`);
@@ -3453,6 +3971,7 @@ function connect() {
       statusText.textContent = "Connected";
       state.id = message.id;
       state.seed = message.seed;
+      state.openDoors = new Set(Array.isArray(message.openDoors) ? message.openDoors : []);
       createUnderwaterLife(state.seed);
       state.mode = message.mode === "design" ? "design" : "survival";
       state.isFlying = message.flying === true;
@@ -3654,15 +4173,29 @@ function requestFlight(enabled) {
     notify("Leave your boat before taking off.");
     return;
   }
+  if (state.vehicleId && !isAircraftType(state.vehicleType)) {
+    notify("Only an aircraft can take off while you are in a vehicle.");
+    return;
+  }
   if (!state.connected) {
     flyToggle.checked = state.isFlying;
     notify("Start a world before enabling flight.");
     return;
   }
-  if (!enabled) state.flyVerticalDirection = 0;
+  if (!enabled) {
+    state.flyVerticalDirection = 0;
+    state.aircraftAltitudeTarget = null;
+  }
   sendLobbyMessage({ type: "fly_toggle", enabled });
 }
 function useVehicleOrPlace() {
+  const target = targetBlock();
+  if (target && worldBlocks.get(blockKey(...target.coords)) === "oak_door") {
+    if (state.socket?.readyState === WebSocket.OPEN) {
+      state.socket.send(JSON.stringify({ type: "door_toggle", position: { x: target.coords[0], y: target.coords[1], z: target.coords[2] } }));
+    }
+    return;
+  }
   if (state.vehicleId) {
     sendLobbyMessage({ type: "vehicle_exit" });
     return;
@@ -3899,7 +4432,9 @@ function updateInventory(items) {
   updateCharacterArmor();
   renderCharacterProfile();
   if (!state.selected) {
-    selectBlock(hotbarItems.find((item) => item) ?? null);
+    const starterWeapon = ["wooden_sword", "stone_sword", "iron_sword", "steel_sword"]
+      .find((item) => hotbarItems.includes(item) && (state.inventory.get(item) ?? 0) > 0);
+    selectBlock(starterWeapon ?? hotbarItems.find((item) => item) ?? null);
   }
   renderInventory();
 }
@@ -4535,7 +5070,7 @@ function targetBlock() {
   const hit = hits.find((candidate) =>
     (candidate.instanceId !== undefined || candidate.object.userData.blockCoordinates) &&
     candidate.object.userData.blockType !== "water" &&
-    candidate.distance < 6,
+    candidate.distance < (state.vehicleType === "tank" ? 48 : 6),
   );
   if (!hit) return null;
   const coords = hit.instanceId !== undefined
@@ -4572,9 +5107,37 @@ function findCombatTarget() {
 
 function attackPlayer() {
   if (!state.connected || state.health <= 0) return;
+  if (isAircraftType(state.vehicleType)) {
+    const aircraft = state.vehicles.find(({ id }) => id === state.vehicleId);
+    if (!aircraft?.airborne) {
+      notify("Take off before firing the aircraft guns.");
+      return;
+    }
+    state.socket.send(JSON.stringify({
+      type: "aircraft_fire",
+      aimYaw: look.yaw,
+      aimPitch: look.pitch,
+    }));
+    return;
+  }
   if (state.vehicleType === "tank") {
     const target = findCombatTarget();
-    if (target) state.socket.send(JSON.stringify({ type: "tank_fire", targetId: target.id }));
+    const impact = findTankImpact();
+    const impactPosition = impact
+      && !impact.targetVehicleId
+      ? {
+          x: impact.coords[0],
+          y: impact.coords[1],
+          z: impact.coords[2],
+        }
+      : null;
+    fireTankShell(target, impact);
+    state.socket.send(JSON.stringify({
+      type: "tank_fire",
+      ...(target ? { targetId: target.id } : {}),
+      ...(impact?.targetVehicleId ? { targetVehicleId: impact.targetVehicleId } : {}),
+      ...(impactPosition ? { impactPosition } : {}),
+    }));
     return;
   }
   playerAttackTime = PLAYER_ATTACK_ANIMATION_DURATION;
@@ -4636,6 +5199,10 @@ function sendEdit(action) {
     return;
   }
   const [x, y, z] = target.coords;
+  if (action === "remove" && worldBlocks.get(blockKey(x, y, z)) === "oak_door") {
+    state.socket.send(JSON.stringify({ type: "door_toggle", position: { x, y, z } }));
+    return;
+  }
   if (action === "place" && !state.selected) {
     notify("Choose a block from your inventory first.");
     return;
@@ -4679,7 +5246,17 @@ function bindFlightControl(button, direction) {
   };
   button.addEventListener("pointerdown", (event) => {
     event.preventDefault();
-    if (!state.isFlying && state.vehicleType !== "plane") return;
+    if (!state.isFlying && !isAircraftType(state.vehicleType)) return;
+    if (isAircraftType(state.vehicleType)) {
+      const groundY = terrainHeightAt(playerPosition.x, playerPosition.z, state.seed) + 2.65;
+      if (!state.isFlying && direction > 0) requestFlight(true);
+      const currentTarget = state.aircraftAltitudeTarget ?? playerPosition.y;
+      state.aircraftAltitudeTarget = THREE.MathUtils.clamp(
+        currentTarget + direction * 8,
+        groundY,
+        MAX_BUILD_HEIGHT + 2,
+      );
+    }
     button.setPointerCapture(event.pointerId);
     state.flyVerticalDirection = direction;
   });
@@ -4703,8 +5280,24 @@ function bindTankTurretControl(button, direction) {
   button.addEventListener("pointercancel", release);
   button.addEventListener("lostpointercapture", release);
 }
+function bindTankElevationControl(button, direction) {
+  const release = () => {
+    if (state.tankTurretPitchDirection === direction) state.tankTurretPitchDirection = 0;
+  };
+  button.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    if (state.vehicleType !== "tank") return;
+    button.setPointerCapture(event.pointerId);
+    state.tankTurretPitchDirection = direction;
+  });
+  button.addEventListener("pointerup", release);
+  button.addEventListener("pointercancel", release);
+  button.addEventListener("lostpointercapture", release);
+}
 bindTankTurretControl(tankAimLeftButton, 1);
 bindTankTurretControl(tankAimRightButton, -1);
+bindTankElevationControl(tankAimUpButton, 1);
+bindTankElevationControl(tankAimDownButton, -1);
 function bindSwimControl(button, direction) {
   const release = () => {
     if (state.swimDirection === direction) state.swimDirection = 0;
@@ -4740,13 +5333,17 @@ window.addEventListener("keydown", (event) => {
   }
   if (event.code === "Space") {
     event.preventDefault();
-    if (state.isFlying || isAircraftType(state.vehicleType)) state.flyVerticalDirection = 1;
+    if (isAircraftType(state.vehicleType) && !state.isFlying) {
+      requestFlight(true);
+      state.flyVerticalDirection = 1;
+    } else if (state.isFlying || isAircraftType(state.vehicleType)) state.flyVerticalDirection = 1;
     else if (state.isSwimming) state.swimDirection = 1;
     else if (!state.vehicleId && !event.repeat) jump();
     return;
   }
   if (event.code === "PageUp" && (state.isFlying || isAircraftType(state.vehicleType))) {
     event.preventDefault();
+    if (isAircraftType(state.vehicleType) && !state.isFlying) requestFlight(true);
     state.flyVerticalDirection = 1;
     return;
   }
@@ -4811,6 +5408,7 @@ window.addEventListener("blur", () => {
   moveKeys.clear();
   state.flyVerticalDirection = 0;
   state.tankTurretDirection = 0;
+  state.tankTurretPitchDirection = 0;
   state.swimDirection = 0;
 });
 canvas.addEventListener("contextmenu", (event) => event.preventDefault());
@@ -4819,6 +5417,12 @@ let pointerId = null;
 let pointerStart = null;
 let pointerMoved = false;
 function updateAimFromPointer(event) {
+  if (state.vehicleType === "tank" || isAircraftType(state.vehicleType)) {
+    center.set(0, 0);
+    if (state.vehicleType === "tank") updateTankAimCrosshair();
+    aimCrosshair.classList.remove("is-aiming");
+    return;
+  }
   if (activeGamepadIndex !== null) {
     center.set(0, 0);
     return;
@@ -4929,7 +5533,12 @@ function playerOccupiesSolidBlock(x, z, eyeY) {
   const headY = Math.floor(eyeY - 0.1);
   for (let blockY = feetY; blockY <= headY; blockY += 1) {
     const type = worldBlocks.get(blockKey(blockX, blockY, blockZ));
-    if (type !== undefined && type !== null && type !== "water" && type !== "oak_door") return true;
+    if (
+      type !== undefined &&
+      type !== null &&
+      type !== "water" &&
+      (type !== "oak_door" || !isDoorOpenAt(blockX, blockY, blockZ))
+    ) return true;
   }
   return false;
 }
@@ -4941,7 +5550,12 @@ function hasWallAt(x, z, eyeY) {
   const headY = Math.floor(eyeY - 0.1);
   for (let blockY = feetY; blockY <= headY; blockY += 1) {
     const type = worldBlocks.get(blockKey(blockX, blockY, blockZ));
-    if (type !== undefined && type !== null && type !== "water" && type !== "oak_door") return true;
+    if (
+      type !== undefined &&
+      type !== null &&
+      type !== "water" &&
+      (type !== "oak_door" || !isDoorOpenAt(blockX, blockY, blockZ))
+    ) return true;
   }
   return false;
 }
@@ -5132,7 +5746,11 @@ function pollGamepad(delta) {
 
   const jumpButtonPressed = Boolean(gamepad.buttons[0]?.pressed || (gamepad.buttons[0]?.value ?? 0) > 0.5);
   const jumpWasPressed = previousGamepadButtons.has(0);
-  if (jumpButtonPressed && !jumpWasPressed && !state.isFlying && state.vehicleType !== "plane") jump();
+  if (jumpButtonPressed && !jumpWasPressed && isAircraftType(state.vehicleType) && !state.isFlying) {
+    requestFlight(true);
+  } else if (jumpButtonPressed && !jumpWasPressed && !state.isFlying && !state.vehicleId) {
+    jump();
+  }
   if (jumpButtonPressed) previousGamepadButtons.add(0);
   else previousGamepadButtons.delete(0);
   applyGamepadButton(gamepad, 2, useVehicleOrPlace);
@@ -5143,14 +5761,12 @@ function pollGamepad(delta) {
   const rightTrigger = gamepad.buttons[7]?.value ?? 0;
   if (state.isFlying || isAircraftType(state.vehicleType)) {
     state.flyVerticalDirection = jumpButtonPressed ? 1 : descendButtonPressed ? -1 : 0;
-    if (isAircraftType(state.vehicleType)) {
-      if (rightTrigger > 0.25) state.flyVerticalDirection = 1;
-      else if (leftTrigger > 0.25) state.flyVerticalDirection = -1;
-    }
   }
   if (state.vehicleType === "tank") {
     if (rightTrigger > 0.5 && !previousGamepadButtons.has(7)) attackPlayer();
-  } else if (state.vehicleType !== "plane") {
+  } else if (isAircraftType(state.vehicleType)) {
+    if (rightTrigger > 0.5 && !previousGamepadButtons.has(7)) attackPlayer();
+  } else if (!state.vehicleId) {
     if (rightTrigger > 0.5 && !previousGamepadButtons.has(7)) sendEdit("remove");
     if (leftTrigger > 0.5 && !previousGamepadButtons.has(6)) sendEdit("place");
   }
@@ -5214,7 +5830,7 @@ function updateMovement(delta) {
       ? 24
       : activeVehicle?.type === "plane"
         ? 16
-        : activeVehicle?.type === "car"
+        : isCarType(activeVehicle?.type)
           ? 9
           : activeVehicle?.type === "tank"
             ? 7
@@ -5244,14 +5860,24 @@ function updateMovement(delta) {
     }
     playerPosition.y = activeVehicle.y + 2.65;
     state.jumpVelocity = 0;
-  } else if (state.isFlying || isAircraftType(activeVehicle?.type)) {
+  } else if (state.isFlying || (isAircraftType(activeVehicle?.type) && activeVehicle.airborne)) {
     if (!hasWallAt(nextX, nextZ, playerPosition.y)) {
       playerPosition.x = nextX;
       playerPosition.z = nextZ;
       look.yaw = nextPosition.yaw;
     }
+    let verticalStep = state.flyVerticalDirection * 7 * delta;
+    if (isAircraftType(activeVehicle?.type) && state.aircraftAltitudeTarget !== null) {
+      const difference = state.aircraftAltitudeTarget - playerPosition.y;
+      if (Math.abs(difference) < 0.1) {
+        state.aircraftAltitudeTarget = null;
+        verticalStep = 0;
+      } else {
+        verticalStep = Math.sign(difference) * Math.min(Math.abs(difference), 7 * delta);
+      }
+    }
     const nextY = THREE.MathUtils.clamp(
-      playerPosition.y + state.flyVerticalDirection * 7 * delta,
+      playerPosition.y + verticalStep,
       BEDROCK_Y + 2.65,
       MAX_BUILD_HEIGHT + 2,
     );
@@ -5313,6 +5939,12 @@ function updateMovement(delta) {
         Math.sin(turretYaw + hullTurn + turretTurn),
         Math.cos(turretYaw + hullTurn + turretTurn),
       );
+      activeVehicle.turretPitch = THREE.MathUtils.clamp(
+        (activeVehicle.turretPitch ?? 0) + state.tankTurretPitchDirection * 0.9 * delta,
+        -0.45,
+        0.65,
+      );
+      updateTankAimCrosshair();
     }
     const activeVehicleMesh = vehicleMeshes.get(activeVehicle.id);
     if (activeVehicleMesh) updateVehicleMesh(activeVehicle, activeVehicleMesh);
@@ -5330,7 +5962,7 @@ function updateMovement(delta) {
     state.swimDirection = 0;
     waterControls.hidden = true;
     playerPosition.y = activeVehicle.y + 2.65;
-  } else if (state.isFlying || isAircraftType(activeVehicle?.type)) {
+  } else if (state.isFlying || (isAircraftType(activeVehicle?.type) && activeVehicle.airborne)) {
     state.isSwimming = false;
     state.swimDirection = 0;
     waterControls.hidden = true;
@@ -5371,8 +6003,9 @@ function animate() {
   animateBots(delta);
   animateAnimals(delta);
   animateVehicles(delta);
+  animateTankShells(delta);
   const now = performance.now();
-  if (now - lastSkyUpdateAt >= 50) {
+  if (now - lastSkyUpdateAt >= 250) {
     updateSkyObjects(now);
     lastSkyUpdateAt = now;
   }
@@ -5390,7 +6023,10 @@ function animate() {
           z: playerPosition.z,
           yaw: look.yaw,
           ...(state.vehicleType === "tank"
-            ? { turretYaw: state.vehicles.find(({ id }) => id === state.vehicleId)?.turretYaw ?? look.yaw }
+            ? {
+                turretYaw: state.vehicles.find(({ id }) => id === state.vehicleId)?.turretYaw ?? look.yaw,
+                turretPitch: state.vehicles.find(({ id }) => id === state.vehicleId)?.turretPitch ?? 0,
+              }
             : {}),
         },
       }),

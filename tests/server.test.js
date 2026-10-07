@@ -7,7 +7,7 @@ import { createGameServer } from "../server/index.js";
 import { BLOCK_TYPES, FISH_ITEMS, MAX_STACK_SIZE } from "../server/world.js";
 import { WebSocket } from "ws";
 import { MODEL_CATALOG, MODEL_ITEM_BY_ID } from "../shared/models.js";
-import { getBaseBlockAt, listCityProperties, terrainHeightAt } from "../shared/world.js";
+import { CITY_POLICE_STATION, getBaseBlockAt, listCityProperties, terrainHeightAt } from "../shared/world.js";
 
 function nextMessage(socket, predicate = () => true, timeoutMs = 5000) {
   return new Promise((resolve, reject) => {
@@ -257,7 +257,12 @@ test("surface monsters do not damage players underground, at the harbor, or in t
 });
 
 test("tanks are drivable and their cannon requires a driver and a valid target", async () => {
-  const server = createGameServer({ host: "127.0.0.1", port: 0, seed: 49 });
+  const server = createGameServer({
+    host: "127.0.0.1",
+    port: 0,
+    seed: 49,
+    blockRebuildDelayMs: 250,
+  });
   const sockets = [];
   try {
     const address = await server.listen();
@@ -274,9 +279,13 @@ test("tanks are drivable and their cannon requires a driver and a valid target",
     const init = await started;
     const player = server.players.get(init.id);
     const room = server.rooms.get(roomId);
+    const startingInventory = new Map(init.inventory);
     const tank = room.vehicles.get("city-tank-1");
     const crab = room.monsters.get("monster-crab");
 
+    assert.equal(startingInventory.get("iron_armor"), 1);
+    assert.equal(startingInventory.get("wooden_sword"), 1);
+    assert.equal(startingInventory.get("shield"), 1);
     assert.equal(tank.type, "tank");
     assert.ok(init.vehicles.some((vehicle) => vehicle.id === "city-tank-2" && vehicle.type === "tank"));
     crab.x = 0;
@@ -323,6 +332,55 @@ test("tanks are drivable and their cannon requires a driver and a valid target",
     }));
     await turretAimedNorth;
 
+    const buildingBlock = { x: 0, y: 1, z: tank.z + 10 };
+    const buildingKey = `${buildingBlock.x},${buildingBlock.y},${buildingBlock.z}`;
+    room.blocks.set(buildingKey, "red_concrete");
+    const destroyedBuildingBlock = nextMessage(
+      connection.socket,
+      (message) =>
+        message.type === "block" &&
+        message.action === "remove" &&
+        message.position.x === buildingBlock.x &&
+        message.position.y === buildingBlock.y &&
+        message.position.z === buildingBlock.z,
+    );
+    const demolition = nextMessage(connection.socket, (message) => message.type === "attack_result");
+    const demolitionInventory = nextMessage(connection.socket, (message) => message.type === "inventory");
+    connection.socket.send(JSON.stringify({
+      type: "tank_fire",
+      impactPosition: buildingBlock,
+    }));
+    const demolitionResult = await demolition;
+    assert.equal(demolitionResult.tank, true);
+    assert.ok(demolitionResult.demolished > 0);
+    assert.equal(
+      demolitionResult.loot.find(({ item }) => item === "red_concrete")?.count,
+      1,
+    );
+    assert.equal(
+      new Map(demolitionResult.inventory).get("red_concrete"),
+      1,
+    );
+    assert.equal(
+      new Map((await demolitionInventory).items).get("red_concrete"),
+      1,
+    );
+    await destroyedBuildingBlock;
+    assert.equal(room.blocks.get(buildingKey), null);
+
+    const rebuiltBuildingBlock = nextMessage(
+      connection.socket,
+      (message) =>
+        message.type === "block" &&
+        message.action === "rebuild" &&
+        message.position.x === buildingBlock.x &&
+        message.position.y === buildingBlock.y &&
+        message.position.z === buildingBlock.z,
+    );
+    await rebuiltBuildingBlock;
+    assert.equal(room.blocks.get(buildingKey), "red_concrete");
+
+    player.lastAttackAt = 0;
     const fired = nextMessage(connection.socket, (message) => message.type === "attack_result");
     connection.socket.send(JSON.stringify({ type: "tank_fire", targetId: crab.id }));
     const result = await fired;
@@ -331,11 +389,63 @@ test("tanks are drivable and their cannon requires a driver and a valid target",
     assert.equal(result.damage, 45);
     assert.equal(crab.health, crab.maxHealth - 45);
 
+    player.lastAttackAt = 0;
+    const aimedShot = nextMessage(connection.socket, (message) => message.type === "attack_result");
+    connection.socket.send(JSON.stringify({ type: "tank_fire" }));
+    const aimedShotResult = await aimedShot;
+    assert.equal(aimedShotResult.hit, true);
+    assert.equal(aimedShotResult.targetId, crab.id);
+
+    const plane = room.vehicles.get("airport-plane");
+    plane.x = tank.x;
+    plane.y = tank.y;
+    plane.z = tank.z + 10;
+    player.lastAttackAt = 0;
+    const planeDestroyed = nextMessage(
+      connection.socket,
+      (message) => message.type === "attack_result" && message.vehicleHit,
+    );
+    connection.socket.send(JSON.stringify({
+      type: "tank_fire",
+      targetVehicleId: plane.id,
+    }));
+    const planeResult = await planeDestroyed;
+    assert.equal(planeResult.destroyed, true);
+    assert.match(planeResult.message, /plane was destroyed/);
+    assert.equal(room.vehicles.has(plane.id), false);
+
+    const rivalConnection = connect(`ws://127.0.0.1:${address.port}/ws`);
+    sockets.push(rivalConnection.socket);
+    const rivalLobby = nextMessage(rivalConnection.socket, (message) => message.type === "lobby");
+    await rivalConnection.opened;
+    await rivalLobby;
+    const rivalInitMessage = nextMessage(rivalConnection.socket, (message) => message.type === "init");
+    rivalConnection.socket.send(JSON.stringify({ type: "join_room", roomId }));
+    const rivalInit = await rivalInitMessage;
+    const rival = server.players.get(rivalInit.id);
+    rival.x = tank.x;
+    rival.y = terrainHeightAt(tank.x, tank.z + 10, room.seed) + 2.65;
+    rival.z = tank.z + 10;
+    player.lastAttackAt = 0;
+    const playerHit = nextMessage(
+      connection.socket,
+      (message) => message.type === "attack_result" && message.targetId === rival.id,
+    );
+    connection.socket.send(JSON.stringify({ type: "tank_fire", targetId: rival.id }));
+    assert.equal((await playerHit).hit, true);
+    assert.equal(rival.health, 55);
+
     const tankStartZ = tank.z;
     const movedTank = nextMessage(
       connection.socket,
       (message) => message.type === "snapshot" &&
         message.vehicles?.some((vehicle) => vehicle.id === tank.id && vehicle.z === tankStartZ + 1),
+    );
+    rival.z = tankStartZ + 0.5;
+    rival.y = terrainHeightAt(rival.x, rival.z, room.seed) + 2.65;
+    const runOver = nextMessage(
+      rivalConnection.socket,
+      (message) => message.type === "attack_result" && message.hitByVehicle,
     );
     connection.socket.send(JSON.stringify({
       type: "move",
@@ -347,6 +457,8 @@ test("tanks are drivable and their cannon requires a driver and a valid target",
       },
     }));
     assert.ok((await movedTank).vehicles.some((vehicle) => vehicle.id === tank.id && vehicle.occupantId === init.id));
+    await runOver;
+    assert.equal(rival.health, 20);
   } finally {
     for (const socket of sockets) socket.terminate();
     await server.close();
@@ -489,6 +601,10 @@ test("fighter jets can be boarded, flown, and synchronized", async () => {
     connection.socket.send(JSON.stringify({ type: "vehicle_enter", vehicleId: jet.id }));
     assert.equal((await entered).vehicleType, "jet");
 
+    const tookOff = nextMessage(connection.socket, (message) => message.type === "fly_result");
+    connection.socket.send(JSON.stringify({ type: "fly_toggle", enabled: true }));
+    assert.equal((await tookOff).enabled, true);
+
     const flying = nextMessage(
       connection.socket,
       (message) => message.type === "snapshot" &&
@@ -502,6 +618,63 @@ test("fighter jets can be boarded, flown, and synchronized", async () => {
     assert.equal(snapshot.vehicles.find(({ id }) => id === jet.id).type, "jet");
     assert.equal(snapshot.vehicles.find(({ id }) => id === jet.id).occupantId, init.id);
     assert.equal(server.rooms.get(roomId).vehicles.get(jet.id).y, 8);
+
+    const secondConnection = connect(`ws://127.0.0.1:${address.port}/ws`);
+    sockets.push(secondConnection.socket);
+    const secondLobby = nextMessage(secondConnection.socket, (message) => message.type === "lobby");
+    await secondConnection.opened;
+    await secondLobby;
+    const secondInitMessage = nextMessage(secondConnection.socket, (message) => message.type === "init");
+    secondConnection.socket.send(JSON.stringify({ type: "join_room", roomId }));
+    const secondInit = await secondInitMessage;
+    const targetJet = server.rooms.get(roomId).vehicles.get("airport-jet-2");
+    const targetPlayer = server.players.get(secondInit.id);
+    targetPlayer.x = targetJet.x;
+    targetPlayer.y = player.y;
+    targetPlayer.z = targetJet.z;
+    const targetEntered = nextMessage(secondConnection.socket, (message) => message.type === "vehicle_result");
+    secondConnection.socket.send(JSON.stringify({ type: "vehicle_enter", vehicleId: targetJet.id }));
+    await targetEntered;
+    const targetTookOff = nextMessage(secondConnection.socket, (message) => message.type === "fly_result");
+    secondConnection.socket.send(JSON.stringify({ type: "fly_toggle", enabled: true }));
+    assert.equal((await targetTookOff).enabled, true);
+
+    const room = server.rooms.get(roomId);
+    player.x = jet.x;
+    player.y = 20;
+    player.z = jet.z;
+    player.yaw = Math.PI;
+    jet.x = player.x;
+    jet.y = player.y - 2.65;
+    jet.z = player.z;
+    targetPlayer.x = targetJet.x;
+    targetPlayer.y = player.y;
+    targetPlayer.z = jet.z - 10;
+    targetJet.x = targetPlayer.x;
+    targetJet.y = targetPlayer.y - 2.65;
+    targetJet.z = targetPlayer.z;
+    const hit = nextMessage(
+      connection.socket,
+      (message) => message.type === "attack_result" && message.aircraft,
+    );
+    const hitNotice = nextMessage(
+      secondConnection.socket,
+      (message) => message.type === "attack_result" && message.hitByAircraft,
+    );
+    connection.socket.send(JSON.stringify({
+      type: "aircraft_fire",
+      aimYaw: Math.PI,
+      aimPitch: 0,
+    }));
+    assert.equal((await hit).hit, true);
+    await hitNotice;
+    assert.equal(targetPlayer.health, 75);
+
+    const landed = nextMessage(connection.socket, (message) => message.type === "fly_result");
+    connection.socket.send(JSON.stringify({ type: "fly_toggle", enabled: false }));
+    assert.equal((await landed).enabled, false);
+    assert.equal(jet.airborne, false);
+    assert.equal(player.y, terrainHeightAt(player.x, player.z, room.seed) + 2.65);
   } finally {
     for (const socket of sockets) socket.terminate();
     await server.close();
@@ -676,6 +849,10 @@ test("generates seeded terrain and shares chunk edits with joining players", asy
     assert.ok(initial.vehicles.some((vehicle) => vehicle.id === "airport-car"));
     assert.ok(initial.vehicles.filter((vehicle) => vehicle.id.startsWith("city-car-")).length > 5);
     assert.ok(new Set(initial.vehicles.filter(({ id }) => id.startsWith("city-car-")).map(({ color }) => color)).size >= 8);
+    assert.equal(initial.vehicles.filter(({ type }) => type === "police").length, 3);
+    assert.equal(getBaseBlockAt(CITY_POLICE_STATION.x - 8, 1, CITY_POLICE_STATION.z, initial.seed), "white_concrete");
+    assert.equal(getBaseBlockAt(CITY_POLICE_STATION.x, 7, CITY_POLICE_STATION.z, initial.seed), "blue_concrete");
+    assert.equal(getBaseBlockAt(CITY_POLICE_STATION.x, 1, CITY_POLICE_STATION.z - 8, initial.seed), "oak_door");
     assert.deepEqual(initial.properties, []);
 
     const property = listCityProperties(initial.seed)[0];
@@ -683,12 +860,29 @@ test("generates seeded terrain and shares chunk edits with joining players", asy
     player.x = property.entranceX;
     player.y = terrainHeightAt(property.entranceX, property.entranceZ, initial.seed) + 2.65;
     player.z = property.entranceZ;
+    const doorPosition = { x: property.x, y: 1, z: property.entranceZ + 1 };
+    assert.equal(getBaseBlockAt(doorPosition.x, doorPosition.y, doorPosition.z, initial.seed), "oak_door");
+    const lockedDoor = nextMessage(firstPlayer, (message) => message.type === "door_result");
+    firstPlayer.send(JSON.stringify({ type: "door_toggle", position: doorPosition }));
+    assert.match((await lockedDoor).message, /Locked: purchase/);
+    assert.equal(server.rooms.get(roomId).openDoors.size, 0);
+
     const purchasedHome = nextMessage(firstPlayer, (message) => message.type === "home_result");
     firstPlayer.send(JSON.stringify({ type: "buy_home" }));
     const purchaseResult = await purchasedHome;
     assert.equal(purchaseResult.success, true);
     assert.equal(purchaseResult.properties[0].id, property.id);
     assert.equal(purchaseResult.properties[0].ownerName, player.name);
+    const openedDoor = nextMessage(firstPlayer, (message) => message.type === "door_result");
+    firstPlayer.send(JSON.stringify({ type: "door_toggle", position: doorPosition }));
+    assert.equal((await openedDoor).open, true);
+    assert.equal(server.rooms.get(roomId).openDoors.has(`${doorPosition.x},1,${doorPosition.z}`), true);
+    const closedDoor = nextMessage(firstPlayer, (message) => message.type === "door_result");
+    firstPlayer.send(JSON.stringify({ type: "door_toggle", position: doorPosition }));
+    assert.equal((await closedDoor).open, false);
+    const reopenedDoor = nextMessage(firstPlayer, (message) => message.type === "door_result");
+    firstPlayer.send(JSON.stringify({ type: "door_toggle", position: doorPosition }));
+    assert.equal((await reopenedDoor).open, true);
 
     player.x = 0;
     player.y = 2.65;
@@ -955,7 +1149,9 @@ test("generates seeded terrain and shares chunk edits with joining players", asy
     isolatedPlayer.send(JSON.stringify({ type: "start_room" }));
     const isolatedInit = await isolatedInitMessage;
     assert.equal(isolatedInit.mode, "survival");
-    assert.deepEqual(isolatedInit.inventory, []);
+    const isolatedInventory = new Map(isolatedInit.inventory);
+    assert.equal(isolatedInventory.get("iron_armor"), 1);
+    assert.equal(isolatedInventory.get("wooden_sword"), 1);
     assert.equal(server.rooms.get(isolatedRoomId).blockChanges.size, 0);
 
     const rejectedTeleport = nextMessage(firstPlayer, (message) => message.type === "error");

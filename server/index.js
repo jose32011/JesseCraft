@@ -13,6 +13,7 @@ import {
   canEditBlock,
   CHUNK_SIZE,
   CITY_BEACH_OUTER_RADIUS,
+  CITY_POLICE_STATION,
   CITY_RADIUS,
   FISH_TYPES,
   FISH_TYPE_BY_ID,
@@ -63,6 +64,13 @@ const STARTING_COINS = 100;
 const TANK_ATTACK_RANGE = 48;
 const TANK_ATTACK_COOLDOWN_MS = 1800;
 const TANK_ATTACK_DAMAGE = 45;
+const TANK_BLAST_RADIUS = 2;
+const BLOCK_REBUILD_DELAY_MS = 3 * 60 * 1000;
+const STARTING_LOADOUT = [
+  ["iron_armor", 1],
+  ["wooden_sword", 1],
+  ["shield", 1],
+];
 const PLAYER_WEAPON_DAMAGE = new Map([
   ["wooden_sword", 24],
   ["stone_sword", 28],
@@ -227,6 +235,21 @@ function createVehicles(seed = 1) {
     const [color, accent] = CITY_CAR_PAINTS[index % CITY_CAR_PAINTS.length];
     spawns.push({ id: `city-car-${index + 1}`, type: "car", ...candidate, color, accent });
   }
+  let policeIndex = 0;
+  for (const candidate of cityRoadCandidates) {
+    const stationDistance = Math.hypot(candidate.x - CITY_POLICE_STATION.x, candidate.z - CITY_POLICE_STATION.z);
+    if (stationDistance < 13 || stationDistance > 37) continue;
+    if (spawns.some((spawn) => Math.hypot(spawn.x - candidate.x, spawn.z - candidate.z) < 9)) continue;
+    spawns.push({
+      id: `city-police-${policeIndex + 1}`,
+      type: "police",
+      ...candidate,
+      color: "#f3f2e9",
+      accent: "#2355a5",
+    });
+    policeIndex += 1;
+    if (policeIndex >= 3) break;
+  }
   return new Map(spawns.map(({ id, type, x, z, color, accent }) => [
     id,
     {
@@ -238,6 +261,10 @@ function createVehicles(seed = 1) {
       z,
       yaw: 0,
       turretYaw: 0,
+      turretPitch: 0,
+      health: 100,
+      maxHealth: 100,
+      airborne: false,
       occupantId: null,
     },
   ]));
@@ -282,6 +309,15 @@ function restoreVehicles(savedVehicles, seed) {
       turretYaw: Number.isFinite(savedVehicle.turretYaw)
         ? Math.atan2(Math.sin(savedVehicle.turretYaw), Math.cos(savedVehicle.turretYaw))
         : Number.isFinite(savedVehicle.yaw) ? savedVehicle.yaw : existing.turretYaw,
+      turretPitch: Number.isFinite(savedVehicle.turretPitch)
+        ? Math.max(-0.45, Math.min(0.65, savedVehicle.turretPitch))
+        : existing.turretPitch,
+      health: Number.isFinite(savedVehicle.health)
+        ? Math.max(1, Math.min(existing.maxHealth ?? 100, savedVehicle.health))
+        : existing.health,
+      airborne: savedVehicle.type === "plane" || savedVehicle.type === "jet"
+        ? savedVehicle.airborne === true
+        : false,
       occupantId: null,
     });
   }
@@ -464,7 +500,7 @@ function safeName(value) {
 function createInventory(mode = "survival") {
   return mode === "design"
     ? new Map([...new Set([...BLOCK_TYPES, ...MODEL_CATALOG.map(({ id }) => id)])].map((item) => [item, 64]))
-    : new Map();
+    : new Map(STARTING_LOADOUT);
 }
 
 function fillDesignInventory(inventory) {
@@ -510,6 +546,17 @@ function applyPotionEffect(player, potionId) {
   return { type: "none", amount: 0, message: "That item does not work as a potion." };
 }
 
+function doorBaseYAt(room, x, y, z) {
+  if (getRoomBlockAt(room, x, y - 1, z) === "oak_door") return y - 1;
+  if (getRoomBlockAt(room, x, y, z) === "oak_door") return y;
+  return null;
+}
+
+function getRoomBlockAt(room, x, y, z) {
+  const key = blockKey(x, y, z);
+  return room.blocks.has(key) ? room.blocks.get(key) : getBaseBlockAt(x, y, z, room.seed);
+}
+
 function entityCanOccupy(room, x, z, feetY, radius = 0.3) {
   for (const offsetX of [-radius, 0, radius]) {
     for (const offsetZ of [-radius, 0, radius]) {
@@ -520,7 +567,10 @@ function entityCanOccupy(room, x, z, feetY, radius = 0.3) {
         const type = room.blocks.has(key)
           ? room.blocks.get(key)
           : getBaseBlockAt(blockX, blockY, blockZ, room.seed);
-        if (type && type !== "water" && type !== "oak_door") return false;
+        const doorBaseY = type === "oak_door" ? doorBaseYAt(room, blockX, blockY, blockZ) : null;
+        const openDoor = doorBaseY !== null &&
+          room.openDoors?.has(blockKey(blockX, doorBaseY, blockZ));
+        if (type && type !== "water" && (type !== "oak_door" || !openDoor)) return false;
       }
     }
   }
@@ -635,6 +685,19 @@ function restoreSavedRoom(saved) {
     started: true,
     blocks: new Map(blockChanges),
     blockChanges,
+    openDoors: new Set(Array.isArray(saved.openDoors) ? saved.openDoors.filter((key) => typeof key === "string") : []),
+    blockRebuilds: new Map(
+      Array.isArray(saved.blockRebuilds)
+        ? saved.blockRebuilds.filter((entry) =>
+          Array.isArray(entry) &&
+          typeof entry[0] === "string" &&
+          entry[1] &&
+          typeof entry[1].block === "string" &&
+          Number.isFinite(entry[1].rebuildAt),
+        )
+        : [],
+    ),
+    blockRebuildTimers: new Map(),
     droppedItems: new Map(Array.isArray(saved.droppedItems) ? saved.droppedItems : []),
     vehicles: restoreVehicles(
       saved.vehicles,
@@ -699,6 +762,8 @@ function roomSaveData(room, players) {
     started: room.started,
     autosaveEnabled: room.autosaveEnabled !== false,
     blockChanges: [...room.blockChanges],
+    blockRebuilds: [...room.blockRebuilds],
+    openDoors: [...(room.openDoors ?? [])],
     droppedItems: [...room.droppedItems],
     vehicles: [...room.vehicles.values()].map(({ occupantId, ...vehicle }) => vehicle),
     properties: [...(room.properties ?? new Map())],
@@ -849,6 +914,7 @@ export function createGameServer({
   saveDirectory = DEFAULT_SAVE_DIRECTORY,
   databaseUrl = process.env.DATABASE_URL,
   autosaveIntervalMs = AUTO_SAVE_INTERVAL_MS,
+  blockRebuildDelayMs = BLOCK_REBUILD_DELAY_MS,
 } = {}) {
   if (process.env.RAILWAY_ENVIRONMENT && !databaseUrl) {
     throw new Error("DATABASE_URL must be set for Railway deployments.");
@@ -934,6 +1000,7 @@ export function createGameServer({
       z,
     })),
     vehicles: [...room.vehicles.values()],
+    openDoors: [...(room.openDoors ?? [])],
     properties: [...(room.properties ?? new Map()).entries()].map(([id, property]) => ({ id, ...property })),
   });
 
@@ -943,6 +1010,37 @@ export function createGameServer({
       const member = players.get(id);
       if (member?.socket.readyState === WebSocket.OPEN) member.socket.send(encoded);
     }
+  };
+
+  const restoreDestroyedBlock = (room, key, record) => {
+    if (
+      rooms.get(room.id) !== room ||
+      room.blockRebuilds.get(key) !== record ||
+      room.blocks.get(key) !== null
+    ) return;
+    const [x, y, z] = key.split(",").map(Number);
+    room.blocks.set(key, record.block);
+    room.blockChanges.set(key, record.block);
+    room.blockRebuilds.delete(key);
+    room.blockRebuildTimers.delete(key);
+    broadcastToRoom(room, {
+      type: "block",
+      action: "rebuild",
+      position: { x, y, z },
+      block: record.block,
+    });
+  };
+
+  const scheduleBlockRebuild = (room, key, record) => {
+    const previousTimer = room.blockRebuildTimers.get(key);
+    if (previousTimer) clearTimeout(previousTimer);
+    room.blockRebuilds.set(key, record);
+    const timer = setTimeout(
+      () => restoreDestroyedBlock(room, key, record),
+      Math.max(0, record.rebuildAt - Date.now()),
+    );
+    timer.unref?.();
+    room.blockRebuildTimers.set(key, timer);
   };
 
   const sendInitial = (player, room) => writeJson(player.socket, {
@@ -968,6 +1066,7 @@ export function createGameServer({
     monsters: serializeMonsters(room),
     drops: [...room.droppedItems.values()].map(({ id, item, count, x, z }) => ({ id, item, count, x, z })),
     vehicles: [...room.vehicles.values()],
+    openDoors: [...(room.openDoors ?? [])],
     properties: [...(room.properties ?? new Map()).entries()].map(([id, property]) => ({ id, ...property })),
     position: { x: player.x, y: player.y, z: player.z, yaw: player.yaw },
     inventory: inventoryItems(player.inventory),
@@ -1264,6 +1363,9 @@ export function createGameServer({
           started: false,
           blocks: new Map(),
           blockChanges: new Map(),
+          openDoors: new Set(),
+          blockRebuilds: new Map(),
+          blockRebuildTimers: new Map(),
           droppedItems: new Map(),
           vehicles: createVehicles(seed),
           properties: new Map(),
@@ -1592,15 +1694,30 @@ export function createGameServer({
         return;
       }
 
-      if (message.type === "attack" || message.type === "tank_fire") {
+      if (
+        message.type === "attack" ||
+        message.type === "tank_fire" ||
+        message.type === "aircraft_fire"
+      ) {
         const room = rooms.get(player.roomId);
         const isTankAttack = message.type === "tank_fire";
         const vehicle = room?.vehicles.get(player.vehicleId);
         const playerTarget = room?.started && room.members.has(message.targetId)
           ? players.get(message.targetId)
           : null;
-        const monsterTarget = room?.started ? room.monsters.get(message.targetId) : null;
-        const target = playerTarget ?? monsterTarget;
+        let target = playerTarget ?? (room?.started ? room.monsters.get(message.targetId) : null);
+        const rawImpactPosition = message.impactPosition;
+        const impactPosition = isTankAttack &&
+          rawImpactPosition &&
+          Number.isFinite(rawImpactPosition.x) &&
+          Number.isFinite(rawImpactPosition.y) &&
+          Number.isFinite(rawImpactPosition.z)
+          ? {
+              x: Math.round(wrapPlanetX(rawImpactPosition.x)),
+              y: Math.round(rawImpactPosition.y),
+              z: Math.round(rawImpactPosition.z),
+            }
+          : null;
         const now = Date.now();
         if (
           isTankAttack &&
@@ -1614,12 +1731,112 @@ export function createGameServer({
           });
           return;
         }
+
+        if (message.type === "aircraft_fire") {
+          const room = rooms.get(player.roomId);
+          const aircraft = room?.vehicles.get(player.vehicleId);
+          if (
+            !room?.started ||
+            player.health <= 0 ||
+            !aircraft ||
+            (aircraft.type !== "plane" && aircraft.type !== "jet") ||
+            aircraft.occupantId !== player.id ||
+            !aircraft.airborne
+          ) {
+            writeJson(socket, {
+              type: "attack_result",
+              hit: false,
+              aircraft: true,
+              message: "Take off in a plane or jet before firing.",
+            });
+            return;
+          }
+          const now = Date.now();
+          if (now - player.lastAttackAt < PLAYER_ATTACK_COOLDOWN_MS) {
+            writeJson(socket, {
+              type: "attack_result",
+              hit: false,
+              aircraft: true,
+              message: "Aircraft guns are reloading.",
+            });
+            return;
+          }
+          const aimYaw = Number.isFinite(message.aimYaw) ? message.aimYaw : player.yaw;
+          const aimPitch = Number.isFinite(message.aimPitch)
+            ? Math.max(-1.2, Math.min(1.2, message.aimPitch))
+            : 0;
+          const latitude = (player.z - PLANET_MIN_Z + 0.5) / PLANET_LATITUDE_BLOCKS * Math.PI - Math.PI / 2;
+          const direction = {
+            east: -Math.sin(aimYaw) * Math.cos(aimPitch),
+            north: Math.cos(aimYaw) * Math.cos(aimPitch),
+            up: Math.sin(aimPitch),
+          };
+          let target = null;
+          let closestAlong = 140;
+          for (const id of room.members) {
+            if (id === player.id) continue;
+            const candidate = players.get(id);
+            const targetAircraft = candidate && room.vehicles.get(candidate.vehicleId);
+            if (
+              !candidate ||
+              candidate.health <= 0 ||
+              !targetAircraft?.airborne ||
+              (targetAircraft.type !== "plane" && targetAircraft.type !== "jet")
+            ) continue;
+            const deltaEast = wrapPlanetX(candidate.x - player.x) * Math.cos(latitude);
+            const deltaNorth = candidate.z - player.z;
+            const deltaUp = candidate.y - player.y;
+            const along = deltaEast * direction.east + deltaNorth * direction.north + deltaUp * direction.up;
+            if (along <= 0 || along >= closestAlong) continue;
+            const missDistance = Math.sqrt(Math.max(
+              0,
+              deltaEast ** 2 + deltaNorth ** 2 + deltaUp ** 2 - along ** 2,
+            ));
+            if (missDistance > 4) continue;
+            target = candidate;
+            closestAlong = along;
+          }
+          player.lastAttackAt = now;
+          if (!target) {
+            writeJson(socket, {
+              type: "attack_result",
+              hit: false,
+              aircraft: true,
+              message: "Aircraft guns missed. Aim at an airborne pilot.",
+            });
+            return;
+          }
+          target.health = Math.max(0, target.health - 25);
+          writeJson(socket, {
+            type: "attack_result",
+            hit: true,
+            aircraft: true,
+            targetId: target.id,
+            damage: 25,
+            message: `Aircraft guns hit ${target.name} for 25 damage.`,
+          });
+          writeJson(target.socket, {
+            type: "attack_result",
+            hit: true,
+            aircraft: true,
+            hitByAircraft: true,
+            damage: 25,
+            message: "You were hit by aircraft guns for 25 damage.",
+          });
+          broadcastToRoom(room, roomSnapshot(room));
+          return;
+        }
         if (
           !room?.started ||
           player.health <= 0 ||
           now - player.lastAttackAt < (isTankAttack ? TANK_ATTACK_COOLDOWN_MS : PLAYER_ATTACK_COOLDOWN_MS)
         ) {
-          writeJson(socket, { type: "attack_result", hit: false, tank: isTankAttack });
+          writeJson(socket, {
+            type: "attack_result",
+            hit: false,
+            tank: isTankAttack,
+            ...(isTankAttack ? { message: "Cannon is reloading." } : {}),
+          });
           return;
         }
         if (!isTankAttack && vehicle?.type === "tank") {
@@ -1631,8 +1848,187 @@ export function createGameServer({
           return;
         }
         player.lastAttackAt = now;
+        const latitude = (player.z - PLANET_MIN_Z + 0.5) / PLANET_LATITUDE_BLOCKS * Math.PI - Math.PI / 2;
+        const aimYaw = isTankAttack
+          ? vehicle.turretYaw ?? vehicle.yaw
+          : player.yaw;
+        const isInTankFiringArc = (candidate) => {
+          if (!candidate || candidate.id === player.id || candidate.health <= 0) return false;
+          const east = wrapPlanetX(candidate.x - player.x) * Math.cos(latitude);
+          const north = candidate.z - player.z;
+          const distance = Math.hypot(east, north);
+          const facing = (east * -Math.sin(aimYaw) + north * Math.cos(aimYaw)) / Math.max(distance, 0.001);
+          const sidewaysDistance = Math.abs(east * Math.cos(aimYaw) + north * Math.sin(aimYaw));
+          return distance <= TANK_ATTACK_RANGE && facing >= 0 && sidewaysDistance <= 2.5;
+        };
+        if (isTankAttack && typeof message.targetVehicleId === "string") {
+          const targetVehicle = room.vehicles.get(message.targetVehicleId);
+          if (!targetVehicle || targetVehicle.id === vehicle.id) {
+            writeJson(socket, {
+              type: "attack_result",
+              hit: false,
+              tank: true,
+              message: "That vehicle is no longer a valid target.",
+            });
+            return;
+          }
+          const targetEast = wrapPlanetX(targetVehicle.x - vehicle.x) * Math.cos(latitude);
+          const targetNorth = targetVehicle.z - vehicle.z;
+          const targetUp = targetVehicle.y + 1.1 - (vehicle.y + 2.0);
+          const pitch = vehicle.turretPitch ?? 0;
+          const directionEast = -Math.sin(aimYaw) * Math.cos(pitch);
+          const directionNorth = Math.cos(aimYaw) * Math.cos(pitch);
+          const directionUp = Math.sin(pitch);
+          const along = targetEast * directionEast + targetNorth * directionNorth + targetUp * directionUp;
+          const targetDistance = Math.hypot(targetEast, targetNorth, targetUp);
+          const missDistance = Math.sqrt(Math.max(0, targetDistance ** 2 - along ** 2));
+          if (along <= 0 || along > TANK_ATTACK_RANGE || missDistance > 3.5) {
+            writeJson(socket, {
+              type: "attack_result",
+              hit: false,
+              tank: true,
+              message: "Aim the cannon directly at the vehicle.",
+            });
+            return;
+          }
+          targetVehicle.health = Math.max(0, (targetVehicle.health ?? targetVehicle.maxHealth ?? 100) - 100);
+          const destroyed = targetVehicle.health <= 0;
+          if (destroyed) {
+            const occupantId = targetVehicle.occupantId;
+            if (occupantId) {
+              const occupant = players.get(occupantId);
+              if (occupant) {
+                occupant.vehicleId = null;
+                occupant.x = wrapPlanetX(targetVehicle.x + 3);
+                occupant.z = targetVehicle.z;
+                occupant.y = terrainHeightAt(occupant.x, occupant.z, room.seed) + 2.65;
+                occupant.yaw = targetVehicle.yaw;
+                writeJson(occupant.socket, {
+                  type: "vehicle_result",
+                  vehicleId: null,
+                  message: "Your vehicle was destroyed. You were ejected safely.",
+                });
+              }
+            }
+            room.vehicles.delete(targetVehicle.id);
+          }
+          writeJson(socket, {
+            type: "attack_result",
+            hit: true,
+            tank: true,
+            vehicleHit: true,
+            vehicleId: targetVehicle.id,
+            damage: 100,
+            health: targetVehicle.health,
+            destroyed,
+            message: destroyed
+              ? `The ${targetVehicle.type} was destroyed.`
+              : `The ${targetVehicle.type} took 100 damage.`,
+          });
+          broadcastToRoom(room, roomSnapshot(room));
+          return;
+        }
+        if (isTankAttack && !impactPosition && !isInTankFiringArc(target)) {
+          target = null;
+          let closestDistance = TANK_ATTACK_RANGE;
+          const candidates = [
+            ...room.monsters.values(),
+            ...[...room.members]
+              .filter((id) => id !== player.id)
+              .map((id) => players.get(id))
+              .filter(Boolean),
+          ];
+          for (const candidate of candidates) {
+            if (!isInTankFiringArc(candidate)) continue;
+            const east = wrapPlanetX(candidate.x - player.x) * Math.cos(latitude);
+            const north = candidate.z - player.z;
+            const distance = Math.hypot(east, north);
+            if (distance >= closestDistance) continue;
+            target = candidate;
+            closestDistance = distance;
+          }
+        }
+        if (isTankAttack && impactPosition) target = null;
         if (!target || target.id === player.id || target.health <= 0) {
-          writeJson(socket, { type: "attack_result", hit: false, tank: isTankAttack });
+          if (isTankAttack && impactPosition) {
+            const east = wrapPlanetX(impactPosition.x - player.x) * Math.cos(latitude);
+            const north = impactPosition.z - player.z;
+            const horizontalDistance = Math.hypot(east, north);
+            const facing = (east * -Math.sin(aimYaw) + north * Math.cos(aimYaw))
+              / Math.max(horizontalDistance, 0.001);
+            if (
+              impactPosition.y < BEDROCK_Y ||
+              impactPosition.y > MAX_BUILD_HEIGHT ||
+              horizontalDistance > TANK_ATTACK_RANGE ||
+              facing < 0.2
+            ) {
+              writeJson(socket, {
+                type: "attack_result",
+                hit: false,
+                tank: true,
+                message: "Aim the cannon at a block within range.",
+              });
+              return;
+            }
+            let demolished = 0;
+            const collected = new Map();
+            for (let offsetX = -TANK_BLAST_RADIUS; offsetX <= TANK_BLAST_RADIUS; offsetX += 1) {
+              for (let offsetY = -TANK_BLAST_RADIUS; offsetY <= TANK_BLAST_RADIUS; offsetY += 1) {
+                for (let offsetZ = -TANK_BLAST_RADIUS; offsetZ <= TANK_BLAST_RADIUS; offsetZ += 1) {
+                  if (offsetX ** 2 + offsetY ** 2 + offsetZ ** 2 > TANK_BLAST_RADIUS ** 2) continue;
+                  const x = wrapPlanetX(impactPosition.x + offsetX);
+                  const y = impactPosition.y + offsetY;
+                  const z = impactPosition.z + offsetZ;
+                  if (y < BEDROCK_Y || y > MAX_BUILD_HEIGHT) continue;
+                  const key = blockKey(x, y, z);
+                  const block = room.blocks.has(key)
+                    ? room.blocks.get(key)
+                    : getBaseBlockAt(x, y, z, room.seed);
+                  if (!block) continue;
+                  room.blocks.set(key, null);
+                  room.blockChanges.set(key, null);
+                  addItems(player.inventory, block, 1);
+                  collected.set(block, (collected.get(block) ?? 0) + 1);
+                  scheduleBlockRebuild(room, key, {
+                    block,
+                    rebuildAt: now + blockRebuildDelayMs,
+                  });
+                  broadcastToRoom(room, {
+                    type: "block",
+                    action: "remove",
+                    position: { x, y, z },
+                    block,
+                  });
+                  demolished += 1;
+                }
+              }
+            }
+            writeJson(socket, {
+              type: "attack_result",
+              hit: demolished > 0,
+              tank: true,
+              demolished,
+              loot: [...collected].map(([item, count]) => ({
+                item,
+                count,
+                total: player.inventory.get(item),
+              })),
+              inventory: inventoryItems(player.inventory),
+              message: demolished > 0
+                ? `Cannon destroyed ${demolished} block${demolished === 1 ? "" : "s"}. Repairs in 3 minutes.`
+                : "Nothing to destroy at the impact point.",
+            });
+            if (demolished > 0) {
+              writeJson(socket, { type: "inventory", items: inventoryItems(player.inventory) });
+            }
+            return;
+          }
+          writeJson(socket, {
+            type: "attack_result",
+            hit: false,
+            tank: isTankAttack,
+            ...(isTankAttack ? { message: "No target in reach. Aim the turret at an enemy." } : {}),
+          });
           return;
         }
 
@@ -1642,13 +2038,9 @@ export function createGameServer({
           return;
         }
 
-        const latitude = (player.z - PLANET_MIN_Z + 0.5) / PLANET_LATITUDE_BLOCKS * Math.PI - Math.PI / 2;
         const east = wrapPlanetX(target.x - player.x) * Math.cos(latitude);
         const north = target.z - player.z;
         const distance = Math.hypot(east, north);
-        const aimYaw = isTankAttack
-          ? vehicle.turretYaw ?? vehicle.yaw
-          : player.yaw;
         const facing = (east * -Math.sin(aimYaw) + north * Math.cos(aimYaw)) / Math.max(distance, 0.001);
         if (distance > (isTankAttack ? TANK_ATTACK_RANGE : PLAYER_ATTACK_RANGE) || facing < 0.2) {
           writeJson(socket, {
@@ -1666,6 +2058,7 @@ export function createGameServer({
             ? PLAYER_WEAPON_DAMAGE.get(weapon) + (player.gearTier ?? 0) * 6
             : getPlayerAttackPower(player);
         target.health = Math.max(0, target.health - damage);
+        const monsterTarget = room.monsters.get(target.id);
         let reward = null;
         if (monsterTarget && target.health === 0) {
           target.respawnAt = now + MONSTER_RESPAWN_MS;
@@ -1864,12 +2257,21 @@ export function createGameServer({
           });
           return;
         }
+        const aircraft = vehicle?.type === "plane" || vehicle?.type === "jet" ? vehicle : null;
+        const requestedY = aircraft && !aircraft.airborne
+          ? terrainHeightAt(message.position.x, message.position.z, room.seed) + 2.65
+          : aircraft
+            ? Math.max(
+                terrainHeightAt(message.position.x, message.position.z, room.seed) + 2.65,
+                Math.min(MAX_BUILD_HEIGHT + 2.65, message.position.y ?? player.y),
+              )
+            : message.position.y ?? player.y;
         if (
           !room ||
           !playerCanOccupy(
             room,
             message.position.x,
-            message.position.y ?? player.y,
+            requestedY,
             message.position.z,
           )
         ) {
@@ -1881,22 +2283,28 @@ export function createGameServer({
         }
         player.x = message.position.x;
         player.z = message.position.z;
-        player.y = Number.isFinite(message.position.y)
-          ? message.position.y
+        player.y = Number.isFinite(requestedY)
+          ? requestedY
           : terrainHeightAt(player.x, player.z, room.seed) + 2.65;
         if (vehicle?.type === "boat") player.y = vehicle.y + 2.65;
         player.yaw = message.position.yaw;
         if (vehicle) {
           const previousVehicleYaw = vehicle.yaw;
+          const previousVehicleX = vehicle.x;
+          const previousVehicleZ = vehicle.z;
           vehicle.x = player.x;
           vehicle.y = player.y - 2.65;
           vehicle.z = player.z;
           vehicle.yaw = player.yaw;
+          if (aircraft) vehicle.airborne = aircraft.airborne;
           if (vehicle.type === "tank" && Number.isFinite(message.position.turretYaw)) {
             vehicle.turretYaw = Math.atan2(
               Math.sin(message.position.turretYaw),
               Math.cos(message.position.turretYaw),
             );
+            if (Number.isFinite(message.position.turretPitch)) {
+              vehicle.turretPitch = Math.max(-0.45, Math.min(0.65, message.position.turretPitch));
+            }
           } else if (vehicle.type === "tank") {
             const turretYaw = vehicle.turretYaw ?? previousVehicleYaw;
             const hullTurn = Math.atan2(
@@ -1907,6 +2315,44 @@ export function createGameServer({
               Math.sin(turretYaw + hullTurn),
               Math.cos(turretYaw + hullTurn),
             );
+          }
+          if (vehicle.type === "tank") {
+            const latitude = (player.z - PLANET_MIN_Z + 0.5) / PLANET_LATITUDE_BLOCKS * Math.PI - Math.PI / 2;
+            const scaleX = Math.cos(latitude);
+            const segmentX = wrapPlanetX(vehicle.x - previousVehicleX) * scaleX;
+            const segmentZ = vehicle.z - previousVehicleZ;
+            const segmentLengthSquared = segmentX ** 2 + segmentZ ** 2;
+            const now = Date.now();
+            for (const id of room.members) {
+              if (id === player.id) continue;
+              const target = players.get(id);
+              if (!target || target.health <= 0 || target.vehicleId || now - (target.lastRunOverAt ?? 0) < 800) continue;
+              if (Math.abs(target.y - 1.65 - vehicle.y) > 2.6) continue;
+              const targetX = wrapPlanetX(target.x - previousVehicleX) * scaleX;
+              const targetZ = target.z - previousVehicleZ;
+              const progress = segmentLengthSquared > 0
+                ? Math.max(0, Math.min(1, (targetX * segmentX + targetZ * segmentZ) / segmentLengthSquared))
+                : 0;
+              const distance = Math.hypot(targetX - segmentX * progress, targetZ - segmentZ * progress);
+              if (distance > 1.8) continue;
+              target.lastRunOverAt = now;
+              target.health = Math.max(0, target.health - 35);
+              writeJson(target.socket, {
+                type: "attack_result",
+                hit: true,
+                hitByVehicle: true,
+                damage: 35,
+                message: "You were run over by a tank for 35 damage.",
+              });
+              writeJson(socket, {
+                type: "attack_result",
+                hit: true,
+                vehicleHit: true,
+                damage: 35,
+                targetId: target.id,
+                message: `Tank ran over ${target.name} for 35 damage.`,
+              });
+            }
           }
         }
         broadcastToRoom(room, roomSnapshot(room));
@@ -1962,6 +2408,8 @@ export function createGameServer({
           z: spawn.z,
           yaw: 0,
           design,
+          health: 100,
+          maxHealth: 100,
           ownerId: player.id,
           occupantId: null,
         };
@@ -1980,6 +2428,14 @@ export function createGameServer({
         const room = rooms.get(player.roomId);
         if (!room?.started || player.health <= 0) return;
         if (message.type === "vehicle_exit") {
+          const vehicle = room.vehicles.get(player.vehicleId);
+          if (
+            (vehicle?.type === "plane" || vehicle?.type === "jet") &&
+            vehicle.airborne
+          ) {
+            writeJson(socket, { type: "error", message: "Land the aircraft before exiting." });
+            return;
+          }
           releaseVehicle(room, player);
           writeJson(socket, { type: "vehicle_result", vehicleId: null, message: "You left the vehicle." });
           broadcastToRoom(room, roomSnapshot(room));
@@ -2021,11 +2477,32 @@ export function createGameServer({
           writeJson(socket, { type: "fly_result", enabled: false, message: "Flight is unavailable right now." });
           return;
         }
-        player.flightEnabled = message.enabled;
+        const vehicle = room.vehicles.get(player.vehicleId);
+        const isAircraft = vehicle?.type === "plane" || vehicle?.type === "jet";
+        if (vehicle && !isAircraft) {
+          writeJson(socket, { type: "fly_result", enabled: false, message: "This vehicle cannot fly." });
+          return;
+        }
+        if (isAircraft && vehicle.occupantId !== player.id) return;
+        if (isAircraft) {
+          vehicle.airborne = message.enabled;
+          if (!message.enabled) {
+            player.y = terrainHeightAt(player.x, player.z, room.seed) + 2.65;
+            vehicle.y = player.y - 2.65;
+          }
+        } else {
+          player.flightEnabled = message.enabled;
+        }
         writeJson(socket, {
           type: "fly_result",
-          enabled: player.flightEnabled,
-          message: player.flightEnabled ? "Flight enabled." : "Flight disabled.",
+          enabled: isAircraft ? vehicle.airborne : player.flightEnabled,
+          vehicleId: isAircraft ? vehicle.id : null,
+          ...(!vehicle || (isAircraft && !vehicle.airborne)
+            ? { position: { x: player.x, y: player.y, z: player.z } }
+            : {}),
+          message: (isAircraft ? vehicle.airborne : player.flightEnabled)
+            ? "Takeoff enabled. Use Up to climb and Down to descend."
+            : isAircraft ? "Landed safely." : "Flight disabled.",
         });
         broadcastToRoom(room, roomSnapshot(room));
         return;
@@ -2128,6 +2605,64 @@ export function createGameServer({
         return;
       }
 
+      if (message.type === "door_toggle") {
+        const room = rooms.get(player.roomId);
+        const position = message.position;
+        if (
+          !room?.started ||
+          player.health <= 0 ||
+          !position ||
+          !Number.isSafeInteger(position.x) ||
+          !Number.isSafeInteger(position.y) ||
+          !Number.isSafeInteger(position.z)
+        ) return;
+        const x = Math.round(wrapPlanetX(position.x));
+        const z = Math.round(position.z);
+        const baseY = doorBaseYAt(room, x, position.y, z);
+        if (
+          baseY === null ||
+          Math.hypot(wrapPlanetX(x - player.x), z - player.z) > 4 ||
+          Math.abs(baseY + 1 - player.y) > 3.5
+        ) {
+          writeJson(socket, { type: "door_result", open: false, message: "Move closer to a door to use it." });
+          return;
+        }
+        const property = listCityProperties(room.seed).find((candidate) =>
+          Math.round(wrapPlanetX(candidate.x)) === x && candidate.entranceZ + 1 === z,
+        );
+        if (property) {
+          const owner = room.properties.get(property.id);
+          const ownerId = player.profileId || player.name.toLowerCase();
+          if (!owner) {
+            writeJson(socket, {
+              type: "door_result",
+              open: false,
+              message: `Locked: purchase ${property.name} to unlock this home.`,
+            });
+            return;
+          }
+          if (owner.ownerId !== ownerId) {
+            writeJson(socket, {
+              type: "door_result",
+              open: false,
+              message: `Locked: ${property.name} belongs to ${owner.ownerName}.`,
+            });
+            return;
+          }
+        }
+        const key = blockKey(x, baseY, z);
+        const isOpen = !room.openDoors.has(key);
+        if (isOpen) room.openDoors.add(key);
+        else room.openDoors.delete(key);
+        writeJson(socket, {
+          type: "door_result",
+          open: isOpen,
+          message: isOpen ? "Door opened." : "Door closed.",
+        });
+        broadcastToRoom(room, roomSnapshot(room));
+        return;
+      }
+
       if (message.type === "edit") {
         const room = rooms.get(player.roomId);
         if (!room?.started) return;
@@ -2137,6 +2672,10 @@ export function createGameServer({
           return;
         }
         const key = blockKey(position.x, position.y, position.z);
+        const rebuildTimer = room.blockRebuildTimers.get(key);
+        if (rebuildTimer) clearTimeout(rebuildTimer);
+        room.blockRebuildTimers.delete(key);
+        room.blockRebuilds.delete(key);
         const currentBlock = room.blocks.has(key)
           ? room.blocks.get(key)
           : getBaseBlockAt(position.x, position.y, position.z, room.seed);
@@ -2204,6 +2743,9 @@ export function createGameServer({
         for (const room of savedRooms) rooms.set(room.id, room);
         databaseInitialized = true;
       }
+      for (const room of rooms.values()) {
+        for (const [key, record] of room.blockRebuilds) scheduleBlockRebuild(room, key, record);
+      }
       return new Promise((resolveListen, rejectListen) => {
         httpServer.once("error", rejectListen);
         httpServer.listen(port, host, () => {
@@ -2217,6 +2759,10 @@ export function createGameServer({
       clearInterval(autosaveTimer);
       clearInterval(botTimer);
       clearInterval(monsterTimer);
+      for (const room of rooms.values()) {
+        for (const timer of room.blockRebuildTimers.values()) clearTimeout(timer);
+        room.blockRebuildTimers.clear();
+      }
       for (const socket of webSocketServer.clients) socket.terminate();
       await new Promise((resolveClose) => {
         webSocketServer.close(() => httpServer.close(() => resolveClose()));

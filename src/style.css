@@ -53,6 +53,33 @@ button {
   outline: none;
 }
 
+.rain-overlay {
+  position: absolute;
+  z-index: 1;
+  inset: -30% -10%;
+  display: none;
+  pointer-events: none;
+  opacity: 0.42;
+  background-image: repeating-linear-gradient(
+    105deg,
+    transparent 0 27px,
+    rgba(205, 224, 255, 0.48) 28px,
+    transparent 29px 62px
+  );
+  background-size: 170px 180px;
+}
+
+.rain-overlay.active {
+  display: block;
+  animation: rain-fall 0.55s linear infinite;
+}
+
+@keyframes rain-fall {
+  to {
+    background-position: -90px 180px;
+  }
+}
+
 .topbar {
   position: absolute;
   z-index: 2;
@@ -116,6 +143,15 @@ button {
   background: var(--panel);
   backdrop-filter: blur(14px);
   box-shadow: 0 8px 25px rgba(17, 29, 24, 0.2);
+}
+
+.weather-hud {
+  padding: 0 5px;
+  color: #d9e8ff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
 }
 
 .inventory-toggle {
@@ -1049,7 +1085,9 @@ kbd {
   }
 
   .tank-aim-left-button,
-  .tank-aim-right-button {
+  .tank-aim-right-button,
+  .tank-aim-up-button,
+  .tank-aim-down-button {
     border-color: rgba(181, 193, 147, 0.72);
     background: rgba(57, 69, 48, 0.94);
     color: #e2edc4;
@@ -2352,6 +2390,7 @@ html.gamepad-aiming .aim-crosshair {
   html.first-person-view .aim-crosshair.is-aiming {
     display: block;
   }
+
 }
 
 @media (pointer: coarse), (max-width: 700px) {
@@ -2376,6 +2415,16 @@ html.gamepad-aiming .aim-crosshair {
 }
 
 html.gamepad-aiming .aim-crosshair {
+  position: fixed;
+  z-index: 12;
+  top: 50%;
+  left: 50%;
+  display: block;
+  visibility: visible;
+}
+
+html.tank-aiming .aim-crosshair,
+html.aircraft-aiming .aim-crosshair {
   position: fixed;
   z-index: 12;
   top: 50%;

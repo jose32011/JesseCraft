@@ -13,6 +13,7 @@
   <body>
     <main id="game">
       <canvas id="world" aria-label="Jesse World"></canvas>
+      <div class="rain-overlay" id="rain-overlay" aria-hidden="true"></div>
       <section class="multiplayer-menu" id="multiplayer-menu" aria-label="Multiplayer lobby">
         <div class="lobby-panel">
           <header class="lobby-header">
@@ -54,6 +55,7 @@
           </div>
         </div>
         <div class="session">
+          <span class="weather-hud" id="weather-hud" aria-live="polite">DAY</span>
           <button class="inventory-toggle" id="inventory-toggle" aria-expanded="false" aria-controls="inventory-panel">Bag</button>
           <button class="desktop-fly-button" id="desktop-fly-button" type="button" aria-pressed="false">Fly</button>
           <button class="game-menu-toggle" id="game-menu-toggle" aria-label="World settings" aria-expanded="false" aria-controls="game-menu">&#9881;</button>
@@ -242,6 +244,8 @@
           <button class="action-button fly-down-button" id="fly-down-button" type="button" aria-label="Descend while flying or piloting" hidden>Down</button>
           <button class="action-button tank-aim-left-button" id="tank-aim-left-button" type="button" aria-label="Turn tank turret left" hidden>◀ Aim</button>
           <button class="action-button tank-aim-right-button" id="tank-aim-right-button" type="button" aria-label="Turn tank turret right" hidden>Aim ▶</button>
+          <button class="action-button tank-aim-up-button" id="tank-aim-up-button" type="button" aria-label="Aim tank cannon up" hidden>Aim Up</button>
+          <button class="action-button tank-aim-down-button" id="tank-aim-down-button" type="button" aria-label="Aim tank cannon down" hidden>Aim Down</button>
           <button class="action-button break-button" id="break-button">Break</button>
           <button class="action-button place-button" id="place-button">Place</button>
           <button class="action-button attack-button" id="attack-button">Punch</button>

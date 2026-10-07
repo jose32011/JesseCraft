@@ -70,6 +70,7 @@ export const PLANET_LONGITUDE_BLOCKS = 1600;
 export const PLANET_LATITUDE_BLOCKS = 800;
 export const CITY_RADIUS = 108;
 export const CITY_BEACH_OUTER_RADIUS = 140;
+export const CITY_POLICE_STATION = { x: 64, z: 64 };
 export const HARBOR_WATER_OUTER_RADIUS = 190;
 export const HARBOR_BUILD_RADIUS = 170;
 export const FOREST_OUTER_RADIUS = 228;
@@ -774,6 +775,23 @@ function cityColumnAt(x, z, seed) {
     };
   }
 
+  if (
+    cellX === CITY_POLICE_STATION.x / CITY_BLOCK_SIZE &&
+    cellZ === CITY_POLICE_STATION.z / CITY_BLOCK_SIZE &&
+    Math.abs(localX) <= 8 &&
+    Math.abs(localZ) <= 8
+  ) {
+    return {
+      height: 7,
+      policeStation: true,
+      wall: Math.abs(localX) === 8 || Math.abs(localZ) === 8,
+      localX,
+      localZ,
+      width: 16,
+      depth: 16,
+    };
+  }
+
   if (Math.hypot(cellX * CITY_BLOCK_SIZE, cellZ * CITY_BLOCK_SIZE) < 18) return null;
   const width = 10 + Math.floor(seededValue(cellX + 11, cellZ - 7, seed) * 12);
   const depth = 10 + Math.floor(seededValue(cellX - 5, cellZ + 15, seed) * 12);
@@ -818,6 +836,19 @@ function cityColumnAt(x, z, seed) {
 function cityColumnBlockAt(column, y) {
   if (!column) return null;
   if (column.street) return y === 0 ? column.type : null;
+  if (column.policeStation) {
+    if (y === 0) return "white_concrete";
+    if (y < 0 || y > column.height) return null;
+    if (column.localX === 0 && column.localZ === -8 && y <= 2) return "oak_door";
+    if (y === column.height) return "blue_concrete";
+    if (y === 5 && column.wall) return "blue_concrete";
+    if (column.wall && y >= 2 && y <= 4 && (
+      (Math.abs(column.localX) === 8 && Math.abs(column.localZ) % 4 === 0) ||
+      (column.localZ === 8 && Math.abs(column.localX) % 4 === 0)
+    )) return y === 3 ? "glass" : "iron_ingot";
+    if (column.wall && column.localZ === -8 && y === 3 && Math.abs(column.localX) <= 2) return "glass";
+    return column.wall ? "white_concrete" : null;
+  }
   const { height, facade, accent, fortified, skyline, shop, wall, corner, window, localX = 0, localZ = 0, depth = 12 } = column;
   if (y === 0) return "white_concrete";
   if (y < 0) return null;
@@ -870,7 +901,7 @@ export function listCityProperties(seed = 1) {
       const x = cellX * CITY_BLOCK_SIZE;
       const z = cellZ * CITY_BLOCK_SIZE;
       const column = cityColumnAt(x, z, worldSeed);
-      if (!column || column.street) continue;
+      if (!column || column.street || column.policeStation) continue;
       properties.push({
         id: `city-home-${cellX}-${cellZ}`,
         name: `Glass City Residence ${properties.length + 1}`,
