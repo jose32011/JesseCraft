@@ -24,9 +24,65 @@ The production server serves the built client and the multiplayer WebSocket endp
 
 ## Saved-world persistence
 
-Without a database, saved worlds are stored as JSON files in `.data/saves`. To store them in Railway Postgres, add a `DATABASE_URL` variable to the game server service. When both services are in the same Railway project and environment, reference the Postgres service's private URL, for example `${{Postgres.DATABASE_URL}}` (replace `Postgres` with the exact service name). The server creates `voxland_worlds` and `voxland_profiles` at startup. Started worlds autosave every minute by default; players can toggle autosave in the world menu or save immediately with **Save world**. Player profiles, character colors, and profile statistics are keyed by a browser-generated profile ID and stored in Postgres.
+Without a database, saved worlds are stored as JSON files in `.data/saves`. For local Postgres development, install Docker Compose, then start the database and game:
 
-For local development, set `DATABASE_URL` in the shell before starting the server, using the public TCP Proxy URL from Railway. Keep the URL private and out of source control. If the database password has been exposed, rotate it in Railway before connecting.
+```sh
+cp .env.example .env
+npm run db:up
+npm run dev
+```
+
+The Compose service creates a local `voxland` database and keeps its data in a named volume. The server creates `voxland_worlds` and `voxland_profiles` automatically when it connects. Stop Postgres with `npm run db:down`; this preserves the database volume. To permanently delete local database data, run `docker compose down -v`.
+
+The default `.env.example` credentials are for local development only. For Railway, add a `DATABASE_URL` variable to the game server service. When both services are in the same Railway project and environment, reference the Postgres service's private URL, for example `${{Postgres.DATABASE_URL}}` (replace `Postgres` with the exact service name). Keep production connection URLs private and out of source control. Started worlds autosave every minute by default; players can toggle autosave in the world menu or save immediately with **Save world**. Player profiles, character colors, and profile statistics are keyed by a browser-generated profile ID and stored in Postgres.
+
+### Deploy on a VPS with Nginx
+
+The supplied Nginx and systemd configurations are in `deploy/`. On a Debian/Ubuntu VPS with this repository and its `.env` file installed, build the client and install the service and site configurations:
+
+```sh
+npm ci
+npm run build
+sudo mkdir -p /opt/voxland/releases
+sudo ln -s /root/JesseCraft /opt/voxland/current
+sudo cp deploy/voxland.service /etc/systemd/system/voxland.service
+sudo cp deploy/voxland.nginx.conf /etc/nginx/sites-available/voxland
+sudo ln -s /etc/nginx/sites-available/voxland /etc/nginx/sites-enabled/voxland
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t
+sudo systemctl daemon-reload
+sudo systemctl enable --now voxland nginx
+```
+
+Allow inbound TCP ports 80 and 443 in the VPS provider firewall, then enable HTTPS for the hostname:
+
+```sh
+sudo certbot --nginx -d natalie-khe9ca.cloudserver.nz
+```
+
+The game server listens only on localhost behind Nginx, including its WebSocket endpoint. PostgreSQL remains bound to localhost and must not be opened to the public internet.
+
+### Deploy automatically from GitHub
+
+The GitHub Actions workflow runs tests and builds the client for every push to `main`, then uploads an isolated release to the VPS over SSH, switches releases, and restarts the service. It rolls back to the previous release if the service does not become healthy. To enable it:
+
+1. On your PC, create a dedicated SSH key pair with `ssh-keygen -t ed25519 -C voxland-github-deploy -f ~/.ssh/voxland_deploy`. Add the **public** key (`voxland_deploy.pub`) to the VPS account's `~/.ssh/authorized_keys`. Keep the private key secure.
+2. In GitHub, open **Settings → Secrets and variables → Actions** for this repository and add `VPS_HOST` (`natalie-khe9ca.cloudserver.nz`), `VPS_USER` (your VPS SSH account, currently `root`), and `VPS_SSH_KEY` (the complete private key).
+3. Pin the VPS SSH host key as the `VPS_KNOWN_HOSTS` secret. Get the host key with `ssh-keyscan -H natalie-khe9ca.cloudserver.nz` and verify its fingerprint against `sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the VPS before saving the scan output. This avoids trusting an unverified host key in the deployment workflow.
+4. Prepare the release directory and switch the service to the deployment symlink once (skip the first two commands if already done in the VPS setup above):
+
+   ```sh
+   sudo mkdir -p /opt/voxland/releases
+   sudo ln -s /root/JesseCraft /opt/voxland/current
+   sudo cp deploy/voxland.service /etc/systemd/system/voxland.service
+   sudo systemctl daemon-reload
+   sudo systemctl restart voxland
+   ```
+
+   If `/opt/voxland/current` already exists, keep it and verify it points to the currently running release before restarting.
+5. Push to `main` from your PC (`git push origin main`). GitHub Actions will deploy automatically after tests and the production build pass. You can follow progress in the repository's **Actions** tab.
+
+The deploy key grants access to the VPS account in `VPS_USER`; use a dedicated account/key where possible and never put the private key in the repository.
 
 ## Controls
 

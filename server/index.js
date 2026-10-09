@@ -2773,6 +2773,7 @@ export function createGameServer({
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await import("dotenv/config");
   const gameServer = createGameServer({
     host: process.env.HOST ?? "0.0.0.0",
     port: Number(process.env.PORT ?? 3001),
