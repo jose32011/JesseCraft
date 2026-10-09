@@ -75,7 +75,7 @@
 
       <details class="panel password-settings">
         <summary>Change dashboard password</summary>
-        <p class="muted">Use a unique password of at least 16 characters. Changing it signs out other dashboard sessions.</p>
+        <p class="muted">Use a unique password of at least 8 characters; longer is safer. Changing it signs out other dashboard sessions.</p>
         <form id="passwordForm">
           <div class="password-fields">
             <div>
@@ -84,11 +84,11 @@
             </div>
             <div>
               <label for="newPassword">New dashboard password</label>
-              <input id="newPassword" name="newPassword" type="password" autocomplete="new-password" minlength="16" maxlength="256" required>
+              <input id="newPassword" name="newPassword" type="password" autocomplete="new-password" minlength="8" maxlength="256" required>
             </div>
             <div>
               <label for="confirmPassword">Confirm new password</label>
-              <input id="confirmPassword" name="confirmPassword" type="password" autocomplete="new-password" minlength="16" maxlength="256" required>
+              <input id="confirmPassword" name="confirmPassword" type="password" autocomplete="new-password" minlength="8" maxlength="256" required>
             </div>
           </div>
           <button class="primary password-submit" type="submit">Update password</button>

@@ -14,7 +14,7 @@ const SESSION_COOKIE = 'voxland_admin_session';
 const SESSION_LIFETIME_MS = 8 * 60 * 60 * 1000;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const MAX_LOGIN_ATTEMPTS = 5;
-const MIN_PASSWORD_LENGTH = 16;
+const MIN_PASSWORD_LENGTH = 8;
 const MAX_PASSWORD_LENGTH = 256;
 const PASSWORD_SALT_BYTES = 16;
 const PASSWORD_HASH_BYTES = 64;
@@ -298,7 +298,7 @@ function registerAdminDashboard(app, gameMetrics, {
             configuredPassword.length < MIN_PASSWORD_LENGTH ||
             configuredPassword.length > MAX_PASSWORD_LENGTH)) {
           response.status(503).json({
-            error: 'Dashboard login is unavailable. Configure a unique dashboard-only password with 16 to 256 characters.'
+            error: 'Dashboard login is unavailable. Configure a unique dashboard-only password with 8 to 256 characters.'
           });
           return;
         }
@@ -373,7 +373,7 @@ function registerAdminDashboard(app, gameMetrics, {
         newPassword.length < MIN_PASSWORD_LENGTH ||
         newPassword.length > MAX_PASSWORD_LENGTH) {
       response.status(400).json({
-        error: 'Enter your current password and a new dashboard password between 16 and 256 characters.'
+        error: 'Enter your current password and a new dashboard password between 8 and 256 characters.'
       });
       return;
     }

@@ -107,14 +107,22 @@ test('admin login refuses non-HTTPS requests when HTTPS is required', async () =
   });
 });
 
-test('admin login stays unavailable until a sufficiently long password is configured', async () => {
-  await withDashboard({ password: () => '' }, async baseUrl => {
+test('dashboard password must contain at least eight characters', async () => {
+  await withDashboard({ password: () => 'short7!' }, async baseUrl => {
     const response = await fetch(`${baseUrl}/api/admin/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ password: 'anything' })
+      body: JSON.stringify({ password: 'short7!' })
     });
     assert.equal(response.status, 503);
+  });
+  await withDashboard({ password: () => 'eight888' }, async baseUrl => {
+    const response = await fetch(`${baseUrl}/api/admin/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ password: 'eight888' })
+    });
+    assert.equal(response.status, 200);
   });
 });
 
@@ -142,7 +150,7 @@ test('dashboard password changes are authenticated, persistent, and stored as a 
         headers: { cookie: oldCookie, 'content-type': 'application/json' },
         body: JSON.stringify({
           currentPassword: 'incorrect-dashboard-password',
-          newPassword: 'new-dashboard-password-with-entropy'
+          newPassword: 'eight888'
         })
       });
       assert.equal(wrongCurrent.status, 401);
@@ -152,7 +160,7 @@ test('dashboard password changes are authenticated, persistent, and stored as a 
         headers: { cookie: oldCookie, 'content-type': 'application/json' },
         body: JSON.stringify({
           currentPassword: 'initial-dashboard-password',
-          newPassword: 'too-short'
+          newPassword: 'short7!'
         })
       });
       assert.equal(shortNewPassword.status, 400);
@@ -162,7 +170,7 @@ test('dashboard password changes are authenticated, persistent, and stored as a 
         headers: { cookie: oldCookie, 'content-type': 'application/json' },
         body: JSON.stringify({
           currentPassword: 'initial-dashboard-password',
-          newPassword: 'new-dashboard-password-with-entropy'
+          newPassword: 'eight888'
         })
       });
       assert.equal(changed.status, 200);
@@ -173,7 +181,7 @@ test('dashboard password changes are authenticated, persistent, and stored as a 
       })).status, 401);
 
       const stored = readFileSync(passwordFile, 'utf8');
-      assert.equal(stored.includes('new-dashboard-password-with-entropy'), false);
+      assert.equal(stored.includes('eight888'), false);
       assert.equal(statSync(passwordFile).mode & 0o777, 0o600);
     });
 
@@ -187,7 +195,7 @@ test('dashboard password changes are authenticated, persistent, and stored as a 
       const newPassword = await fetch(`${baseUrl}/api/admin/login`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ password: 'new-dashboard-password-with-entropy' })
+        body: JSON.stringify({ password: 'eight888' })
       });
       assert.equal(newPassword.status, 200);
     });
