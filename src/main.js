@@ -3734,7 +3734,22 @@ function renderRoomList(container, rooms, emptyMessage) {
     join.className = "room-join-button";
     join.dataset.roomId = room.id;
     join.textContent = room.saved ? "Resume" : "Join";
-    row.append(description, join);
+    if (room.saved) {
+      const actions = document.createElement("div");
+      actions.className = "lobby-room-actions";
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "room-delete-button";
+      remove.dataset.roomId = room.id;
+      remove.dataset.roomName = room.name;
+      remove.textContent = "Delete";
+      remove.disabled = room.players > 0;
+      remove.title = room.players > 0 ? "Players must leave this world before it can be deleted." : "Delete this saved world";
+      actions.append(join, remove);
+      row.append(description, actions);
+    } else {
+      row.append(description, join);
+    }
     container.append(row);
   }
 }
@@ -3934,6 +3949,10 @@ function connect() {
         notify(message.message);
       } else if (message.hitByAircraft) {
         notify(message.message);
+      } else if (message.aircraft && message.hit && message.killed && message.reward) {
+        updateXp(message.reward.xp, message.reward.level);
+        updateCoins(message.reward.coins);
+        notify(`Aircraft guns defeated a monster! +${message.reward.xpGained} XP · +${message.reward.coinsGained} coins.`);
       } else if (message.aircraft && message.message) {
         notify(message.message);
       } else if (message.hit && message.killed && message.reward) {
@@ -4114,11 +4133,45 @@ lobbyRoomList.addEventListener("click", (event) => {
   }
 });
 savedGameList.addEventListener("click", (event) => {
-  const resumeButton = event.target.closest("button[data-room-id]");
-  if (resumeButton && updatePlayerName()) {
-    sendLobbyMessage({ type: "join_room", roomId: resumeButton.dataset.roomId });
+  const roomButton = event.target.closest("button[data-room-id]");
+  if (!roomButton) return;
+  if (roomButton.classList.contains("room-delete-button")) {
+    deleteSavedWorldFromAdmin(roomButton);
+  } else if (updatePlayerName()) {
+    sendLobbyMessage({ type: "join_room", roomId: roomButton.dataset.roomId });
   }
 });
+
+async function deleteSavedWorldFromAdmin(roomButton) {
+  const name = roomButton.dataset.roomName ?? roomButton.dataset.roomId;
+  try {
+    const sessionResponse = await fetch("/api/admin/session", { cache: "no-store" });
+    if (sessionResponse.status === 401) {
+      lobbyNotice.textContent = "Sign in at /admin/ before deleting saved worlds.";
+      return;
+    }
+    if (!sessionResponse.ok) {
+      lobbyNotice.textContent = "Could not verify admin access. Please try again.";
+      return;
+    }
+    if (!window.confirm(`Permanently delete the saved world "${name}"? This cannot be undone.`)) return;
+
+    roomButton.disabled = true;
+    const response = await fetch("/api/admin/saved-worlds/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ roomId: roomButton.dataset.roomId })
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "The saved world could not be deleted.");
+    lobbyNotice.textContent = result.message;
+    sendLobbyMessage({ type: "list_rooms" });
+  } catch (error) {
+    lobbyNotice.textContent = error.message || "The saved world could not be deleted.";
+    roomButton.disabled = false;
+  }
+}
+
 savedGamesToggle.addEventListener("click", () => {
   savedGameList.hidden = !savedGameList.hidden;
   savedGamesToggle.setAttribute("aria-expanded", String(!savedGameList.hidden));
@@ -5123,6 +5176,7 @@ function attackPlayer() {
   if (state.vehicleType === "tank") {
     const target = findCombatTarget();
     const impact = findTankImpact();
+    const vehicle = state.vehicles.find(({ id }) => id === state.vehicleId);
     const impactPosition = impact
       && !impact.targetVehicleId
       ? {
@@ -5137,6 +5191,10 @@ function attackPlayer() {
       ...(target ? { targetId: target.id } : {}),
       ...(impact?.targetVehicleId ? { targetVehicleId: impact.targetVehicleId } : {}),
       ...(impactPosition ? { impactPosition } : {}),
+      ...(vehicle ? {
+        aimYaw: vehicle.turretYaw ?? vehicle.yaw,
+        aimPitch: vehicle.turretPitch ?? 0,
+      } : {}),
     }));
     return;
   }

@@ -106,6 +106,31 @@ body {
     outline-offset: 3px;
 }
 
+.server-admin-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 38px;
+    margin-top: 15px;
+    padding: 0 13px;
+    border: 1px solid rgba(159, 181, 210, 0.34);
+    border-radius: 9px;
+    background: rgba(19, 30, 49, 0.72);
+    color: #b7c9e1;
+    font-size: 12px;
+    font-weight: 700;
+    text-decoration: none;
+    transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.server-admin-link:hover,
+.server-admin-link:focus-visible {
+    color: #c6eaff;
+    border-color: rgba(105, 220, 255, 0.72);
+    background: rgba(26, 54, 76, 0.9);
+}
+
+.server-admin-link:focus-visible { outline: 2px solid #69dcff; outline-offset: 3px; }
+
 .yugioh-menu-card {
     --game-accent: #ffd56a;
 }

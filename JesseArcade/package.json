@@ -7,7 +7,7 @@
     "build:jesse-craft": "npm --prefix .. run build:arcade",
     "prestart": "npm run build:jesse-craft",
     "start": "node server.js",
-    "test": "node --test ludo.test.js chess.test.js snakesLadders.test.js uno.test.js server.test.js cardApi.test.js"
+    "test": "node --test ludo.test.js chess.test.js snakesLadders.test.js uno.test.js server.test.js cardApi.test.js adminDashboard.test.js"
   },
   "keywords": [],
   "author": "",

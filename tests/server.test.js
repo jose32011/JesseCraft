@@ -573,6 +573,73 @@ test("builds custom boats at the harbor workshop, sails on water, and saves boat
   }
 });
 
+test("the second tank driver can fire using the aim in the firing request", async () => {
+  const server = createGameServer({ host: "127.0.0.1", port: 0, seed: 117 });
+  const sockets = [];
+  try {
+    const address = await server.listen();
+    const first = connect(`ws://127.0.0.1:${address.port}/ws`);
+    sockets.push(first.socket);
+    const firstLobby = nextMessage(first.socket, (message) => message.type === "lobby");
+    await first.opened;
+    await firstLobby;
+    const created = nextMessage(first.socket, (message) => message.type === "room_created");
+    first.socket.send(JSON.stringify({ type: "create_room", roomName: "Two Tank Test" }));
+    const roomId = (await created).room.id;
+    const firstStart = nextMessage(first.socket, (message) => message.type === "init");
+    first.socket.send(JSON.stringify({ type: "start_room" }));
+    const firstInit = await firstStart;
+    const room = server.rooms.get(roomId);
+    const targetTank = room.vehicles.get("city-tank-1");
+    const targetPlayer = server.players.get(firstInit.id);
+    targetPlayer.x = targetTank.x;
+    targetPlayer.y = targetTank.y + 2.65;
+    targetPlayer.z = targetTank.z;
+    const enteredTarget = nextMessage(first.socket, (message) => message.type === "vehicle_result");
+    first.socket.send(JSON.stringify({ type: "vehicle_enter", vehicleId: targetTank.id }));
+    await enteredTarget;
+
+    const second = connect(`ws://127.0.0.1:${address.port}/ws`);
+    sockets.push(second.socket);
+    const secondLobby = nextMessage(second.socket, (message) => message.type === "lobby");
+    await second.opened;
+    await secondLobby;
+    const secondInitMessage = nextMessage(second.socket, (message) => message.type === "init");
+    second.socket.send(JSON.stringify({ type: "join_room", roomId }));
+    const secondInit = await secondInitMessage;
+    const shooter = server.players.get(secondInit.id);
+    const shooterTank = room.vehicles.get("city-tank-5");
+    shooter.x = shooterTank.x;
+    shooter.y = shooterTank.y + 2.65;
+    shooter.z = shooterTank.z;
+    const enteredShooter = nextMessage(second.socket, (message) => message.type === "vehicle_result");
+    second.socket.send(JSON.stringify({ type: "vehicle_enter", vehicleId: shooterTank.id }));
+    await enteredShooter;
+
+    shooterTank.turretYaw = Math.PI;
+    shooterTank.turretPitch = 0;
+    targetTank.health = 100;
+    targetTank.maxHealth = 100;
+    const hit = nextMessage(
+      second.socket,
+      (message) => message.type === "attack_result" && message.vehicleHit,
+    );
+    second.socket.send(JSON.stringify({
+      type: "tank_fire",
+      targetVehicleId: targetTank.id,
+      aimYaw: 0,
+      aimPitch: 0,
+    }));
+    const result = await hit;
+    assert.equal(result.hit, true);
+    assert.equal(result.destroyed, true);
+    assert.equal(room.vehicles.has(targetTank.id), false);
+  } finally {
+    for (const socket of sockets) socket.terminate();
+    await server.close();
+  }
+});
+
 test("fighter jets can be boarded, flown, and synchronized", async () => {
   const server = createGameServer({ host: "127.0.0.1", port: 0, seed: 719 });
   const sockets = [];
@@ -653,6 +720,11 @@ test("fighter jets can be boarded, flown, and synchronized", async () => {
     targetJet.x = targetPlayer.x;
     targetJet.y = targetPlayer.y - 2.65;
     targetJet.z = targetPlayer.z;
+    for (const monster of room.monsters.values()) {
+      monster.x = player.x + 40;
+      monster.y = player.y;
+      monster.z = player.z + 40;
+    }
     const hit = nextMessage(
       connection.socket,
       (message) => message.type === "attack_result" && message.aircraft,
@@ -675,6 +747,76 @@ test("fighter jets can be boarded, flown, and synchronized", async () => {
     assert.equal((await landed).enabled, false);
     assert.equal(jet.airborne, false);
     assert.equal(player.y, terrainHeightAt(player.x, player.z, room.seed) + 2.65);
+  } finally {
+    for (const socket of sockets) socket.terminate();
+    await server.close();
+  }
+});
+
+test("planes can fire their guns at ground enemies", async () => {
+  const server = createGameServer({ host: "127.0.0.1", port: 0, seed: 921 });
+  const sockets = [];
+  try {
+    const address = await server.listen();
+    const connection = connect(`ws://127.0.0.1:${address.port}/ws`);
+    sockets.push(connection.socket);
+    const lobby = nextMessage(connection.socket, (message) => message.type === "lobby");
+    await connection.opened;
+    await lobby;
+    const created = nextMessage(connection.socket, (message) => message.type === "room_created");
+    connection.socket.send(JSON.stringify({ type: "create_room", roomName: "Plane Gun Test" }));
+    const roomId = (await created).room.id;
+    const started = nextMessage(connection.socket, (message) => message.type === "init");
+    connection.socket.send(JSON.stringify({ type: "start_room" }));
+    const init = await started;
+    const room = server.rooms.get(roomId);
+    const player = server.players.get(init.id);
+    const plane = room.vehicles.get("airport-plane");
+    player.x = plane.x;
+    player.y = plane.y + 2.65;
+    player.z = plane.z;
+    const entered = nextMessage(connection.socket, (message) => message.type === "vehicle_result");
+    connection.socket.send(JSON.stringify({ type: "vehicle_enter", vehicleId: plane.id }));
+    await entered;
+    const tookOff = nextMessage(connection.socket, (message) => message.type === "fly_result");
+    connection.socket.send(JSON.stringify({ type: "fly_toggle", enabled: true }));
+    assert.equal((await tookOff).enabled, true);
+
+    const moved = nextMessage(
+      connection.socket,
+      (message) => message.type === "snapshot" &&
+        message.vehicles?.some((vehicle) => vehicle.id === plane.id && vehicle.airborne),
+    );
+    connection.socket.send(JSON.stringify({
+      type: "move",
+      position: { x: plane.x, y: 20, z: plane.z, yaw: 0 },
+    }));
+    await moved;
+    const monster = room.monsters.get("monster-crab");
+    for (const candidate of room.monsters.values()) {
+      if (candidate === monster) continue;
+      candidate.x = player.x + 40;
+      candidate.y = player.y;
+      candidate.z = player.z + 40;
+    }
+    monster.x = player.x;
+    monster.y = player.y;
+    monster.z = player.z + 12;
+    player.lastAttackAt = 0;
+
+    const shot = nextMessage(
+      connection.socket,
+      (message) => message.type === "attack_result" && message.aircraft,
+    );
+    connection.socket.send(JSON.stringify({
+      type: "aircraft_fire",
+      aimYaw: 0,
+      aimPitch: 0,
+    }));
+    const result = await shot;
+    assert.equal(result.hit, true);
+    assert.equal(result.targetId, monster.id);
+    assert.equal(monster.health, monster.maxHealth - 25);
   } finally {
     for (const socket of sockets) socket.terminate();
     await server.close();
@@ -1342,6 +1484,47 @@ test("saves a world and restores its terrain, mode, seed, and player inventory",
     const restoredChunk = nextMessage(restoredConnection.socket, (message) => message.type === "chunk");
     restoredConnection.socket.send(JSON.stringify({ type: "chunk", x: 0, z: 0 }));
     assert.ok((await restoredChunk).blockChanges.some(([[x, y, z], type]) => x === 0 && y === -1 && z === 0 && type === null));
+  } finally {
+    for (const socket of sockets) socket.terminate();
+    await server.close();
+    rmSync(saveDirectory, { recursive: true, force: true });
+  }
+});
+
+test("deletes a saved world only after every player has left", async () => {
+  const saveDirectory = mkdtempSync(join(tmpdir(), "voxland-delete-save-"));
+  const server = createGameServer({ host: "127.0.0.1", port: 0, seed: 83, saveDirectory });
+  const sockets = [];
+  try {
+    const address = await server.listen();
+    const connection = connect(`ws://127.0.0.1:${address.port}/ws`);
+    sockets.push(connection.socket);
+    const lobby = nextMessage(connection.socket, (message) => message.type === "lobby");
+    await connection.opened;
+    await lobby;
+
+    const created = nextMessage(connection.socket, (message) => message.type === "room_created");
+    connection.socket.send(JSON.stringify({ type: "create_room", roomName: "Delete Test" }));
+    const roomId = (await created).room.id;
+    const started = nextMessage(connection.socket, (message) => message.type === "init");
+    connection.socket.send(JSON.stringify({ type: "start_room" }));
+    await started;
+    const saved = nextMessage(connection.socket, (message) => message.type === "save_result");
+    connection.socket.send(JSON.stringify({ type: "save_room" }));
+    assert.equal((await saved).saved, true);
+
+    const activeDelete = await server.deleteSavedWorld(roomId);
+    assert.equal(activeDelete.success, false);
+    assert.equal(activeDelete.status, 409);
+    assert.equal(existsSync(join(saveDirectory, `${roomId}.json`)), true);
+
+    const left = nextMessage(connection.socket, (message) => message.type === "room_left");
+    connection.socket.send(JSON.stringify({ type: "leave_room" }));
+    await left;
+    const deleted = await server.deleteSavedWorld(roomId);
+    assert.equal(deleted.success, true);
+    assert.equal(server.rooms.has(roomId), false);
+    assert.equal(existsSync(join(saveDirectory, `${roomId}.json`)), false);
   } finally {
     for (const socket of sockets) socket.terminate();
     await server.close();

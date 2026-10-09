@@ -1360,10 +1360,17 @@ kbd {
   margin-top: 12px;
 }
 
+.lobby-room-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+}
+
 .lobby-primary,
 .lobby-secondary,
 .room-list-heading button,
-.room-join-button {
+.room-join-button,
+.room-delete-button {
   min-height: 40px;
   padding: 0 14px;
   border: 1px solid rgba(185, 233, 137, 0.42);
@@ -1378,7 +1385,8 @@ kbd {
 .lobby-primary:hover,
 .lobby-secondary:hover,
 .room-list-heading button:hover,
-.room-join-button:hover {
+.room-join-button:hover,
+.room-delete-button:hover:not(:disabled) {
   background: rgba(185, 233, 137, 0.23);
 }
 
@@ -1431,6 +1439,20 @@ kbd {
   min-height: 32px;
   padding: 0 11px;
   font-size: 10px;
+}
+
+.room-delete-button {
+  min-height: 32px;
+  padding: 0 11px;
+  border-color: rgba(255, 130, 109, 0.48);
+  background: rgba(255, 93, 75, 0.1);
+  color: #ffb2a4;
+  font-size: 10px;
+}
+
+.room-delete-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .lobby-empty {

@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Voyager VPS Admin · JesseCraft</title>
+  <link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <a class="brand" href="/">JESSECRAFT <span>VOYAGER ADMIN</span></a>
+      <a class="back-link" href="/">← Back to games</a>
+    </header>
+
+    <section id="loginView" class="login-view" aria-labelledby="loginTitle">
+      <div class="login-card">
+        <p class="eyebrow">RESTRICTED ACCESS</p>
+        <h1 id="loginTitle">Server sign in</h1>
+        <p class="muted">Enter the Voyager administrator password to continue.</p>
+        <form id="loginForm">
+          <label for="adminPassword">Admin password</label>
+          <input id="adminPassword" name="password" type="password" autocomplete="current-password" required>
+          <button class="primary" type="submit">Sign in</button>
+        </form>
+        <p id="loginStatus" class="status" role="status" aria-live="polite"></p>
+      </div>
+    </section>
+
+    <section id="dashboardView" class="dashboard" hidden aria-labelledby="dashboardTitle">
+      <div class="dashboard-heading">
+        <div>
+          <p class="eyebrow">VOYAGER VPS · LIVE</p>
+          <h1 id="dashboardTitle">Server dashboard</h1>
+          <p id="updatedAt" class="muted">Waiting for metrics…</p>
+        </div>
+        <div class="toolbar">
+          <button id="refreshButton" class="secondary" type="button">Refresh</button>
+          <button id="restartButton" class="danger" type="button">Restart game server</button>
+          <button id="logoutButton" class="secondary" type="button">Sign out</button>
+        </div>
+      </div>
+      <p id="dashboardStatus" class="status" role="status" aria-live="polite"></p>
+
+      <div class="metric-cards">
+        <article class="metric-card"><span>CPU</span><strong id="cpuValue">—</strong><small id="loadValue">Load —</small></article>
+        <article class="metric-card"><span>Memory</span><strong id="memoryValue">—</strong><small id="memoryDetail">—</small></article>
+        <article class="metric-card"><span>Network</span><strong id="networkValue">—</strong><small id="networkDetail">—</small></article>
+        <article class="metric-card"><span>Disk throughput</span><strong id="diskValue">—</strong><small id="diskDetail">—</small></article>
+      </div>
+
+      <section class="chart-grid" aria-label="VPS hardware usage charts">
+        <article class="panel chart-panel"><h2>CPU usage</h2><canvas id="cpuChart" aria-label="CPU usage history"></canvas></article>
+        <article class="panel chart-panel"><h2>Memory usage</h2><canvas id="memoryChart" aria-label="Memory usage history"></canvas></article>
+        <article class="panel chart-panel"><h2>Network throughput</h2><canvas id="networkChart" aria-label="Network throughput history"></canvas></article>
+        <article class="panel chart-panel"><h2>Disk throughput</h2><canvas id="diskChart" aria-label="Disk throughput history"></canvas></article>
+      </section>
+
+      <div class="details-grid">
+        <section class="panel">
+          <div class="panel-heading"><h2>Game server process</h2><span id="processStatus" class="live-pill">LIVE</span></div>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>Process</th><th>PID</th><th>CPU</th><th>Resident memory</th><th>Heap</th><th>Uptime</th></tr></thead>
+              <tbody id="processRows"></tbody>
+            </table>
+          </div>
+        </section>
+        <section class="panel">
+          <h2>Game activity</h2>
+          <div id="gameActivity" class="activity-list"></div>
+        </section>
+      </div>
+    </section>
+  </main>
+  <script src="/admin/admin.js" defer></script>
+</body>
+</html>

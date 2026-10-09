@@ -4,6 +4,7 @@ const socketIo = require('socket.io');
 const path = require('path');
 const fs = require('fs');
 const cardApi = require('./cardApi');
+const { registerAdminDashboard } = require('./adminDashboard');
 const { registerLudoHandlers } = require('./ludo');
 const { registerChessHandlers } = require('./chess');
 const { registerSnakesLaddersHandlers } = require('./snakesLadders');
@@ -25,6 +26,17 @@ const DECK_ARCHETYPES = new Set([
   'Red-Eyes',
   'Dragonmaid'
 ]);
+
+app.use('/admin', (request, response, next) => {
+  response.setHeader(
+    'Content-Security-Policy',
+    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+  );
+  response.setHeader('Referrer-Policy', 'no-referrer');
+  response.setHeader('X-Content-Type-Options', 'nosniff');
+  response.setHeader('X-Frame-Options', 'DENY');
+  next();
+});
 
 // Serve static files
 app.use(express.static(path.join(__dirname, 'public')));
@@ -1041,6 +1053,30 @@ const arcadeRoomGroups = {
   uno: registerUnoHandlers(io)
 };
 
+let jesseCraftMetrics = () => ({
+  playersOnline: 0,
+  activeWorlds: 0,
+  savedWorlds: 0
+});
+let jesseCraftServerInstance = null;
+
+registerAdminDashboard(app, () => ({
+  arcade: {
+    clients: io.engine.clientsCount,
+    rooms: Object.fromEntries(
+      Object.entries(arcadeRoomGroups).map(([game, rooms]) => [game, Object.keys(rooms).length])
+    )
+  },
+  jesseCraft: jesseCraftMetrics()
+}), {
+  deleteSavedWorld: roomId => {
+    if (!jesseCraftServerInstance) {
+      throw new Error('JesseCraft server is not ready.');
+    }
+    return jesseCraftServerInstance.deleteSavedWorld(roomId);
+  }
+});
+
 async function startServer() {
   if (!fs.existsSync(path.join(JESSE_CRAFT_BUILD_DIR, 'index.html'))) {
     throw new Error('JesseCraft build is missing. Run "npm run build:jesse-craft" from JesseArcade.');
@@ -1048,6 +1084,12 @@ async function startServer() {
 
   const { createGameServer } = await import('../server/index.js');
   const jesseCraftServer = createGameServer({ httpServer: server });
+  jesseCraftServerInstance = jesseCraftServer;
+  jesseCraftMetrics = () => ({
+    playersOnline: jesseCraftServer.players.size,
+    activeWorlds: [...jesseCraftServer.rooms.values()].filter(room => room.started).length,
+    savedWorlds: [...jesseCraftServer.rooms.values()].filter(room => room.saved).length
+  });
 
   server.once('listening', async () => {
     try {

@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomInt, randomUUID } from "node:crypto";
@@ -807,6 +807,15 @@ async function persistRoomToDatabase(room, players, pool) {
   `, [room.id, JSON.stringify(payload)]);
 }
 
+async function removeSavedRoom(room, saveDirectory, pool) {
+  if (pool) {
+    await pool.query("DELETE FROM voxland_worlds WHERE id = $1", [room.id]);
+  } else {
+    const savePath = resolve(saveDirectory, `${room.id}.json`);
+    if (existsSync(savePath)) unlinkSync(savePath);
+  }
+}
+
 async function persistPlayerProfile(player, profiles, pool) {
   if (!player.profileId) return;
   const profile = {
@@ -951,7 +960,7 @@ export function createGameServer({
   });
 
   const lobbyRooms = () => [...rooms.values()]
-    .filter((room) => room.members.size < 8)
+    .filter((room) => !room.deleting && room.members.size < 8)
     .map(roomSummary);
 
   const sendLobbyRooms = () => {
@@ -1091,16 +1100,17 @@ export function createGameServer({
   const autosaveTimer = setInterval(() => {
     const now = Date.now();
     for (const room of rooms.values()) {
-      if (!room.started || !room.autosaveEnabled || room.autosaveInProgress || now - room.lastAutosaveAt < autosaveIntervalMs) continue;
+      if (room.deleting || !room.started || !room.autosaveEnabled || room.autosaveInProgress || now - room.lastAutosaveAt < autosaveIntervalMs) continue;
       room.lastAutosaveAt = now;
       room.autosaveInProgress = true;
       const save = pool
         ? persistRoomToDatabase(room, players, pool)
         : Promise.resolve().then(() => persistRoom(room, players, saveDirectory));
-      save.catch(() => {
+      room.autosavePromise = save.catch(() => {
         room.lastAutosaveAt = Date.now() - autosaveIntervalMs;
       }).finally(() => {
         room.autosaveInProgress = false;
+        room.autosavePromise = null;
       });
     }
   }, autosaveIntervalMs);
@@ -1392,7 +1402,7 @@ export function createGameServer({
 
       if (message.type === "join_room") {
         const room = rooms.get(String(message.roomId ?? "").toUpperCase());
-        if (!room || room.members.size >= 8) {
+        if (!room || room.deleting || room.members.size >= 8) {
           writeJson(socket, { type: "error", message: "That room is unavailable." });
           return;
         }
@@ -1704,6 +1714,12 @@ export function createGameServer({
         const room = rooms.get(player.roomId);
         const isTankAttack = message.type === "tank_fire";
         const vehicle = room?.vehicles.get(player.vehicleId);
+        const requestedTankAimYaw = Number.isFinite(message.aimYaw)
+          ? Math.atan2(Math.sin(message.aimYaw), Math.cos(message.aimYaw))
+          : null;
+        const requestedTankAimPitch = Number.isFinite(message.aimPitch)
+          ? Math.max(-0.45, Math.min(0.65, message.aimPitch))
+          : null;
         const playerTarget = room?.started && room.members.has(message.targetId)
           ? players.get(message.targetId)
           : null;
@@ -1775,16 +1791,15 @@ export function createGameServer({
           };
           let target = null;
           let closestAlong = 140;
-          for (const id of room.members) {
-            if (id === player.id) continue;
-            const candidate = players.get(id);
-            const targetAircraft = candidate && room.vehicles.get(candidate.vehicleId);
-            if (
-              !candidate ||
-              candidate.health <= 0 ||
-              !targetAircraft?.airborne ||
-              (targetAircraft.type !== "plane" && targetAircraft.type !== "jet")
-            ) continue;
+          const candidates = [
+            ...[...room.members]
+              .filter((id) => id !== player.id)
+              .map((id) => players.get(id))
+              .filter(Boolean),
+            ...room.monsters.values(),
+          ];
+          for (const candidate of candidates) {
+            if (candidate.health <= 0) continue;
             const deltaEast = wrapPlanetX(candidate.x - player.x) * Math.cos(latitude);
             const deltaNorth = candidate.z - player.z;
             const deltaUp = candidate.y - player.y;
@@ -1804,27 +1819,48 @@ export function createGameServer({
               type: "attack_result",
               hit: false,
               aircraft: true,
-              message: "Aircraft guns missed. Aim at an airborne pilot.",
+              message: "Aircraft guns missed. Aim at an enemy.",
             });
             return;
           }
           target.health = Math.max(0, target.health - 25);
+          const monsterTarget = room.monsters.get(target.id);
+          let reward = null;
+          if (monsterTarget && target.health === 0) {
+            target.respawnAt = now + MONSTER_RESPAWN_MS;
+            await incrementProfileStat(player, "creaturesDefeated", 1, profiles, pool);
+            player.xp = (player.xp ?? 0) + MONSTER_KILL_XP;
+            player.level = Math.max(player.level ?? 0, Math.floor(player.xp / XP_PER_LEVEL));
+            player.coins = (player.coins ?? 0) + MONSTER_KILL_COINS;
+            reward = {
+              xp: player.xp,
+              level: player.level,
+              coins: player.coins,
+              xpGained: MONSTER_KILL_XP,
+              coinsGained: MONSTER_KILL_COINS,
+            };
+          }
           writeJson(socket, {
             type: "attack_result",
             hit: true,
             aircraft: true,
             targetId: target.id,
             damage: 25,
-            message: `Aircraft guns hit ${target.name} for 25 damage.`,
+            monster: Boolean(monsterTarget),
+            killed: Boolean(monsterTarget && target.health === 0),
+            reward,
+            message: `Aircraft guns hit ${target.name ?? "the monster"} for 25 damage.`,
           });
-          writeJson(target.socket, {
-            type: "attack_result",
-            hit: true,
-            aircraft: true,
-            hitByAircraft: true,
-            damage: 25,
-            message: "You were hit by aircraft guns for 25 damage.",
-          });
+          if (!monsterTarget) {
+            writeJson(target.socket, {
+              type: "attack_result",
+              hit: true,
+              aircraft: true,
+              hitByAircraft: true,
+              damage: 25,
+              message: "You were hit by aircraft guns for 25 damage.",
+            });
+          }
           broadcastToRoom(room, roomSnapshot(room));
           return;
         }
@@ -1841,6 +1877,10 @@ export function createGameServer({
           });
           return;
         }
+        if (isTankAttack) {
+          if (requestedTankAimYaw !== null) vehicle.turretYaw = requestedTankAimYaw;
+          if (requestedTankAimPitch !== null) vehicle.turretPitch = requestedTankAimPitch;
+        }
         if (!isTankAttack && vehicle?.type === "tank") {
           writeJson(socket, {
             type: "attack_result",
@@ -1852,7 +1892,7 @@ export function createGameServer({
         player.lastAttackAt = now;
         const latitude = (player.z - PLANET_MIN_Z + 0.5) / PLANET_LATITUDE_BLOCKS * Math.PI - Math.PI / 2;
         const aimYaw = isTankAttack
-          ? vehicle.turretYaw ?? vehicle.yaw
+          ? requestedTankAimYaw ?? vehicle.turretYaw ?? vehicle.yaw
           : player.yaw;
         const isInTankFiringArc = (candidate) => {
           if (!candidate || candidate.id === player.id || candidate.health <= 0) return false;
@@ -1877,7 +1917,7 @@ export function createGameServer({
           const targetEast = wrapPlanetX(targetVehicle.x - vehicle.x) * Math.cos(latitude);
           const targetNorth = targetVehicle.z - vehicle.z;
           const targetUp = targetVehicle.y + 1.1 - (vehicle.y + 2.0);
-          const pitch = vehicle.turretPitch ?? 0;
+          const pitch = requestedTankAimPitch ?? vehicle.turretPitch ?? 0;
           const directionEast = -Math.sin(aimYaw) * Math.cos(pitch);
           const directionNorth = Math.cos(aimYaw) * Math.cos(pitch);
           const directionUp = Math.sin(pitch);
@@ -2739,6 +2779,48 @@ export function createGameServer({
     rooms,
     players,
     bots,
+    async deleteSavedWorld(requestedRoomId) {
+      const roomId = typeof requestedRoomId === "string" ? requestedRoomId.toUpperCase() : "";
+      const room = rooms.get(roomId);
+      if (!/^[A-Z0-9]{6}$/.test(roomId) || !room?.saved) {
+        return { success: false, status: 404, message: "That saved world could not be found." };
+      }
+      if (room.members.size > 0 || room.deleting) {
+        return {
+          success: false,
+          status: 409,
+          message: room.deleting
+            ? "That saved world is already being deleted."
+            : "Players are still in that world. Ask them to leave before deleting it."
+        };
+      }
+
+      room.deleting = true;
+      try {
+        await room.autosavePromise;
+        if (rooms.get(room.id) !== room || room.members.size > 0) {
+          room.deleting = false;
+          return {
+            success: false,
+            status: 409,
+            message: "That world changed while deletion was starting. Refresh and try again."
+          };
+        }
+        await removeSavedRoom(room, saveDirectory, pool);
+        if (room.disconnectTimer) clearTimeout(room.disconnectTimer);
+        rooms.delete(room.id);
+        sendLobbyRooms();
+        return { success: true, message: `${room.name} was deleted.` };
+      } catch (error) {
+        room.deleting = false;
+        console.error(`Failed to delete saved world ${room.id}:`, error);
+        return {
+          success: false,
+          status: 503,
+          message: "The saved world could not be deleted."
+        };
+      }
+    },
     async listen() {
       if (pool && !databaseInitialized) {
         const savedRooms = await initializeDatabase(pool);
