@@ -41,6 +41,10 @@ app.use('/admin', (request, response, next) => {
   next();
 });
 
+app.get(['/admin', '/admin/'], (_request, response) => {
+  response.sendFile(path.join(__dirname, 'public', 'admin', 'index.html'));
+});
+
 // Serve static files
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/jesse-craft', express.static(JESSE_CRAFT_BUILD_DIR));
