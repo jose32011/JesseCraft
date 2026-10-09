@@ -4,13 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>Voyager VPS Admin · JesseCraft</title>
+  <title>JesseCraft Server Admin</title>
   <link rel="stylesheet" href="/admin/admin.css">
 </head>
 <body>
   <main class="shell">
     <header class="topbar">
-      <a class="brand" href="/">JESSECRAFT <span>VOYAGER ADMIN</span></a>
+      <a class="brand" href="/">JESSECRAFT <span>SERVER ADMIN</span></a>
       <a class="back-link" href="/">← Back to games</a>
     </header>
 
@@ -18,7 +18,7 @@
       <div class="login-card">
         <p class="eyebrow">RESTRICTED ACCESS</p>
         <h1 id="loginTitle">Dashboard sign in</h1>
-        <p class="muted">Use your dashboard-only password. This is not your VPS, Linux, or SSH password.</p>
+        <p class="muted">Use your dashboard-only password. Do not reuse your computer or SSH password.</p>
         <form id="loginForm">
           <label for="adminPassword">Dashboard password</label>
           <input id="adminPassword" name="password" type="password" autocomplete="current-password" required>
@@ -31,7 +31,7 @@
     <section id="dashboardView" class="dashboard" hidden aria-labelledby="dashboardTitle">
       <div class="dashboard-heading">
         <div>
-          <p class="eyebrow">VOYAGER VPS · LIVE</p>
+          <p class="eyebrow">SERVER STATUS · LIVE</p>
           <h1 id="dashboardTitle">Server dashboard</h1>
           <p id="updatedAt" class="muted">Waiting for metrics…</p>
         </div>
@@ -50,7 +50,7 @@
         <article class="metric-card"><span>Disk throughput</span><strong id="diskValue">—</strong><small id="diskDetail">—</small></article>
       </div>
 
-      <section class="chart-grid" aria-label="VPS hardware usage charts">
+      <section class="chart-grid" aria-label="Server hardware usage charts">
         <article class="panel chart-panel"><h2>CPU usage</h2><canvas id="cpuChart" aria-label="CPU usage history"></canvas></article>
         <article class="panel chart-panel"><h2>Memory usage</h2><canvas id="memoryChart" aria-label="Memory usage history"></canvas></article>
         <article class="panel chart-panel"><h2>Network throughput</h2><canvas id="networkChart" aria-label="Network throughput history"></canvas></article>
