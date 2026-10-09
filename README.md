@@ -24,7 +24,7 @@ npm start
 
 The arcade is served on port `3000` by default. JesseCraft is available from its **JesseCraft** menu card, and its multiplayer WebSocket shares the arcade server. Set `PORT` to change the listen port. The original standalone JesseCraft server remains available with `node server/index.js`.
 
-The **Voyager server admin** link opens the password-protected VPS dashboard at `/admin/`. Before using it on Voyager, add a long random `VOYAGER_ADMIN_PASSWORD` value to the VPS environment file already used by `voxland.service` (`/root/JesseCraft/.env`), then run `sudo chmod 600 /root/JesseCraft/.env` and `sudo systemctl restart voxland`. Do not commit this password. The dashboard graphs host CPU, memory, network, and disk throughput, reports the shared Jesse Arcade/JesseCraft process and game activity, and can request a restart of `voxland.service`.
+The **Voyager server admin** link opens the password-protected web dashboard at `/admin/`. `VOYAGER_ADMIN_PASSWORD` is only used by this dashboard; it does not change or authenticate your VPS/Linux account, SSH credentials, or GitHub deployment credentials. Choose a separate, long random dashboard password and add it to the environment file used by `voxland.service` (`/root/JesseCraft/.env`), then run `sudo chmod 600 /root/JesseCraft/.env` and `sudo systemctl restart voxland`. Never reuse your VPS login password or commit the dashboard password. The dashboard graphs host CPU, memory, network, and disk throughput, reports the shared Jesse Arcade/JesseCraft process and game activity, and can request a restart of `voxland.service`.
 
 ## Saved-world persistence
 

@@ -188,7 +188,7 @@ function registerAdminDashboard(app, gameMetrics, {
     const configuredPassword = password();
     if (!configuredPassword || configuredPassword.length < MIN_PASSWORD_LENGTH) {
       response.status(503).json({
-        error: 'Admin login is unavailable. Set VOYAGER_ADMIN_PASSWORD to a password with at least 16 characters.'
+        error: 'Dashboard login is unavailable. Set VOYAGER_ADMIN_PASSWORD to a dashboard-only password with at least 16 characters.'
       });
       return;
     }
