@@ -85,6 +85,27 @@ body {
     outline-offset: 3px;
 }
 
+.end-all-games-button {
+    margin-top: 24px;
+    padding: 12px 18px;
+    border: 1px solid #ff826d;
+    border-radius: 10px;
+    background: rgba(113, 37, 47, 0.42);
+    color: #ffe0dc;
+    cursor: pointer;
+    font-weight: 700;
+}
+
+.end-all-games-button:hover,
+.end-all-games-button:focus-visible {
+    background: rgba(153, 48, 59, 0.68);
+}
+
+.end-all-games-button:focus-visible {
+    outline: 2px solid #ffb0a3;
+    outline-offset: 3px;
+}
+
 .yugioh-menu-card {
     --game-accent: #ffd56a;
 }

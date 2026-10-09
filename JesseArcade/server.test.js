@@ -1,17 +1,77 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const cardApi = require('./cardApi');
-const { Game } = require('./server');
+const { Game, endAllArcadeGames } = require('./server');
 
 function fakeSocket() {
   return {
     connected: true,
     messages: [],
+    data: {},
+    roomsLeft: [],
     emit(event, payload) {
       this.messages.push({ event, payload });
+    },
+    leave(room) {
+      this.roomsLeft.push(room);
     }
   };
 }
+
+test('ending arcade sessions clears every non-JesseCraft room and detaches its players', () => {
+  const sockets = Object.fromEntries(
+    ['yugioh', 'ludo', 'chess', 'snakesLadders', 'uno'].map(game => [game, fakeSocket()])
+  );
+  const aiTimer = setTimeout(() => {}, 60_000);
+  const unoAiTimer = setTimeout(() => {}, 60_000);
+  const ludoRoom = { seats: [{ socket: sockets.ludo }], aiTimer };
+  const unoRoom = { players: [{ socket: sockets.uno }], aiTimer: unoAiTimer };
+  const rooms = {
+    yugioh: {
+      duel: { players: { player: { socket: sockets.yugioh } } }
+    },
+    ludo: {
+      race: ludoRoom
+    },
+    chess: {
+      board: { players: [{ socket: sockets.chess }] }
+    },
+    snakesLadders: {
+      board: { players: [{ socket: sockets.snakesLadders }] }
+    },
+    uno: {
+      cards: unoRoom
+    }
+  };
+  const jesseCraftSession = { running: true };
+
+  Object.entries(sockets).forEach(([game, socket]) => {
+    socket.data = {
+      roomId: 'duel',
+      playerToken: 'player-token-123456',
+      [`${game}RoomId`]: 'room',
+      [`${game}PlayerToken`]: 'player-token-123456'
+    };
+  });
+
+  const { endedRooms } = endAllArcadeGames(rooms);
+
+  assert.equal(endedRooms, 5);
+  Object.values(rooms).forEach(gameRooms => assert.deepEqual(Object.keys(gameRooms), []));
+  assert.deepEqual(sockets.yugioh.roomsLeft, ['duel']);
+  assert.deepEqual(sockets.ludo.roomsLeft, ['ludo:race']);
+  assert.deepEqual(sockets.chess.roomsLeft, ['chess:board']);
+  assert.deepEqual(sockets.snakesLadders.roomsLeft, ['snakes-ladders:board']);
+  assert.deepEqual(sockets.uno.roomsLeft, ['uno:cards']);
+  assert.equal(sockets.yugioh.data.roomId, undefined);
+  assert.equal(sockets.ludo.data.ludoRoomId, undefined);
+  assert.equal(sockets.chess.data.chessRoomId, undefined);
+  assert.equal(sockets.snakesLadders.data.snakesLaddersRoomId, undefined);
+  assert.equal(sockets.uno.data.unoRoomId, undefined);
+  assert.equal(ludoRoom.aiTimer, null);
+  assert.equal(unoRoom.aiTimer, null);
+  assert.equal(jesseCraftSession.running, true);
+});
 
 test('Yu-Gi-Oh lobby starts after both unique players ready and deals opening hands', async () => {
   const originalGenerateThemedDeck = cardApi.generateThemedDeck;

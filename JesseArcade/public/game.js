@@ -119,6 +119,30 @@ document.querySelectorAll('.game-menu-card').forEach(card => {
 
 document.getElementById('backToGameMenuBtn').addEventListener('click', returnToGameMenu);
 duelBackToMenuBtn.addEventListener('click', returnToGameMenu);
+document.getElementById('endAllGamesBtn').addEventListener('click', () => {
+    if (!window.confirm('End every active arcade game session except JesseCraft?')) return;
+    gameMenuStatus.textContent = 'Ending active arcade games...';
+    socket.emit('endAllArcadeGames');
+});
+
+socket.on('arcadeGamesEnded', ({ endedRooms = 0 } = {}) => {
+    if (!jesseCraftScreen.hidden) return;
+
+    window.leaveLudoSession?.('menu');
+    window.leaveChessScreen?.('menu');
+    window.leaveSnakesLaddersSession?.('menu');
+    window.leaveUnoSession?.('menu');
+    document.getElementById('ludoScreen').style.display = 'none';
+    document.getElementById('chessScreen').style.display = 'none';
+    document.getElementById('snakesLaddersScreen').style.display = 'none';
+    document.getElementById('unoScreen').style.display = 'none';
+    localStorage.removeItem(duelSessionStorageKey);
+    sessionStorage.removeItem(tabDuelSessionStorageKey);
+    returnToGameMenu();
+    gameMenuStatus.textContent =
+        `Ended ${endedRooms} active arcade session${endedRooms === 1 ? '' : 's'}. JesseCraft was not affected.`;
+});
+
 document.getElementById('backFromJesseCraftBtn').addEventListener('click', () => {
     jesseCraftFrame.src = 'about:blank';
     jesseCraftScreen.hidden = true;

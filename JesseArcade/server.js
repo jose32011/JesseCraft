@@ -721,9 +721,50 @@ function isCurrentPlayerSocket(game, socket, roomId) {
     game.players[playerToken]?.socket === socket;
 }
 
+function endAllArcadeGames(roomGroups) {
+  let endedRooms = 0;
+  const socketFields = {
+    yugioh: ['roomId', 'playerToken'],
+    ludo: ['ludoRoomId', 'ludoPlayerToken'],
+    chess: ['chessRoomId', 'chessPlayerToken'],
+    snakesLadders: ['snakesLaddersRoomId', 'snakesLaddersPlayerToken'],
+    uno: ['unoRoomId', 'unoPlayerToken']
+  };
+
+  Object.entries(roomGroups).forEach(([game, rooms]) => {
+    Object.entries(rooms).forEach(([roomId, room]) => {
+      endedRooms += 1;
+      clearTimeout(room.aiTimer);
+      room.aiTimer = null;
+      const players = room.seats || room.players || [];
+      const playerList = Array.isArray(players) ? players : Object.values(players);
+      playerList.forEach(player => {
+        const playerSocket = player?.socket;
+        if (!playerSocket) return;
+        playerSocket.leave?.(
+          game === 'yugioh' ? roomId :
+            game === 'snakesLadders' ? `snakes-ladders:${roomId}` :
+              `${game}:${roomId}`
+        );
+        socketFields[game].forEach(field => {
+          if (playerSocket.data) delete playerSocket.data[field];
+        });
+      });
+      delete rooms[roomId];
+    });
+  });
+
+  return { endedRooms };
+}
+
 // Socket.io connection handling
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
+
+  socket.on('endAllArcadeGames', () => {
+    const { endedRooms } = endAllArcadeGames(arcadeRoomGroups);
+    io.emit('arcadeGamesEnded', { endedRooms });
+  });
 
   socket.on('joinGame', ({ roomId, playerName, deckType, playerToken } = {}) => {
     const safeRoomId = typeof roomId === 'string' ? roomId.trim() : '';
@@ -808,9 +849,11 @@ io.on('connection', (socket) => {
     broadcastGameState(game);
     try {
       if (await startPromise) {
+        if (games[roomId] !== game) return;
         broadcastGameState(game);
       }
     } catch (error) {
+      if (games[roomId] !== game) return;
       console.error(`Failed to start game in room ${roomId}:`, error);
       Object.values(game.players).forEach(player => {
         player.ready = false;
@@ -990,10 +1033,13 @@ io.on('connection', (socket) => {
   });
 });
 
-registerLudoHandlers(io);
-registerChessHandlers(io);
-registerSnakesLaddersHandlers(io);
-registerUnoHandlers(io);
+const arcadeRoomGroups = {
+  yugioh: games,
+  ludo: registerLudoHandlers(io),
+  chess: registerChessHandlers(io),
+  snakesLadders: registerSnakesLaddersHandlers(io),
+  uno: registerUnoHandlers(io)
+};
 
 async function startServer() {
   if (!fs.existsSync(path.join(JESSE_CRAFT_BUILD_DIR, 'index.html'))) {
@@ -1030,4 +1076,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { Game, DECK_ARCHETYPES, app, server };
+module.exports = { Game, DECK_ARCHETYPES, app, server, endAllArcadeGames };
