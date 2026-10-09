@@ -78,6 +78,11 @@ td { padding: 12px 10px; border-top: 1px solid rgba(145, 160, 183, .13); white-s
 .activity-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 12px; border: 1px solid rgba(145, 160, 183, .13); border-radius: 9px; background: rgba(5, 10, 18, .28); }
 .activity-name { font-size: 12px; font-weight: 750; }
 .activity-detail { color: var(--muted); font-size: 11px; text-align: right; }
+.password-settings { margin-top: 14px; }
+.password-settings summary { cursor: pointer; font-size: 14px; font-weight: 750; }
+.password-settings > .muted { margin: 12px 0 18px; font-size: 12px; line-height: 1.5; }
+.password-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.password-submit { width: auto; margin-top: 16px; color: #041016; background: var(--cyan); }
 [hidden] { display: none !important; }
 
 @media (max-width: 900px) {
@@ -94,6 +99,7 @@ td { padding: 12px 10px; border-top: 1px solid rgba(145, 160, 183, .13); white-s
   .back-link { font-size: 11px; }
   .login-card { padding: 25px 21px; }
   .chart-grid { grid-template-columns: 1fr; }
+  .password-fields { grid-template-columns: 1fr; gap: 12px; }
   .chart-panel canvas { height: 145px; }
   .toolbar { width: 100%; }
   .toolbar button { flex: 1 1 auto; }

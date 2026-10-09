@@ -1,8 +1,10 @@
 const loginView = document.getElementById('loginView');
 const dashboardView = document.getElementById('dashboardView');
 const loginForm = document.getElementById('loginForm');
+const passwordForm = document.getElementById('passwordForm');
 const loginStatus = document.getElementById('loginStatus');
 const dashboardStatus = document.getElementById('dashboardStatus');
+const passwordStatus = document.getElementById('passwordStatus');
 const restartButton = document.getElementById('restartButton');
 const refreshButton = document.getElementById('refreshButton');
 const samples = { cpu: [], memory: [], network: [], disk: [] };
@@ -234,6 +236,32 @@ loginForm.addEventListener('submit', async event => {
     showDashboard();
   } catch (error) {
     setStatus(loginStatus, error.message, 'error');
+  } finally {
+    submit.disabled = false;
+  }
+});
+
+passwordForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  const currentPassword = passwordForm.elements.currentPassword.value;
+  const newPassword = passwordForm.elements.newPassword.value;
+  if (newPassword !== passwordForm.elements.confirmPassword.value) {
+    setStatus(passwordStatus, 'The new passwords do not match.', 'error');
+    return;
+  }
+
+  const submit = passwordForm.querySelector('button[type="submit"]');
+  submit.disabled = true;
+  setStatus(passwordStatus, 'Updating dashboard password…');
+  try {
+    const result = await request('/api/admin/password', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, newPassword })
+    });
+    passwordForm.reset();
+    setStatus(passwordStatus, result.message, 'success');
+  } catch (error) {
+    setStatus(passwordStatus, error.message, 'error');
   } finally {
     submit.disabled = false;
   }

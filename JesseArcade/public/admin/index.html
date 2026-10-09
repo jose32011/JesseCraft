@@ -72,6 +72,29 @@
           <div id="gameActivity" class="activity-list"></div>
         </section>
       </div>
+
+      <details class="panel password-settings">
+        <summary>Change dashboard password</summary>
+        <p class="muted">Use a unique password of at least 16 characters. Changing it signs out other dashboard sessions.</p>
+        <form id="passwordForm">
+          <div class="password-fields">
+            <div>
+              <label for="currentPassword">Current dashboard password</label>
+              <input id="currentPassword" name="currentPassword" type="password" autocomplete="current-password" required>
+            </div>
+            <div>
+              <label for="newPassword">New dashboard password</label>
+              <input id="newPassword" name="newPassword" type="password" autocomplete="new-password" minlength="16" maxlength="256" required>
+            </div>
+            <div>
+              <label for="confirmPassword">Confirm new password</label>
+              <input id="confirmPassword" name="confirmPassword" type="password" autocomplete="new-password" minlength="16" maxlength="256" required>
+            </div>
+          </div>
+          <button class="primary password-submit" type="submit">Update password</button>
+          <p id="passwordStatus" class="status" role="status" aria-live="polite"></p>
+        </form>
+      </details>
     </section>
   </main>
   <script src="/admin/admin.js" defer></script>

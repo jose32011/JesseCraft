@@ -1,4 +1,7 @@
 const assert = require('node:assert/strict');
+const { statSync, readFileSync, mkdtempSync, rmSync } = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const test = require('node:test');
 const express = require('express');
 const {
@@ -113,6 +116,94 @@ test('admin login stays unavailable until a sufficiently long password is config
     });
     assert.equal(response.status, 503);
   });
+});
+
+test('dashboard password changes are authenticated, persistent, and stored as a hash', async () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'voxland-admin-password-'));
+  const passwordFile = path.join(directory, 'admin', 'password.json');
+  try {
+    await withDashboard({
+      password: () => 'initial-dashboard-password',
+      passwordFile
+    }, async baseUrl => {
+      const login = await fetch(`${baseUrl}/api/admin/login`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-forwarded-proto': 'https'
+        },
+        body: JSON.stringify({ password: 'initial-dashboard-password' })
+      });
+      assert.equal(login.status, 200);
+      const oldCookie = login.headers.get('set-cookie').split(';')[0];
+
+      const wrongCurrent = await fetch(`${baseUrl}/api/admin/password`, {
+        method: 'POST',
+        headers: { cookie: oldCookie, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          currentPassword: 'incorrect-dashboard-password',
+          newPassword: 'new-dashboard-password-with-entropy'
+        })
+      });
+      assert.equal(wrongCurrent.status, 401);
+
+      const shortNewPassword = await fetch(`${baseUrl}/api/admin/password`, {
+        method: 'POST',
+        headers: { cookie: oldCookie, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          currentPassword: 'initial-dashboard-password',
+          newPassword: 'too-short'
+        })
+      });
+      assert.equal(shortNewPassword.status, 400);
+
+      const changed = await fetch(`${baseUrl}/api/admin/password`, {
+        method: 'POST',
+        headers: { cookie: oldCookie, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          currentPassword: 'initial-dashboard-password',
+          newPassword: 'new-dashboard-password-with-entropy'
+        })
+      });
+      assert.equal(changed.status, 200);
+      assert.match(await changed.text(), /Other sessions have been signed out/);
+      assert.match(changed.headers.get('set-cookie'), /HttpOnly/);
+      assert.equal((await fetch(`${baseUrl}/api/admin/metrics`, {
+        headers: { cookie: oldCookie }
+      })).status, 401);
+
+      const stored = readFileSync(passwordFile, 'utf8');
+      assert.equal(stored.includes('new-dashboard-password-with-entropy'), false);
+      assert.equal(statSync(passwordFile).mode & 0o777, 0o600);
+    });
+
+    await withDashboard({ password: () => 'initial-dashboard-password', passwordFile }, async baseUrl => {
+      const oldPassword = await fetch(`${baseUrl}/api/admin/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ password: 'initial-dashboard-password' })
+      });
+      assert.equal(oldPassword.status, 401);
+      const newPassword = await fetch(`${baseUrl}/api/admin/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ password: 'new-dashboard-password-with-entropy' })
+      });
+      assert.equal(newPassword.status, 200);
+    });
+
+    rmSync(passwordFile);
+    await withDashboard({ password: () => 'initial-dashboard-password', passwordFile }, async baseUrl => {
+      const bootstrapAfterRotation = await fetch(`${baseUrl}/api/admin/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ password: 'initial-dashboard-password' })
+      });
+      assert.equal(bootstrapAfterRotation.status, 503);
+    });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('saved-world deletion requires an admin session and forwards the world ID', async () => {
