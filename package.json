@@ -11,7 +11,8 @@
     "db:down": "docker compose down",
     "db:logs": "docker compose logs -f db",
     "build": "vite build",
-    "start": "node server/index.js",
+    "build:arcade": "vite build --base=/jesse-craft/ --outDir=JesseArcade/dist",
+    "start": "node JesseArcade/server.js",
     "test": "node --test"
   },
   "dependencies": {

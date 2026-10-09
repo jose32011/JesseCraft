@@ -11,16 +11,18 @@ npm install
 npm run dev
 ```
 
-Open the Vite URL shown in the terminal (normally `http://localhost:5173`). To play from a phone on the same Wi-Fi, open that URL using the computer's LAN IP address. The Node.js WebSocket server listens on port `3001`.
+Open the Vite URL shown in the terminal (normally `http://localhost:5173`). To play from a phone on the same Wi-Fi, open that URL using the computer's LAN IP address. The standalone Node.js WebSocket server listens on port `3001`.
 
-For a production build:
+To build and run both JesseCraft and the Jesse Arcade together:
 
 ```sh
-npm run build
+npm ci
+npm ci --prefix JesseArcade
+npm run build:arcade
 npm start
 ```
 
-The production server serves the built client and the multiplayer WebSocket endpoint on port `3001`.
+The arcade is served on port `3000` by default. JesseCraft is available from its **JesseCraft** menu card, and its multiplayer WebSocket shares the arcade server. Set `PORT` to change the listen port. The original standalone JesseCraft server remains available with `node server/index.js`.
 
 ## Saved-world persistence
 
@@ -42,7 +44,8 @@ The supplied Nginx and systemd configurations are in `deploy/`. On a Debian/Ubun
 
 ```sh
 npm ci
-npm run build
+npm ci --prefix JesseArcade
+npm run build:arcade
 sudo mkdir -p /opt/voxland/releases
 sudo ln -s /root/JesseCraft /opt/voxland/current
 sudo cp deploy/voxland.service /etc/systemd/system/voxland.service
@@ -64,7 +67,7 @@ The game server listens only on localhost behind Nginx, including its WebSocket 
 
 ### Deploy automatically from GitHub
 
-The GitHub Actions workflow runs tests and builds the client for every push to `main`, then uploads an isolated release to the VPS over SSH, switches releases, and restarts the service. It rolls back to the previous release if the service does not become healthy. To enable it:
+The GitHub Actions workflow tests and builds both games for every push to `main`, then uploads an isolated release to the VPS over SSH, switches releases, and restarts the combined arcade. It rolls back to the previous release if the service does not become healthy. To enable it:
 
 1. On your PC, create a dedicated SSH key pair with `ssh-keygen -t ed25519 -C voxland-github-deploy -f ~/.ssh/voxland_deploy`. Add the **public** key (`voxland_deploy.pub`) to the VPS account's `~/.ssh/authorized_keys`. Keep the private key secure.
 2. In GitHub, open **Settings → Secrets and variables → Actions** for this repository and add `VPS_HOST` (`natalie-khe9ca.cloudserver.nz`), `VPS_USER` (your VPS SSH account, currently `root`), and `VPS_SSH_KEY` (the complete private key).

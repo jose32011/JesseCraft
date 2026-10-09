@@ -910,6 +910,7 @@ function staticResponse(request, response) {
 export function createGameServer({
   host = "0.0.0.0",
   port = 3001,
+  httpServer: sharedHttpServer,
   seed: requestedSeed,
   saveDirectory = DEFAULT_SAVE_DIRECTORY,
   databaseUrl = process.env.DATABASE_URL,
@@ -930,7 +931,8 @@ export function createGameServer({
   const rooms = new Map(pool ? [] : loadSavedRooms(saveDirectory).map((room) => [room.id, room]));
   let databaseInitialized = false;
   const bots = createBots();
-  const httpServer = createServer(staticResponse);
+  const ownsHttpServer = !sharedHttpServer;
+  const httpServer = sharedHttpServer ?? createServer(staticResponse);
   const webSocketServer = new WebSocketServer({
     server: httpServer,
     path: "/ws",
@@ -2746,6 +2748,12 @@ export function createGameServer({
       for (const room of rooms.values()) {
         for (const [key, record] of room.blockRebuilds) scheduleBlockRebuild(room, key, record);
       }
+      if (!ownsHttpServer) {
+        if (!httpServer.listening) {
+          throw new Error("The shared HTTP server must be listening before the game server starts.");
+        }
+        return httpServer.address();
+      }
       return new Promise((resolveListen, rejectListen) => {
         httpServer.once("error", rejectListen);
         httpServer.listen(port, host, () => {
@@ -2764,9 +2772,13 @@ export function createGameServer({
         room.blockRebuildTimers.clear();
       }
       for (const socket of webSocketServer.clients) socket.terminate();
-      await new Promise((resolveClose) => {
-        webSocketServer.close(() => httpServer.close(() => resolveClose()));
-      });
+      if (ownsHttpServer) {
+        await new Promise((resolveClose) => {
+          webSocketServer.close(() => httpServer.close(() => resolveClose()));
+        });
+      } else {
+        await new Promise((resolveClose) => webSocketServer.close(resolveClose));
+      }
       await pool?.end();
     },
   };

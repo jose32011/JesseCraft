@@ -24,21 +24,30 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            JesseArcade/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          npm ci
+          npm ci --prefix JesseArcade
 
       - name: Run tests
-        run: npm test
+        run: |
+          npm test
+          npm --prefix JesseArcade test
 
-      - name: Build client
-        run: npm run build
+      - name: Build JesseCraft for the arcade
+        run: npm run build:arcade
 
       - name: Package release
         run: |
           tar \
             --exclude='./.git' \
+            --exclude='*/.git' \
             --exclude='./node_modules' \
+            --exclude='*/node_modules' \
             --exclude='./.env' \
             --exclude='./.env.*' \
             --exclude='./.data' \
@@ -90,6 +99,7 @@ jobs:
           tar -xzf "$archive" -C "$release"
           cd "$release"
           npm ci --omit=dev
+          npm ci --omit=dev --prefix JesseArcade
 
           ln -sfn "$release" /opt/voxland/current.next
           mv -Tf /opt/voxland/current.next "$current"

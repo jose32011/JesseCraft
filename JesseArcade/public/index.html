@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Jesse Parkers Game Zone</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <main id="gameMenu">
+        <header class="game-menu-header">
+            <p class="eyebrow">Jesse Parkers Game Zone</p>
+            <h1>Choose Your Game</h1>
+            <p>Pick a game and jump in with friends.</p>
+        </header>
+        <section class="game-menu-grid" aria-label="Available games">
+            <button class="game-menu-card yugioh-menu-card" type="button" data-game="yugioh">
+                <span class="game-menu-icon" aria-hidden="true">龍</span>
+                <span class="game-menu-name">Yu-Gi-Oh!</span>
+                <span class="game-menu-description">Build your deck. Start a duel.</span>
+                <span class="game-menu-action">Play now</span>
+            </button>
+            <button class="game-menu-card robot-menu-card" type="button" data-game="robot-wars">
+                <span class="game-menu-icon" aria-hidden="true">⚙</span>
+                <span class="game-menu-name">Robot Wars</span>
+                <span class="game-menu-description">Build a bot. Enter the arena.</span>
+                <span class="game-menu-action">Coming soon</span>
+            </button>
+            <button class="game-menu-card uno-menu-card" type="button" data-game="uno">
+                <span class="game-menu-icon uno-icon" aria-hidden="true">UNO</span>
+                <span class="game-menu-name">UNO</span>
+                <span class="game-menu-description">Match cards. Be first to clear your hand.</span>
+                <span class="game-menu-action">Play now</span>
+            </button>
+            <button class="game-menu-card chess-menu-card" type="button" data-game="chess">
+                <span class="game-menu-icon" aria-hidden="true">♞</span>
+                <span class="game-menu-name">Chess</span>
+                <span class="game-menu-description">Think ahead. Checkmate your rival.</span>
+                <span class="game-menu-action">Play now</span>
+            </button>
+            <button class="game-menu-card ludo-menu-card" type="button" data-game="ludo">
+                <span class="game-menu-icon ludo-icon" aria-hidden="true">●</span>
+                <span class="game-menu-name">Ludo</span>
+                <span class="game-menu-description">Roll the dice. Race your pieces home.</span>
+                <span class="game-menu-action">Play now</span>
+            </button>
+            <button class="game-menu-card snakes-ladders-menu-card" type="button" data-game="snakes-ladders">
+                <span class="game-menu-icon" aria-hidden="true">🐍</span>
+                <span class="game-menu-name">Snakes and Ladders</span>
+                <span class="game-menu-description">Roll your way to 100. Watch for snakes!</span>
+                <span class="game-menu-action">Play now</span>
+            </button>
+            <button class="game-menu-card jesse-craft-menu-card" type="button" data-game="jesse-craft">
+                <span class="game-menu-icon" aria-hidden="true">V</span>
+                <span class="game-menu-name">JesseCraft</span>
+                <span class="game-menu-description">Build, explore, and adventure together.</span>
+                <span class="game-menu-action">Play now</span>
+            </button>
+        </section>
+        <p id="gameMenuStatus" class="game-menu-status" role="status" aria-live="polite"></p>
+    </main>
+
+    <section id="jesseCraftScreen" class="jesse-craft-screen" aria-label="JesseCraft" hidden>
+        <header class="jesse-craft-toolbar">
+            <span>JesseCraft</span>
+            <button id="backFromJesseCraftBtn" type="button">← All games</button>
+        </header>
+        <iframe id="jesseCraftFrame" title="JesseCraft multiplayer game" src="about:blank"></iframe>
+    </section>
+
+    <div id="loginScreen" style="display: none;">
+        <div class="setup-panel">
+            <div class="duel-emblem" aria-hidden="true">✦</div>
+            <button id="backToGameMenuBtn" class="back-to-menu" type="button">← All games</button>
+            <p class="eyebrow">A two-player duel</p>
+            <h1>Yu-Gi-Oh! <span>DUEL ROOM</span></h1>
+            <p class="setup-intro">Choose a complete themed deck, join a room, and ready up to begin.</p>
+            <label for="playerName">Duelist name</label>
+            <input type="text" id="playerName" placeholder="Enter your name" maxlength="20" autocomplete="nickname">
+            <label for="roomId">Room ID</label>
+            <input type="text" id="roomId" placeholder="Enter room ID" value="room1" maxlength="40">
+            <label for="deckType">Choose a complete deck</label>
+            <select id="deckType">
+                <option value="Blue-Eyes">Blue-Eyes Dragons</option>
+                <option value="Toon">Toons</option>
+                <option value="Dark Magician">Dark Magician</option>
+                <option value="Cyber Dragon">Cyber Dragon</option>
+                <option value="Elemental HERO">Elemental HERO</option>
+                <option value="Red-Eyes">Red-Eyes</option>
+                <option value="Dragonmaid">Dragonmaid</option>
+            </select>
+            <button id="joinBtn">Join Duel Room</button>
+            <p class="setup-footnote">Each choice loads a ready-to-play themed Main Deck and its matching Extra Deck.</p>
+        </div>
+    </div>
+
+    <div id="gameScreen" style="display: none;">
+        <div id="gameInfo">
+            <div id="roomInfo">Room: <span id="currentRoom"></span></div>
+            <div id="lobbyStatus" role="status" aria-live="polite"></div>
+            <div id="turnInfo">Turn: <span id="turnPlayer"></span></div>
+            <div id="phaseInfo">Phase: <span id="currentPhase"></span></div>
+            <button id="extraDeckBtn" style="display: none;">Extra Deck</button>
+            <button id="directAttackBtn" type="button" style="display: none;">Direct Attack</button>
+            <button id="nextPhaseBtn">Next Phase</button>
+            <button id="readyBtn">Ready Up</button>
+            <button id="resignDuelBtn" class="resign-button" type="button" style="display: none;">Resign</button>
+            <button id="duelBackToMenuBtn" class="back-to-menu" type="button">← All games</button>
+        </div>
+        <div id="actionStatus" role="status" aria-live="polite"></div>
+        <button id="cancelActionBtn" type="button" style="display: none;">Cancel action</button>
+
+        <div id="gameBoard">
+            <!-- Opponent's field -->
+            <div class="player-field opponent">
+                <div class="player-info">
+                    <span class="player-name"></span>
+                    <span class="life-points">LP: <span class="lp-value"></span></span>
+                </div>
+                <div class="field-zones">
+                    <div class="zone-row">
+                        <div class="zone field-zone" data-zone="field"></div>
+                    </div>
+                    <div class="zone-row">
+                        <div class="zone spell-trap-zone" data-zone="spellTrap" data-index="4"></div>
+                        <div class="zone spell-trap-zone" data-zone="spellTrap" data-index="3"></div>
+                        <div class="zone spell-trap-zone" data-zone="spellTrap" data-index="2"></div>
+                        <div class="zone spell-trap-zone" data-zone="spellTrap" data-index="1"></div>
+                        <div class="zone spell-trap-zone" data-zone="spellTrap" data-index="0"></div>
+                    </div>
+                    <div class="zone-row">
+                        <div class="zone monster-zone" data-zone="monster" data-index="4"></div>
+                        <div class="zone monster-zone" data-zone="monster" data-index="3"></div>
+                        <div class="zone monster-zone" data-zone="monster" data-index="2"></div>
+                        <div class="zone monster-zone" data-zone="monster" data-index="1"></div>
+                        <div class="zone monster-zone" data-zone="monster" data-index="0"></div>
+                    </div>
+                </div>
+                <div class="deck-info">
+                    <div class="deck-visual" id="opponentDeckVisual"></div>
+                    <div class="graveyard-visual" id="opponentGraveyardVisual"></div>
+                    <div class="deck">Deck: <span class="deck-count"></span></div>
+                    <div class="hand-count">Hand: <span class="hand-count-value"></span></div>
+                    <div class="graveyard-count">GY: <span class="graveyard-count-value"></span></div>
+                </div>
+            </div>
+
+            <!-- Your field -->
+            <div class="player-field">
+                <div class="deck-info">
+                    <div class="deck-visual" id="playerDeckVisual"></div>
+                    <div class="graveyard-visual" id="playerGraveyardVisual"></div>
+                    <div class="deck">Deck: <span class="deck-count"></span></div>
+                    <div class="hand-count">Hand: <span class="hand-count-value"></span></div>
+                    <div class="graveyard-count">GY: <span class="graveyard-count-value"></span></div>
+                </div>
+                <div class="field-zones">
+                    <div class="zone-row">
+                        <div class="zone monster-zone" data-zone="monster" data-index="0"></div>
+                        <div class="zone monster-zone" data-zone="monster" data-index="1"></div>
+                        <div class="zone monster-zone" data-zone="monster" data-index="2"></div>
+                        <div class="zone monster-zone" data-zone="monster" data-index="3"></div>
+                        <div class="zone monster-zone" data-zone="monster" data-index="4"></div>
+                    </div>
+                    <div class="zone-row">
+                        <div class="zone spell-trap-zone" data-zone="spellTrap" data-index="0"></div>
+                        <div class="zone spell-trap-zone" data-zone="spellTrap" data-index="1"></div>
+                        <div class="zone spell-trap-zone" data-zone="spellTrap" data-index="2"></div>
+                        <div class="zone spell-trap-zone" data-zone="spellTrap" data-index="3"></div>
+                        <div class="zone spell-trap-zone" data-zone="spellTrap" data-index="4"></div>
+                    </div>
+                    <div class="zone-row">
+                        <div class="zone field-zone" data-zone="field"></div>
+                    </div>
+                </div>
+                <div class="player-info">
+                    <span class="player-name"></span>
+                    <span class="life-points">LP: <span class="lp-value"></span></span>
+                </div>
+            </div>
+        </div>
+
+        <div id="hand">
+            <h3>Your Hand</h3>
+            <div id="handCards"></div>
+        </div>
+    </div>
+
+    <main id="unoScreen" style="display: none;">
+        <section id="unoSetup" class="uno-panel">
+            <button id="unoBackToMenu" class="back-to-menu" type="button">← All games</button>
+            <p class="eyebrow">UNO MULTIPLAYER</p>
+            <h1>Play your cards</h1>
+            <p class="uno-intro">Choose a game mode and variant, then play to empty your hand before your opponents.</p>
+            <label for="unoPlayerName">Player name</label>
+            <input id="unoPlayerName" type="text" maxlength="20" autocomplete="nickname" placeholder="Enter your name">
+            <label for="unoRoomId">Room ID</label>
+            <input id="unoRoomId" type="text" maxlength="40" value="uno-room" placeholder="Enter room ID">
+            <label for="unoPlayerCount">Players</label>
+            <select id="unoPlayerCount">
+                <option value="2" selected>2 players</option>
+                <option value="3">3 players</option>
+                <option value="4">4 players</option>
+            </select>
+            <label for="unoMode">Game mode</label>
+            <select id="unoMode">
+                <option value="online">Play online</option>
+                <option value="vs-ai">Play vs AI</option>
+                <option value="online-ai">2 players + AI</option>
+            </select>
+            <label for="unoVariant">Rules</label>
+            <select id="unoVariant">
+                <option value="normal">Classic UNO</option>
+                <option value="no-mercy">UNO No Mercy</option>
+            </select>
+            <button id="unoJoinBtn" type="button">Join UNO Room</button>
+            <p id="unoSetupHint" class="uno-hint">Online games need matching room settings. Choose 2–4 total players; in “2 players + AI,” the remaining seats are computer players.</p>
+            <p id="unoSetupStatus" role="status" aria-live="polite"></p>
+        </section>
+
+        <section id="unoGame" class="uno-panel" style="display: none;">
+            <header class="uno-game-header">
+                <button id="unoLeaveBtn" class="back-to-menu" type="button">← All games</button>
+                <div class="uno-heading">
+                    <div class="uno-session-meta">
+                        <span id="unoModeSummary">UNO CLASSIC · ONLINE</span>
+                        <span class="uno-room-badge">ROOM <span id="unoCurrentRoom"></span></span>
+                    </div>
+                    <h1>UNO</h1>
+                </div>
+            </header>
+            <div id="unoPlayers" class="uno-players" aria-label="Players"></div>
+            <div class="uno-table">
+                <div class="uno-deck-info">
+                    <div class="uno-pile" aria-label="Draw pile">
+                        <div class="uno-card uno-card-back" aria-hidden="true"><span>UNO</span></div>
+                        <span><strong id="unoDeckCount">0</strong> cards left</span>
+                    </div>
+                    <div class="uno-top-card-wrap">
+                        <span>Current color <strong id="unoCurrentColor">—</strong></span>
+                        <div id="unoTopCard"></div>
+                    </div>
+                </div>
+                <div class="uno-controls">
+                    <button id="unoDrawBtn" type="button" disabled>Draw card</button>
+                    <button id="unoPassBtn" type="button" disabled>Pass</button>
+                    <label id="unoColorLabel" for="unoColorChoice" hidden>Choose wild color</label>
+                    <select id="unoColorChoice" hidden>
+                        <option value="" selected disabled>Choose a color</option>
+                        <option value="red">Red</option>
+                        <option value="yellow">Yellow</option>
+                        <option value="green">Green</option>
+                        <option value="blue">Blue</option>
+                    </select>
+                    <label id="unoTargetLabel" for="unoTargetChoice" hidden>Swap hand with</label>
+                    <select id="unoTargetChoice" hidden></select>
+                    <button id="unoCallBtn" type="button" disabled hidden>Call UNO!</button>
+                    <button id="unoChallengeBtn" type="button" disabled hidden>Challenge +4</button>
+                    <button id="unoResignBtn" class="resign-button" type="button" disabled>Resign</button>
+                </div>
+                <p id="unoTurnStatus" role="status" aria-live="polite">Waiting for players.</p>
+            </div>
+            <section class="uno-hand-section" aria-label="Your hand">
+                <h2>Your cards</h2>
+                <div id="unoHand" class="uno-hand"></div>
+            </section>
+        </section>
+    </main>
+
+    <main id="ludoScreen" style="display: none;">
+        <section id="ludoSetup" class="ludo-panel">
+            <button id="ludoBackToMenu" class="back-to-menu" type="button">← All games</button>
+            <p class="eyebrow">LUDO MULTIPLAYER</p>
+            <h1>Race your pieces home</h1>
+            <p class="ludo-intro">Play online with a friend, challenge the computer, or add computer players to a four-seat match.</p>
+            <label for="ludoPlayerName">Duelist name</label>
+            <input id="ludoPlayerName" type="text" maxlength="20" autocomplete="nickname" placeholder="Enter your name">
+            <label for="ludoRoomId">Room ID</label>
+            <input id="ludoRoomId" type="text" maxlength="40" value="ludo-room" placeholder="Enter room ID">
+            <label for="ludoMode">Game mode</label>
+            <select id="ludoMode">
+                <option value="online">2 players online (no AI)</option>
+                <option value="vs-ai">Play against AI</option>
+                <option value="online-ai">2 online players + 2 AI players</option>
+            </select>
+            <button id="ludoJoinBtn" type="button">Join Ludo Room</button>
+            <p class="ludo-hint">For online modes, both players enter the same room ID and choose the same mode.</p>
+            <p id="ludoSetupStatus" role="status" aria-live="polite"></p>
+        </section>
+
+        <section id="ludoGame" class="ludo-panel" style="display: none;">
+            <div class="ludo-game-header">
+                <button id="ludoLeaveBtn" class="back-to-menu" type="button">← All games</button>
+                <div>
+                    <p class="eyebrow">LUDO ROOM <span id="ludoCurrentRoom"></span></p>
+                    <h1 id="ludoStatus" role="status" aria-live="polite">Waiting for players...</h1>
+                </div>
+                <div class="ludo-turn-badge">Turn: <span id="ludoCurrentPlayer">—</span></div>
+            </div>
+            <div id="ludoPlayers" class="ludo-players" aria-label="Players"></div>
+            <div class="ludo-game-layout">
+                <div id="ludoBoard" class="ludo-board-wrap" aria-label="Ludo board"></div>
+                <aside class="ludo-controls">
+                    <div id="ludoDie" class="ludo-die" role="img" aria-label="No die roll yet">
+                        <div id="ludoDieFace" class="ludo-die-face-2d" data-value="0" aria-hidden="true">
+                            <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+                        </div>
+                    </div>
+                    <button id="ludoRollBtn" type="button" disabled>Roll die</button>
+                    <button id="ludoResignBtn" class="resign-button" type="button" disabled>Resign</button>
+                    <p id="ludoMovePrompt" role="status" aria-live="polite">Join a room to play.</p>
+                    <p class="ludo-rules-hint">Roll a 6 to leave your base. Land on an opponent to send them home. Reach the center with an exact roll.</p>
+                </aside>
+            </div>
+        </section>
+    </main>
+
+    <main id="chessScreen" style="display: none;">
+        <section id="chessSetup" class="chess-panel">
+            <button id="chessBackToMenu" class="back-to-menu" type="button">← All games</button>
+            <p class="eyebrow">ONLINE CHESS</p>
+            <h1>Make your next move</h1>
+            <p class="chess-intro">Challenge a friend in a live two-player match. Share the room ID to play together.</p>
+            <label for="chessPlayerName">Player name</label>
+            <input id="chessPlayerName" type="text" maxlength="20" autocomplete="nickname" placeholder="Enter your name">
+            <label for="chessRoomId">Room ID</label>
+            <input id="chessRoomId" type="text" maxlength="40" value="chess-room" placeholder="Enter room ID">
+            <button id="chessJoinBtn" type="button">Join Chess Room</button>
+            <p class="chess-hint">Both players use the same room ID. White moves first.</p>
+            <p id="chessSetupStatus" role="status" aria-live="polite"></p>
+        </section>
+
+        <section id="chessGame" class="chess-panel" style="display: none;">
+            <header class="chess-game-header">
+                <button id="chessLeaveBtn" class="back-to-menu" type="button">← All games</button>
+                <div class="chess-heading">
+                    <p class="eyebrow">CHESS ROOM <span id="chessCurrentRoom"></span></p>
+                    <h1 id="chessStatus" role="status" aria-live="polite">Waiting for players...</h1>
+                </div>
+                <div class="chess-turn-badge">Your side: <span id="chessYourColor">—</span></div>
+            </header>
+            <div class="chess-game-layout">
+                <section class="chess-board-area" aria-label="Chess board">
+                    <div id="chessOpponent" class="chess-player-strip"></div>
+                    <div class="chess-board-frame">
+                        <div id="chessBoard" class="chess-board"></div>
+                    </div>
+                    <div id="chessYou" class="chess-player-strip"></div>
+                </section>
+                <aside class="chess-sidebar">
+                    <p class="chess-room-label">ROOM <strong id="chessRoomLabel"></strong></p>
+                    <p id="chessTurnStatus" class="chess-turn-status">Waiting for your opponent</p>
+                    <div id="chessPromotion" class="chess-promotion" hidden>
+                        <label for="chessPromotionPiece">Promote pawn to</label>
+                        <select id="chessPromotionPiece">
+                            <option value="q">Queen</option>
+                            <option value="r">Rook</option>
+                            <option value="b">Bishop</option>
+                            <option value="n">Knight</option>
+                        </select>
+                        <button id="chessPromotionConfirm" type="button">Promote</button>
+                    </div>
+                    <button id="chessResignBtn" class="resign-button" type="button" disabled>Resign</button>
+                    <h2>Moves</h2>
+                    <ol id="chessMoveHistory" class="chess-move-history"></ol>
+                    <p class="chess-rules-hint">Standard chess rules apply, including castling, en passant, check, checkmate, stalemate, and promotion.</p>
+                </aside>
+            </div>
+        </section>
+    </main>
+
+    <main id="snakesLaddersScreen" style="display: none;">
+        <section id="snakesLaddersSetup" class="sl-panel">
+            <button id="snakesLaddersBackToMenu" class="back-to-menu" type="button">← All games</button>
+            <p class="eyebrow">SNAKES AND LADDERS</p>
+            <h1>Race to 100</h1>
+            <p class="sl-intro">Play online with a friend. Climb ladders, avoid snakes, and roll the exact number to finish.</p>
+            <label for="snakesLaddersPlayerName">Player name</label>
+            <input id="snakesLaddersPlayerName" type="text" maxlength="20" autocomplete="nickname" placeholder="Enter your name">
+            <label for="snakesLaddersRoomId">Room ID</label>
+            <input id="snakesLaddersRoomId" type="text" maxlength="40" value="snakes-room" placeholder="Enter room ID">
+            <label for="snakesLaddersPlayerCount">Players</label>
+            <select id="snakesLaddersPlayerCount">
+                <option value="2">2 players</option>
+                <option value="3">3 players</option>
+                <option value="4" selected>4 players</option>
+            </select>
+            <button id="snakesLaddersJoinBtn" type="button">Join Game</button>
+            <p class="sl-hint">Both players enter the same room ID. Share it with your opponent.</p>
+            <p id="snakesLaddersSetupStatus" role="status" aria-live="polite"></p>
+        </section>
+
+        <section id="snakesLaddersGame" class="sl-panel" style="display: none;">
+            <header class="sl-game-header">
+                <button id="snakesLaddersLeaveBtn" class="back-to-menu" type="button">← All games</button>
+                <div>
+                    <p class="eyebrow">ROOM <span id="snakesLaddersCurrentRoom"></span></p>
+                    <h1 id="snakesLaddersStatus" role="status" aria-live="polite">Waiting for players...</h1>
+                </div>
+            </header>
+            <div class="sl-game-layout">
+                <div id="snakesLaddersBoard" class="snakes-ladders-board" role="grid" aria-label="Snakes and Ladders board"></div>
+                <aside class="sl-controls">
+                    <div id="snakesLaddersPlayers" class="sl-players" aria-label="Players"></div>
+                    <div id="snakesLaddersDie" class="sl-die" role="img" aria-label="No die roll yet">—</div>
+                    <button id="snakesLaddersRollBtn" type="button" disabled>Roll die</button>
+                    <button id="snakesLaddersResignBtn" class="resign-button" type="button" disabled>Resign</button>
+                    <p id="snakesLaddersTurnStatus" role="status" aria-live="polite">Waiting for players.</p>
+                    <p class="sl-hint">You need an exact roll to land on 100.</p>
+                </aside>
+            </div>
+        </section>
+    </main>
+
+    <div id="cardModal" style="display: none;">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <div id="cardDetails"></div>
+            <div id="cardActions"></div>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="game.js"></script>
+    <script src="ludo.js?v=3"></script>
+    <script src="chess-client.js"></script>
+    <script src="snakes-ladders.js"></script>
+    <script src="uno-client.js"></script>
+</body>
+</html>
