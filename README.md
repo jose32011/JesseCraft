@@ -67,6 +67,8 @@ sudo certbot --nginx -d natalie-khe9ca.cloudserver.nz
 
 The game server listens only on localhost behind Nginx, including its WebSocket endpoint. PostgreSQL remains bound to localhost and must not be opened to the public internet.
 
+Socket.IO (the arcade games) also upgrades connections through `/`, so the HTTPS Nginx server block must forward WebSocket upgrade headers there. If the arcade works but the browser console reports a failed `/socket.io/` WebSocket connection, update `/etc/nginx/sites-available/voxland`: add the `map $http_upgrade $connection_upgrade { default upgrade; '' close; }` block at the file's top level, and add `proxy_set_header Upgrade $http_upgrade;` and `proxy_set_header Connection $connection_upgrade;` inside the HTTPS server's `location /` block. Keep the existing Certbot HTTPS configuration. Then run `sudo nginx -t && sudo systemctl reload nginx`. The repository's `deploy/voxland.nginx.conf` contains these settings for fresh Nginx installs; automatic app deployments do not overwrite the live Certbot-managed Nginx configuration.
+
 ### Deploy automatically from GitHub
 
 The GitHub Actions workflow tests and builds both games for every push to `main`, then uploads an isolated release to the VPS over SSH, switches releases, and restarts the combined arcade. It rolls back to the previous release if the service does not become healthy. To enable it:
