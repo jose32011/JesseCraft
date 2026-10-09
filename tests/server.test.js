@@ -1532,6 +1532,35 @@ test("deletes a saved world only after every player has left", async () => {
   }
 });
 
+test("blocks banned IP addresses from opening a JesseCraft websocket", async () => {
+  const accessControl = {
+    isBlocked: ip => ip === "203.0.113.9",
+    connected: () => {
+      throw new Error("Blocked IP should not become a player.");
+    },
+    disconnected() {}
+  };
+  const server = createGameServer({
+    host: "127.0.0.1",
+    port: 0,
+    seed: 83,
+    accessControl,
+    resolveClientIp: () => "203.0.113.9"
+  });
+  try {
+    const address = await server.listen();
+    const socket = new WebSocket(`ws://127.0.0.1:${address.port}/ws`);
+    socket.on("error", () => {});
+    const rejection = new Promise((resolve) => {
+      socket.once("unexpected-response", (_request, response) => resolve(response.statusCode));
+    });
+    assert.equal(await rejection, 403);
+    assert.equal(server.players.size, 0);
+  } finally {
+    await server.close();
+  }
+});
+
 test("fishing requires a rod and uses the harbor cooldown", async () => {
   const server = createGameServer({ host: "127.0.0.1", port: 0, seed: 321 });
   const sockets = [];

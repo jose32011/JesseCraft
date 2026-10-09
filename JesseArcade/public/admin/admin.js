@@ -10,6 +10,7 @@ const refreshButton = document.getElementById('refreshButton');
 const samples = { cpu: [], memory: [], network: [], disk: [] };
 const MAX_SAMPLES = 60;
 let pollTimer = null;
+let connectionTimer = null;
 
 function setStatus(element, message, kind = '') {
   element.textContent = message;
@@ -191,6 +192,119 @@ function renderMetrics(metrics) {
   );
 }
 
+function appendCell(row, value, className = '') {
+  const cell = document.createElement('td');
+  cell.textContent = value;
+  if (className) cell.className = className;
+  row.append(cell);
+  return cell;
+}
+
+function createIpButton(label, ip, actionClass, styleClass) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = label;
+  button.dataset.ip = ip;
+  button.className = styleClass;
+  button.classList.add(actionClass);
+  return button;
+}
+
+async function loadConnections() {
+  try {
+    const data = await request('/api/admin/connections');
+    const blocked = new Set(data.blockedIps.map(entry => entry.ip));
+
+    const connectionRows = document.getElementById('connectionRows');
+    connectionRows.replaceChildren();
+    if (!data.activeConnections.length) {
+      const row = connectionRows.insertRow();
+      appendCell(row, 'No players currently connected.');
+    } else {
+      data.activeConnections.forEach(connection => {
+        const row = connectionRows.insertRow();
+        appendCell(row, connection.game);
+        appendCell(row, connection.ip, 'ip-address');
+        appendCell(row, new Date(connection.connectedAt).toLocaleString());
+        const action = row.insertCell();
+        if (!blocked.has(connection.ip)) {
+          action.append(createIpButton('Block', connection.ip, 'block-ip', 'small-danger'));
+        } else {
+          action.textContent = 'Blocked';
+        }
+      });
+    }
+
+    const logRows = document.getElementById('connectionLogRows');
+    logRows.replaceChildren();
+    if (!data.events.length) {
+      const row = logRows.insertRow();
+      appendCell(row, 'No connection events recorded.');
+    }
+    data.events.forEach(entry => {
+      const row = logRows.insertRow();
+      appendCell(row, new Date(entry.timestamp).toLocaleString());
+      appendCell(row, entry.game);
+      appendCell(row, entry.ip, 'ip-address');
+      appendCell(row, entry.action);
+      const action = row.insertCell();
+      if (['joined', 'entered'].includes(entry.action) && !blocked.has(entry.ip)) {
+        action.append(createIpButton('Block', entry.ip, 'block-ip', 'small-danger'));
+      }
+    });
+
+    const blockedRows = document.getElementById('blockedIpRows');
+    blockedRows.replaceChildren();
+    if (!data.blockedIps.length) {
+      const row = blockedRows.insertRow();
+      appendCell(row, 'No IP addresses are blocked.');
+    }
+    data.blockedIps.forEach(entry => {
+      const row = blockedRows.insertRow();
+      appendCell(row, entry.ip, 'ip-address');
+      appendCell(row, new Date(entry.blockedAt).toLocaleString());
+      const action = row.insertCell();
+      action.append(createIpButton('Unblock', entry.ip, 'unblock-ip', 'small-secondary'));
+    });
+    setStatus(document.getElementById('accessStatus'),
+      `Showing up to ${data.events.length} recent events.`, 'success');
+  } catch (error) {
+    if (error.status === 401) {
+      showLogin('Your admin session expired. Sign in again.');
+      return;
+    }
+    setStatus(document.getElementById('accessStatus'), error.message, 'error');
+  }
+}
+
+document.getElementById('connectionRows').addEventListener('click', handleIpAction);
+document.getElementById('connectionLogRows').addEventListener('click', handleIpAction);
+document.getElementById('blockedIpRows').addEventListener('click', handleIpAction);
+
+async function handleIpAction(event) {
+  const button = event.target.closest('button[data-ip]');
+  if (!button) return;
+  const ip = button.dataset.ip;
+  const isUnblock = button.classList.contains('unblock-ip');
+  const confirmed = window.confirm(isUnblock
+    ? `Allow ${ip} to connect to the games again?`
+    : `Block ${ip} from all games and disconnect its active sessions?`);
+  if (!confirmed) return;
+
+  button.disabled = true;
+  try {
+    const result = await request('/api/admin/ip-blocks', {
+      method: isUnblock ? 'DELETE' : 'POST',
+      body: JSON.stringify({ ip })
+    });
+    setStatus(document.getElementById('accessStatus'), result.message, 'success');
+    await loadConnections();
+  } catch (error) {
+    setStatus(document.getElementById('accessStatus'), error.message, 'error');
+    button.disabled = false;
+  }
+}
+
 async function loadMetrics() {
   try {
     const metrics = await request('/api/admin/metrics');
@@ -210,13 +324,18 @@ function showDashboard() {
   dashboardView.hidden = false;
   setStatus(loginStatus, '');
   loadMetrics();
+  loadConnections();
   clearInterval(pollTimer);
   pollTimer = setInterval(loadMetrics, 2000);
+  clearInterval(connectionTimer);
+  connectionTimer = setInterval(loadConnections, 5000);
 }
 
 function showLogin(message = '') {
   clearInterval(pollTimer);
+  clearInterval(connectionTimer);
   pollTimer = null;
+  connectionTimer = null;
   dashboardView.hidden = true;
   loginView.hidden = false;
   if (message) setStatus(loginStatus, message, 'error');

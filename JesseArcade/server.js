@@ -1,10 +1,12 @@
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
+const proxyaddr = require('proxy-addr');
 const path = require('path');
 const fs = require('fs');
 const cardApi = require('./cardApi');
 const { registerAdminDashboard } = require('./adminDashboard');
+const { createIpAccessControl, normalizeIpAddress } = require('./ipAccessControl');
 const { registerLudoHandlers } = require('./ludo');
 const { registerChessHandlers } = require('./chess');
 const { registerSnakesLaddersHandlers } = require('./snakesLadders');
@@ -13,6 +15,7 @@ const { registerUnoHandlers } = require('./uno');
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server);
+const accessControl = createIpAccessControl();
 
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -771,6 +774,40 @@ function endAllArcadeGames(roomGroups) {
 
 // Socket.io connection handling
 io.on('connection', (socket) => {
+  let clientIp;
+  try {
+    clientIp = socket.request.clientIp ?? resolveClientIp(socket.request);
+  } catch (error) {
+    console.error('Failed to resolve arcade client IP:', error);
+    socket.disconnect(true);
+    return;
+  }
+  socket.data.clientIp = clientIp;
+  const tracked = accessControl.connected({
+    connectionId: `arcade:${socket.id}`,
+    game: 'Arcade',
+    ip: clientIp
+  });
+  if (!tracked) {
+    socket.disconnect(true);
+    return;
+  }
+  const gameNames = new Map([
+    ['joinGame', ['Yu-Gi-Oh!', 'roomId']],
+    ['joinLudo', ['Ludo', 'ludoRoomId']],
+    ['joinChess', ['Chess', 'chessRoomId']],
+    ['joinUno', ['UNO', 'unoRoomId']],
+    ['joinSnakesLadders', ['Snakes and Ladders', 'snakesLaddersRoomId']]
+  ]);
+  socket.onAny(eventName => {
+    const [gameName, roomIdField] = gameNames.get(eventName) || [];
+    if (!gameName) return;
+    setImmediate(() => {
+      if (socket.connected && socket.data[roomIdField]) {
+        accessControl.enteredGame(`arcade:${socket.id}`, gameName);
+      }
+    });
+  });
   console.log('User connected:', socket.id);
 
   socket.on('endAllArcadeGames', () => {
@@ -1031,6 +1068,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
+    persistConnectionEvent(accessControl.disconnected(`arcade:${socket.id}`));
     console.log('User disconnected:', socket.id);
     const game = games[socket.data.roomId];
     const player = game && game.players[socket.data.playerToken];
@@ -1060,6 +1098,41 @@ let jesseCraftMetrics = () => ({
 });
 let jesseCraftServerInstance = null;
 
+function resolveClientIp(request) {
+  const ip = normalizeIpAddress(proxyaddr(request, app.get('trust proxy fn')));
+  if (!ip) throw new Error('Could not resolve the game client IP address.');
+  return ip;
+}
+
+function persistConnectionEvent(promise) {
+  promise.catch(error => {
+    console.error('Failed to record a game connection event:', error);
+  });
+}
+
+async function disconnectBlockedIp(ip) {
+  for (const socket of io.sockets.sockets.values()) {
+    if (socket.data.clientIp === ip) socket.disconnect(true);
+  }
+  for (const player of jesseCraftServerInstance?.players.values() ?? []) {
+    if (player.clientIp === ip) player.socket.terminate();
+  }
+}
+
+io.engine.use((request, response, next) => {
+  try {
+    request.clientIp = resolveClientIp(request);
+    if (accessControl.isBlocked(request.clientIp)) {
+      response.writeHead(403);
+      response.end('Forbidden');
+      return;
+    }
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
+
 registerAdminDashboard(app, () => ({
   arcade: {
     clients: io.engine.clientsCount,
@@ -1074,7 +1147,9 @@ registerAdminDashboard(app, () => ({
       throw new Error('JesseCraft server is not ready.');
     }
     return jesseCraftServerInstance.deleteSavedWorld(roomId);
-  }
+  },
+  accessControl,
+  disconnectBlockedIp
 });
 
 async function startServer() {
@@ -1082,8 +1157,13 @@ async function startServer() {
     throw new Error('JesseCraft build is missing. Run "npm run build:jesse-craft" from JesseArcade.');
   }
 
+  await accessControl.initialize();
   const { createGameServer } = await import('../server/index.js');
-  const jesseCraftServer = createGameServer({ httpServer: server });
+  const jesseCraftServer = createGameServer({
+    httpServer: server,
+    accessControl,
+    resolveClientIp
+  });
   jesseCraftServerInstance = jesseCraftServer;
   jesseCraftMetrics = () => ({
     playersOnline: jesseCraftServer.players.size,

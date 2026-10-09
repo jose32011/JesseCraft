@@ -9,6 +9,7 @@ const {
   parseNetworkCounters,
   registerAdminDashboard
 } = require('./adminDashboard');
+const { createIpAccessControl, normalizeIpAddress } = require('./ipAccessControl');
 
 async function withDashboard(options, run) {
   const app = express();
@@ -258,6 +259,111 @@ test('saved-world deletion requires an admin session and forwards the world ID',
     assert.deepEqual(await deletion.json(), { message: 'Test world was deleted.' });
     assert.deepEqual(deletedRoomIds, ['abc123']);
   });
+});
+
+test('connectivity log and IP blocks persist and normalize mapped IPv4 addresses', async () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'voxland-access-control-'));
+  const filePath = path.join(directory, 'access-control.json');
+  try {
+    assert.equal(normalizeIpAddress('::ffff:192.0.2.10'), '192.0.2.10');
+    assert.equal(normalizeIpAddress('not-an-ip'), null);
+
+    const accessControl = createIpAccessControl({ filePath });
+    await accessControl.initialize();
+    assert.equal(accessControl.connected({
+      connectionId: 'arcade:one',
+      game: 'Arcade',
+      ip: '::ffff:192.0.2.10'
+    }), true);
+    await accessControl.flush();
+    assert.equal(accessControl.snapshot().activeConnections[0].ip, '192.0.2.10');
+    assert.equal(accessControl.snapshot().events[0].action, 'joined');
+    accessControl.enteredGame('arcade:one', 'Chess');
+    await accessControl.flush();
+    assert.equal(accessControl.snapshot().activeConnections[0].game, 'Chess');
+    assert.equal(accessControl.snapshot().events[0].action, 'entered');
+    assert.equal(accessControl.snapshot().events[0].game, 'Chess');
+
+    await accessControl.block('192.0.2.10');
+    assert.equal(accessControl.isBlocked('192.0.2.10'), true);
+    accessControl.disconnected('arcade:one');
+    await accessControl.flush();
+
+    const restored = createIpAccessControl({ filePath });
+    await restored.initialize();
+    assert.equal(restored.isBlocked('::ffff:192.0.2.10'), true);
+    assert.ok(restored.snapshot().events.some(event => event.action === 'left'));
+    assert.equal(restored.snapshot().activeConnections.length, 0);
+
+    await restored.unblock('192.0.2.10');
+    assert.equal(restored.isBlocked('192.0.2.10'), false);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('connectivity and IP block APIs require admin login', async () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'voxland-access-api-'));
+  try {
+    const accessControl = createIpAccessControl({
+      filePath: path.join(directory, 'access-control.json')
+    });
+    await accessControl.initialize();
+    const disconnectedIps = [];
+    await withDashboard({
+      password: () => 'long-test-admin-password',
+      accessControl,
+      disconnectBlockedIp: async ip => disconnectedIps.push(ip)
+    }, async baseUrl => {
+      const unauthenticated = await fetch(`${baseUrl}/api/admin/connections`);
+      assert.equal(unauthenticated.status, 401);
+      const forbiddenBlock = await fetch(`${baseUrl}/api/admin/ip-blocks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ip: '192.0.2.20' })
+      });
+      assert.equal(forbiddenBlock.status, 401);
+
+      const login = await fetch(`${baseUrl}/api/admin/login`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-forwarded-proto': 'https'
+        },
+        body: JSON.stringify({ password: 'long-test-admin-password' })
+      });
+      const cookie = login.headers.get('set-cookie').split(';')[0];
+
+      const invalidIp = await fetch(`${baseUrl}/api/admin/ip-blocks`, {
+        method: 'POST',
+        headers: { cookie, 'content-type': 'application/json' },
+        body: JSON.stringify({ ip: 'not-an-ip' })
+      });
+      assert.equal(invalidIp.status, 400);
+
+      const block = await fetch(`${baseUrl}/api/admin/ip-blocks`, {
+        method: 'POST',
+        headers: { cookie, 'content-type': 'application/json' },
+        body: JSON.stringify({ ip: '192.0.2.20' })
+      });
+      assert.equal(block.status, 200);
+      assert.deepEqual(disconnectedIps, ['192.0.2.20']);
+      const snapshot = await fetch(`${baseUrl}/api/admin/connections`, {
+        headers: { cookie }
+      });
+      assert.equal((await snapshot.json()).blockedIps[0].ip, '192.0.2.20');
+
+      const unblock = await fetch(`${baseUrl}/api/admin/ip-blocks`, {
+        method: 'DELETE',
+        headers: { cookie, 'content-type': 'application/json' },
+        body: JSON.stringify({ ip: '192.0.2.20' })
+      });
+      assert.equal(unblock.status, 200);
+      assert.equal(accessControl.isBlocked('192.0.2.20'), false);
+    });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('system parsers aggregate network counters and ignore disk partitions', () => {

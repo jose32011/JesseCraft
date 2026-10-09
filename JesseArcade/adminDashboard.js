@@ -247,6 +247,8 @@ function registerAdminDashboard(app, gameMetrics, {
   deleteSavedWorld = async () => {
     throw new Error('Saved-world deletion is unavailable.');
   },
+  accessControl,
+  disconnectBlockedIp = async () => {},
   requireHttps = () => process.env.NODE_ENV === 'production'
 } = {}) {
   app.set('trust proxy', 1);
@@ -453,6 +455,64 @@ function registerAdminDashboard(app, gameMetrics, {
     } catch (error) {
       console.error(`Failed to delete saved world ${roomId}:`, error);
       response.status(503).json({ error: 'The saved world could not be deleted.' });
+    }
+  });
+
+  app.get('/api/admin/connections', (request, response) => {
+    if (!authorize(request, response)) return;
+    if (!accessControl) {
+      response.status(503).json({ error: 'Connectivity logging is unavailable.' });
+      return;
+    }
+    response.json(accessControl.snapshot());
+  });
+
+  app.post('/api/admin/ip-blocks', async (request, response) => {
+    if (!authorize(request, response)) return;
+    if (!accessControl) {
+      response.status(503).json({ error: 'IP blocking is unavailable.' });
+      return;
+    }
+    const ip = request.body?.ip;
+    try {
+      const result = await accessControl.block(ip);
+      await disconnectBlockedIp(result.ip);
+      response.json({
+        message: result.alreadyBlocked
+          ? `${result.ip} is already blocked.`
+          : `${result.ip} is blocked from all games.`
+      });
+    } catch (error) {
+      if (error instanceof TypeError) {
+        response.status(400).json({ error: error.message });
+        return;
+      }
+      console.error('Failed to block game client IP:', error);
+      response.status(503).json({ error: 'The IP could not be blocked.' });
+    }
+  });
+
+  app.delete('/api/admin/ip-blocks', async (request, response) => {
+    if (!authorize(request, response)) return;
+    if (!accessControl) {
+      response.status(503).json({ error: 'IP blocking is unavailable.' });
+      return;
+    }
+    const ip = request.body?.ip;
+    try {
+      const result = await accessControl.unblock(ip);
+      response.json({
+        message: result.wasBlocked
+          ? `${result.ip} is unblocked.`
+          : `${result.ip} was not blocked.`
+      });
+    } catch (error) {
+      if (error instanceof TypeError) {
+        response.status(400).json({ error: error.message });
+        return;
+      }
+      console.error('Failed to unblock game client IP:', error);
+      response.status(503).json({ error: 'The IP could not be unblocked.' });
     }
   });
 }

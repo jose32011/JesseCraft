@@ -925,6 +925,8 @@ export function createGameServer({
   databaseUrl = process.env.DATABASE_URL,
   autosaveIntervalMs = AUTO_SAVE_INTERVAL_MS,
   blockRebuildDelayMs = BLOCK_REBUILD_DELAY_MS,
+  accessControl,
+  resolveClientIp = request => request.socket.remoteAddress,
 } = {}) {
   if (process.env.RAILWAY_ENVIRONMENT && !databaseUrl) {
     throw new Error("DATABASE_URL must be set for Railway deployments.");
@@ -946,6 +948,20 @@ export function createGameServer({
     server: httpServer,
     path: "/ws",
     maxPayload: 4096,
+    verifyClient: (info, callback) => {
+      try {
+        const clientIp = resolveClientIp(info.req);
+        info.req.clientIp = clientIp;
+        if (accessControl?.isBlocked(clientIp)) {
+          callback(false, 403, "Forbidden");
+          return;
+        }
+        callback(true);
+      } catch (error) {
+        console.error("Failed to verify JesseCraft connection address:", error);
+        callback(false, 400, "Invalid client address");
+      }
+    },
   });
 
   const roomSummary = (room) => ({
@@ -1308,11 +1324,21 @@ export function createGameServer({
     }
   }, 250);
 
-  webSocketServer.on("connection", (socket) => {
+  webSocketServer.on("connection", (socket, request) => {
     const id = randomUUID();
+    const clientIp = request.clientIp;
+    if (accessControl && !accessControl.connected({
+      connectionId: `jesseCraft:${id}`,
+      game: "JesseCraft",
+      ip: clientIp,
+    })) {
+      socket.close(1008, "Connection not allowed");
+      return;
+    }
     const colors = ["#e58b64", "#70a8d2", "#d4bd68", "#c27db7"];
     const player = {
       id,
+      clientIp,
       name: `Guest-${id.slice(0, 4)}`,
       x: 0,
       y: terrainHeightAt(0, 0, seed) + 2.65,
@@ -2772,6 +2798,7 @@ export function createGameServer({
       }
       players.delete(id);
       sendLobbyRooms();
+      accessControl?.disconnected(`jesseCraft:${id}`);
     });
   });
 

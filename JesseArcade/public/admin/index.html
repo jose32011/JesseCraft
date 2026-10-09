@@ -73,6 +73,39 @@
         </section>
       </div>
 
+      <div class="access-grid">
+        <section class="panel">
+          <h2>Connected players</h2>
+          <p class="muted access-note">IP addresses are visible only to admins. Blocking an IP disconnects it from all games.</p>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>Game</th><th>IP address</th><th>Connected</th><th></th></tr></thead>
+              <tbody id="connectionRows"></tbody>
+            </table>
+          </div>
+        </section>
+        <section class="panel">
+          <h2>Recent connectivity</h2>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>Time</th><th>Game</th><th>IP address</th><th>Event</th><th></th></tr></thead>
+              <tbody id="connectionLogRows"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+      <p id="accessStatus" class="status" role="status" aria-live="polite"></p>
+
+      <section class="panel blocked-panel">
+        <h2>Blocked IP addresses</h2>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>IP address</th><th>Blocked</th><th></th></tr></thead>
+            <tbody id="blockedIpRows"></tbody>
+          </table>
+        </div>
+      </section>
+
       <details class="panel password-settings">
         <summary>Change dashboard password</summary>
         <p class="muted">Use a unique password of at least 8 characters; longer is safer. Changing it signs out other dashboard sessions.</p>
