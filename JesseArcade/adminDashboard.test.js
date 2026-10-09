@@ -295,6 +295,22 @@ test('connectivity log and IP blocks persist and normalize mapped IPv4 addresses
     assert.ok(restored.snapshot().events.some(event => event.action === 'left'));
     assert.equal(restored.snapshot().activeConnections.length, 0);
 
+    assert.equal(restored.connected({
+      connectionId: 'arcade:active',
+      game: 'Chess',
+      ip: '203.0.113.4'
+    }), true);
+    await restored.flush();
+    await restored.clearEvents();
+    assert.equal(restored.snapshot().events.length, 0);
+    assert.equal(restored.snapshot().activeConnections.length, 1);
+    assert.equal(restored.isBlocked('192.0.2.10'), true);
+    const afterClear = createIpAccessControl({ filePath });
+    await afterClear.initialize();
+    assert.equal(afterClear.snapshot().events.length, 0);
+    assert.equal(afterClear.isBlocked('192.0.2.10'), true);
+    assert.deepEqual(afterClear.snapshot().activeConnections, []);
+
     await restored.unblock('192.0.2.10');
     assert.equal(restored.isBlocked('192.0.2.10'), false);
   } finally {
@@ -317,6 +333,10 @@ test('connectivity and IP block APIs require admin login', async () => {
     }, async baseUrl => {
       const unauthenticated = await fetch(`${baseUrl}/api/admin/connections`);
       assert.equal(unauthenticated.status, 401);
+      const forbiddenClear = await fetch(`${baseUrl}/api/admin/connections/events`, {
+        method: 'DELETE'
+      });
+      assert.equal(forbiddenClear.status, 401);
       const forbiddenBlock = await fetch(`${baseUrl}/api/admin/ip-blocks`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -348,10 +368,20 @@ test('connectivity and IP block APIs require admin login', async () => {
       });
       assert.equal(block.status, 200);
       assert.deepEqual(disconnectedIps, ['192.0.2.20']);
+      const clear = await fetch(`${baseUrl}/api/admin/connections/events`, {
+        method: 'DELETE',
+        headers: { cookie }
+      });
+      assert.equal(clear.status, 200);
+      assert.deepEqual(await clear.json(), {
+        message: 'Connectivity history cleared. Blocked IP addresses were kept.'
+      });
       const snapshot = await fetch(`${baseUrl}/api/admin/connections`, {
         headers: { cookie }
       });
-      assert.equal((await snapshot.json()).blockedIps[0].ip, '192.0.2.20');
+      const snapshotData = await snapshot.json();
+      assert.equal(snapshotData.events.length, 0);
+      assert.equal(snapshotData.blockedIps[0].ip, '192.0.2.20');
 
       const unblock = await fetch(`${baseUrl}/api/admin/ip-blocks`, {
         method: 'DELETE',

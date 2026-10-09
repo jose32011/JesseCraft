@@ -85,7 +85,10 @@
           </div>
         </section>
         <section class="panel">
-          <h2>Recent connectivity</h2>
+          <div class="panel-heading">
+            <h2>Recent connectivity</h2>
+            <button id="clearConnectionsButton" class="small-secondary" type="button">Clear logs</button>
+          </div>
           <div class="table-scroll">
             <table>
               <thead><tr><th>Time</th><th>Game</th><th>IP address</th><th>Event</th><th></th></tr></thead>
@@ -98,6 +101,7 @@
 
       <section class="panel blocked-panel">
         <h2>Blocked IP addresses</h2>
+        <p class="muted access-note">Select <strong>Unblock</strong> to allow an address to connect again.</p>
         <div class="table-scroll">
           <table>
             <thead><tr><th>IP address</th><th>Blocked</th><th></th></tr></thead>

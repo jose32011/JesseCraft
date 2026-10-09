@@ -281,6 +281,27 @@ document.getElementById('connectionRows').addEventListener('click', handleIpActi
 document.getElementById('connectionLogRows').addEventListener('click', handleIpAction);
 document.getElementById('blockedIpRows').addEventListener('click', handleIpAction);
 
+document.getElementById('clearConnectionsButton').addEventListener('click', async event => {
+  if (!window.confirm('Clear all saved connectivity history? Blocked IP addresses will remain blocked.')) {
+    return;
+  }
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    const result = await request('/api/admin/connections/events', { method: 'DELETE' });
+    await loadConnections();
+    setStatus(document.getElementById('accessStatus'), result.message, 'success');
+  } catch (error) {
+    if (error.status === 401) {
+      showLogin('Your admin session expired. Sign in again.');
+      return;
+    }
+    setStatus(document.getElementById('accessStatus'), error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+});
+
 async function handleIpAction(event) {
   const button = event.target.closest('button[data-ip]');
   if (!button) return;

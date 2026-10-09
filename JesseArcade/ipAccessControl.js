@@ -160,6 +160,19 @@ function createIpAccessControl({ filePath = getAccessControlFile() } = {}) {
       return { ip, wasBlocked: true };
     },
 
+    async clearEvents() {
+      const previousEvents = events;
+      events = [];
+      try {
+        await persist();
+      } catch (error) {
+        events = [...previousEvents, ...events]
+          .sort((first, second) => second.timestamp - first.timestamp)
+          .slice(0, MAX_EVENTS);
+        throw error;
+      }
+    },
+
     snapshot() {
       return {
         events: events.slice(),

@@ -467,6 +467,21 @@ function registerAdminDashboard(app, gameMetrics, {
     response.json(accessControl.snapshot());
   });
 
+  app.delete('/api/admin/connections/events', async (request, response) => {
+    if (!authorize(request, response)) return;
+    if (!accessControl) {
+      response.status(503).json({ error: 'Connectivity logging is unavailable.' });
+      return;
+    }
+    try {
+      await accessControl.clearEvents();
+      response.json({ message: 'Connectivity history cleared. Blocked IP addresses were kept.' });
+    } catch (error) {
+      console.error('Failed to clear game connectivity history:', error);
+      response.status(503).json({ error: 'The connectivity history could not be cleared.' });
+    }
+  });
+
   app.post('/api/admin/ip-blocks', async (request, response) => {
     if (!authorize(request, response)) return;
     if (!accessControl) {
