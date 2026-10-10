@@ -11,6 +11,7 @@ const samples = { cpu: [], memory: [], network: [], disk: [] };
 const MAX_SAMPLES = 60;
 let pollTimer = null;
 let connectionTimer = null;
+let selectedActivityIp = '';
 
 function setStatus(element, message, kind = '') {
   element.textContent = message;
@@ -210,6 +211,59 @@ function createIpButton(label, ip, actionClass, styleClass) {
   return button;
 }
 
+function createIpSelectButton(ip) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = ip;
+  button.dataset.selectIp = ip;
+  button.className = 'ip-select';
+  button.title = `Show activity for ${ip}`;
+  return button;
+}
+
+function appendIpCell(row, ip, locations = {}) {
+  const cell = row.insertCell();
+  cell.className = 'ip-address';
+  if (typeof ip !== 'string' || !ip) {
+    cell.textContent = 'Unknown';
+    return cell;
+  }
+  cell.append(createIpSelectButton(ip));
+  const location = document.createElement('small');
+  location.className = 'ip-location';
+  location.textContent = locations[ip] || 'Location unavailable';
+  cell.append(location);
+  return cell;
+}
+
+function renderIpActivity(events, locations) {
+  const panel = document.getElementById('ipActivityPanel');
+  const rows = document.getElementById('ipActivityRows');
+  if (!selectedActivityIp) {
+    panel.hidden = true;
+    rows.replaceChildren();
+    return;
+  }
+
+  panel.hidden = false;
+  document.getElementById('ipActivityTitle').textContent = `Activity for ${selectedActivityIp}`;
+  document.getElementById('ipActivityLocation').textContent =
+    locations[selectedActivityIp] || 'Location unavailable';
+  rows.replaceChildren();
+  const matchingEvents = events.filter(event => event.ip === selectedActivityIp);
+  if (!matchingEvents.length) {
+    const row = rows.insertRow();
+    appendCell(row, 'No activity recorded for this IP address.');
+    return;
+  }
+  matchingEvents.forEach(event => {
+    const row = rows.insertRow();
+    appendCell(row, new Date(event.timestamp).toLocaleString());
+    appendCell(row, event.game);
+    appendCell(row, event.action);
+  });
+}
+
 async function loadConnections() {
   try {
     const data = await request('/api/admin/connections');
@@ -224,7 +278,7 @@ async function loadConnections() {
       data.activeConnections.forEach(connection => {
         const row = connectionRows.insertRow();
         appendCell(row, connection.game);
-        appendCell(row, connection.ip, 'ip-address');
+        appendIpCell(row, connection.ip, data.locations);
         appendCell(row, new Date(connection.connectedAt).toLocaleString());
         const action = row.insertCell();
         if (!blocked.has(connection.ip)) {
@@ -245,13 +299,14 @@ async function loadConnections() {
       const row = logRows.insertRow();
       appendCell(row, new Date(entry.timestamp).toLocaleString());
       appendCell(row, entry.game);
-      appendCell(row, entry.ip, 'ip-address');
+      appendIpCell(row, entry.ip, data.locations);
       appendCell(row, entry.action);
       const action = row.insertCell();
       if (['joined', 'entered'].includes(entry.action) && !blocked.has(entry.ip)) {
         action.append(createIpButton('Block', entry.ip, 'block-ip', 'small-danger'));
       }
     });
+    renderIpActivity(data.events, data.locations);
 
     const blockedRows = document.getElementById('blockedIpRows');
     blockedRows.replaceChildren();
@@ -261,13 +316,19 @@ async function loadConnections() {
     }
     data.blockedIps.forEach(entry => {
       const row = blockedRows.insertRow();
-      appendCell(row, entry.ip, 'ip-address');
+      appendIpCell(row, entry.ip, data.locations);
       appendCell(row, new Date(entry.blockedAt).toLocaleString());
       const action = row.insertCell();
       action.append(createIpButton('Unblock', entry.ip, 'unblock-ip', 'small-secondary'));
     });
+    const locationStatus = data.locationStatus === 'not-configured'
+      ? ' IP locations require VOYAGER_GEOIP_DATABASE_FILE.'
+      : data.locationStatus === 'error'
+        ? ' The local GeoIP database could not be read; check the server configuration and logs.'
+        : '';
     setStatus(document.getElementById('accessStatus'),
-      `Showing up to ${data.events.length} recent events.`, 'success');
+      `Showing up to ${data.events.length} recent events.${locationStatus}`,
+      data.locationStatus === 'error' ? 'error' : 'success');
   } catch (error) {
     if (error.status === 401) {
       showLogin('Your admin session expired. Sign in again.');
@@ -280,6 +341,23 @@ async function loadConnections() {
 document.getElementById('connectionRows').addEventListener('click', handleIpAction);
 document.getElementById('connectionLogRows').addEventListener('click', handleIpAction);
 document.getElementById('blockedIpRows').addEventListener('click', handleIpAction);
+
+for (const tableId of ['connectionRows', 'connectionLogRows', 'blockedIpRows']) {
+  document.getElementById(tableId).addEventListener('click', event => {
+    const button = event.target.closest('button[data-select-ip]');
+    if (!button) return;
+    selectedActivityIp = button.dataset.selectIp;
+    const panel = document.getElementById('ipActivityPanel');
+    panel.hidden = false;
+    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    loadConnections();
+  });
+}
+
+document.getElementById('clearIpActivityButton').addEventListener('click', () => {
+  selectedActivityIp = '';
+  document.getElementById('ipActivityPanel').hidden = true;
+});
 
 document.getElementById('clearConnectionsButton').addEventListener('click', async event => {
   if (!window.confirm('Clear all saved connectivity history? Blocked IP addresses will remain blocked.')) {

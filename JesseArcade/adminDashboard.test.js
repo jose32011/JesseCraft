@@ -5,6 +5,7 @@ const path = require('node:path');
 const test = require('node:test');
 const express = require('express');
 const {
+  createIpLocationLookup,
   parseDiskCounters,
   parseNetworkCounters,
   registerAdminDashboard
@@ -325,10 +326,20 @@ test('connectivity and IP block APIs require admin login', async () => {
       filePath: path.join(directory, 'access-control.json')
     });
     await accessControl.initialize();
+    accessControl.connected({
+      connectionId: 'arcade:geo',
+      game: 'Chess',
+      ip: '192.0.2.21'
+    });
+    await accessControl.flush();
     const disconnectedIps = [];
     await withDashboard({
       password: () => 'long-test-admin-password',
       accessControl,
+      ipLocation: {
+        configured: true,
+        lookup: async ip => ip === '192.0.2.21' ? 'Test City, Test Country' : null
+      },
       disconnectBlockedIp: async ip => disconnectedIps.push(ip)
     }, async baseUrl => {
       const unauthenticated = await fetch(`${baseUrl}/api/admin/connections`);
@@ -353,6 +364,15 @@ test('connectivity and IP block APIs require admin login', async () => {
         body: JSON.stringify({ password: 'long-test-admin-password' })
       });
       const cookie = login.headers.get('set-cookie').split(';')[0];
+
+      const connections = await fetch(`${baseUrl}/api/admin/connections`, {
+        headers: { cookie }
+      });
+      assert.equal(connections.status, 200);
+      const connectionData = await connections.json();
+      assert.equal(connectionData.locationStatus, 'ready');
+      assert.equal(connectionData.locations['192.0.2.21'], 'Test City, Test Country');
+      assert.equal(connectionData.events[0].ip, '192.0.2.21');
 
       const invalidIp = await fetch(`${baseUrl}/api/admin/ip-blocks`, {
         method: 'POST',
@@ -394,6 +414,12 @@ test('connectivity and IP block APIs require admin login', async () => {
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('IP location lookup stays unavailable when no local database is configured', async () => {
+  const locationLookup = createIpLocationLookup({ databasePath: '' });
+  assert.equal(locationLookup.configured, false);
+  assert.equal(await locationLookup.lookup('192.0.2.21'), null);
 });
 
 test('system parsers aggregate network counters and ignore disk partitions', () => {

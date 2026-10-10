@@ -22,6 +22,7 @@ import {
   planetPointAt,
   isNearBoatWorkshop,
   isNearHarbor,
+  isNearRestaurant,
   listCityProperties,
   listCityShops,
   RECIPES,
@@ -32,15 +33,18 @@ import {
 import { MODEL_CATALOG, MODEL_CATEGORIES_LIST, MODEL_ITEM_BY_ID } from "../shared/models.js";
 
 test("provides a thousand procedural models plus supplied, CC0, and mod asset models", () => {
-  assert.equal(MODEL_CATALOG.length, 1121);
-  assert.equal(MODEL_ITEM_BY_ID.size, 1121);
-  assert.equal(new Set(MODEL_CATALOG.map(({ id }) => id)).size, 1121);
-  assert.equal(new Set(MODEL_CATALOG.map(({ category }) => category)).size, 11);
+  assert.equal(MODEL_CATALOG.length, 1133);
+  assert.equal(MODEL_ITEM_BY_ID.size, 1133);
+  assert.equal(new Set(MODEL_CATALOG.map(({ id }) => id)).size, 1133);
+  assert.equal(new Set(MODEL_CATALOG.map(({ category }) => category)).size, 12);
   assert.equal(MODEL_CATALOG.filter(({ assetKey }) => assetKey?.startsWith("block-bits/")).length, 40);
   assert.equal(MODEL_CATALOG.filter(({ assetKey }) => assetKey?.startsWith("kenney-blaster-kit/")).length, 3);
   assert.equal(MODEL_CATALOG.filter(({ assetKey }) => assetKey?.startsWith("mod-car-kit/")).length, 50);
   assert.equal(MODEL_CATALOG.filter(({ assetKey }) => assetKey?.startsWith("mod-low-poly-plane/")).length, 4);
   assert.equal(MODEL_CATALOG.filter(({ assetKey }) => assetKey?.startsWith("quaternius-furniture/")).length, 12);
+  assert.equal(MODEL_CATALOG.filter(({ assetKey }) => assetKey?.startsWith("food-pack/")).length, 12);
+  assert.equal(MODEL_CATALOG.filter(({ category }) => category === "food").length, 5);
+  assert.equal(MODEL_CATALOG.filter(({ category, assetKey }) => category === "furniture" && assetKey?.startsWith("food-pack/")).length, 7);
   assert.equal(MODEL_CATALOG.filter(({ assetKey }) => assetKey?.startsWith("quaternius-medieval-weapons/")).length, 12);
   assert.equal(MODEL_ITEM_BY_ID.get("quaternius_furniture_beddouble")?.name, "Bed Double");
   assert.equal(MODEL_ITEM_BY_ID.get("quaternius_weapon_sword_golden")?.name, "Sword Golden");
@@ -50,6 +54,17 @@ test("provides a thousand procedural models plus supplied, CC0, and mod asset mo
     assert.ok(model.name);
     assert.ok(model.price > 0);
     assert.equal(canEditBlock({ x: 20, y: 100, z: 20 }, model.id, "place", new Map(), 27), true);
+  }
+});
+
+test("Glass City restaurants are present in every seed and food can be ordered at their doors", () => {
+  for (const seed of [1, 31, 2026]) {
+    const restaurants = listCityShops(seed).filter(({ restaurant }) => restaurant);
+    assert.deepEqual(restaurants.map(({ name }) => name), ["SUNSET DINER", "PARKSIDE CAFE"]);
+    for (const restaurant of restaurants) {
+      assert.equal(isNearRestaurant(restaurant.x, restaurant.z, seed), true);
+      assert.equal(isNearRestaurant(restaurant.x, restaurant.z + 10, seed), false);
+    }
   }
 });
 

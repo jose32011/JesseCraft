@@ -9,6 +9,8 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { promisify } = require('node:util');
+const maxmind = require('maxmind');
+const { normalizeIpAddress } = require('./ipAccessControl');
 
 const SESSION_COOKIE = 'voxland_admin_session';
 const SESSION_LIFETIME_MS = 8 * 60 * 60 * 1000;
@@ -240,6 +242,33 @@ function runSystemdRestart(serviceName) {
   });
 }
 
+function createIpLocationLookup({
+  databasePath = process.env.VOYAGER_GEOIP_DATABASE_FILE
+} = {}) {
+  let readerPromise = null;
+  const locations = new Map();
+
+  return {
+    configured: Boolean(databasePath),
+    async lookup(address) {
+      const ip = normalizeIpAddress(address);
+      if (!ip || !databasePath) return null;
+      if (locations.has(ip)) return locations.get(ip);
+
+      readerPromise ??= maxmind.open(databasePath);
+      const reader = await readerPromise;
+      const record = reader.get(ip);
+      const location = [
+        record?.city?.names?.en,
+        record?.subdivisions?.[0]?.names?.en,
+        record?.country?.names?.en
+      ].filter(Boolean).join(', ') || null;
+      locations.set(ip, location);
+      return location;
+    }
+  };
+}
+
 function registerAdminDashboard(app, gameMetrics, {
   password = () => process.env.VOYAGER_ADMIN_PASSWORD,
   restartService = runSystemdRestart,
@@ -248,9 +277,11 @@ function registerAdminDashboard(app, gameMetrics, {
     throw new Error('Saved-world deletion is unavailable.');
   },
   accessControl,
+  ipLocation = createIpLocationLookup(),
   disconnectBlockedIp = async () => {},
   requireHttps = () => process.env.NODE_ENV === 'production'
 } = {}) {
+  let ipLocationErrorLogged = false;
   app.set('trust proxy', 1);
   app.use('/api/admin', (request, response, next) => {
     response.setHeader('Cache-Control', 'no-store');
@@ -458,13 +489,36 @@ function registerAdminDashboard(app, gameMetrics, {
     }
   });
 
-  app.get('/api/admin/connections', (request, response) => {
+  app.get('/api/admin/connections', async (request, response) => {
     if (!authorize(request, response)) return;
     if (!accessControl) {
       response.status(503).json({ error: 'Connectivity logging is unavailable.' });
       return;
     }
-    response.json(accessControl.snapshot());
+    const snapshot = accessControl.snapshot();
+    const ips = new Set([
+      ...snapshot.activeConnections.map(connection => connection.ip),
+      ...snapshot.events.map(event => event.ip),
+      ...snapshot.blockedIps.map(entry => entry.ip)
+    ].map(normalizeIpAddress).filter(Boolean));
+    const locations = {};
+    let locationStatus = ipLocation.configured ? 'ready' : 'not-configured';
+    try {
+      await Promise.all([...ips].map(async ip => {
+        locations[ip] = await ipLocation.lookup(ip);
+      }));
+    } catch (error) {
+      if (!ipLocationErrorLogged) {
+        console.error('Failed to read the local IP geolocation database:', error);
+        ipLocationErrorLogged = true;
+      }
+      locationStatus = 'error';
+    }
+    response.json({
+      ...snapshot,
+      locations,
+      locationStatus
+    });
   });
 
   app.delete('/api/admin/connections/events', async (request, response) => {
@@ -534,6 +588,7 @@ function registerAdminDashboard(app, gameMetrics, {
 
 module.exports = {
   collectSystemMetrics,
+  createIpLocationLookup,
   parseCpuCounters,
   parseDiskCounters,
   parseNetworkCounters,

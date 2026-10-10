@@ -185,6 +185,21 @@ const QUATERNIUS_WEAPON_ASSETS = [
   "Shield_Round",
 ];
 
+const DINING_ASSETS = [
+  { file: "table.glb", name: "Cafe Table", category: "furniture", color: "#a96f48" },
+  { file: "bench.glb", name: "Cafe Bench", category: "furniture", color: "#bd8a62" },
+  { file: "bench02.glb", name: "Garden Bench", category: "furniture", color: "#8c6749" },
+  { file: "plateCeramic.glb", name: "Ceramic Plate", category: "furniture", color: "#d5d9d6" },
+  { file: "plateWood.glb", name: "Wooden Serving Plate", category: "furniture", color: "#a96f48" },
+  { file: "sushiBowl.glb", name: "Sushi Bowl Decor", category: "food", color: "#e4b85a" },
+  { file: "potatoFries.glb", name: "Fries Decor", category: "food", color: "#e4b85a" },
+  { file: "beefWellingtonCutPieceBig.glb", name: "Roast Decor", category: "food", color: "#9c5940" },
+  { file: "casedSausageWhole.glb", name: "Sausage Decor", category: "food", color: "#b95d42" },
+  { file: "orange.glb", name: "Orange Decor", category: "food", color: "#e88838" },
+  { file: "mug01.glb", name: "Coffee Mug", category: "furniture", color: "#d6c9ab" },
+  { file: "woodBowl.glb", name: "Wooden Bowl", category: "furniture", color: "#a96f48" },
+];
+
 const humanizeModAssetName = (slug) => slug
   .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
   .replace(/[-_]+/g, " ")
@@ -235,6 +250,17 @@ const MOD_ASSET_CATALOG = [
     assetKey: `quaternius-medieval-weapons/${slug}.fbx`,
     source: "Quaternius Modular Weapons Pack",
   })),
+  ...DINING_ASSETS.map((asset, index) => ({
+    id: `dining_${asset.file.replace(/\.glb$/, "")}`,
+    name: asset.name,
+    category: asset.category,
+    categoryLabel: asset.category === "food" ? "Food" : "Furniture",
+    color: asset.color,
+    price: 75 + (index % 4) * 10,
+    variant: index,
+    assetKey: `food-pack/${asset.file}`,
+    source: "Low Poly Food Pack",
+  })),
 ];
 
 export const MODEL_CATALOG = [
@@ -249,5 +275,6 @@ export const MODEL_ITEMS = MODEL_CATALOG.map((item) => item.id);
 export const MODEL_CATEGORIES_LIST = [
   { id: "imported", label: "Imported assets" },
   ...MODEL_CATEGORIES.map(({ id, label }) => ({ id, label })),
+  { id: "food", label: "Food" },
   { id: "asset", label: "Block Bits" },
 ];

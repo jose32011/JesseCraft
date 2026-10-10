@@ -89,12 +89,26 @@
             <h2>Recent connectivity</h2>
             <button id="clearConnectionsButton" class="small-secondary" type="button">Clear logs</button>
           </div>
+          <p class="muted access-note">Select an IP address to see its activity. Locations are approximate and require a local GeoIP database.</p>
           <div class="table-scroll">
             <table>
               <thead><tr><th>Time</th><th>Game</th><th>IP address</th><th>Event</th><th></th></tr></thead>
               <tbody id="connectionLogRows"></tbody>
             </table>
           </div>
+          <section id="ipActivityPanel" class="ip-activity" aria-labelledby="ipActivityTitle" hidden>
+            <div class="panel-heading">
+              <h3 id="ipActivityTitle">IP activity</h3>
+              <button id="clearIpActivityButton" class="small-secondary" type="button">Clear selection</button>
+            </div>
+            <p id="ipActivityLocation" class="muted access-note"></p>
+            <div class="table-scroll">
+              <table>
+                <thead><tr><th>Time</th><th>Game</th><th>Event</th></tr></thead>
+                <tbody id="ipActivityRows"></tbody>
+              </table>
+            </div>
+          </section>
         </section>
       </div>
       <p id="accessStatus" class="status" role="status" aria-live="polite"></p>

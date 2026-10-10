@@ -26,6 +26,7 @@ import {
   MAX_STACK_SIZE,
   MAX_BUILD_HEIGHT,
   cityPropertyNear,
+  isNearRestaurant,
   listCityProperties,
   PLANET_MAX_X,
   PLANET_MAX_Z,
@@ -43,6 +44,7 @@ import {
 } from "./world.js";
 import { MODEL_CATALOG, MODEL_ITEM_BY_ID } from "../shared/models.js";
 import { CREATURE_HABITATS, getCreatureSpecies } from "../shared/creatures.js";
+import { RESTAURANT_MENU_BY_ID } from "../shared/food.js";
 
 const GAME_DIR = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const DIST_DIR = resolve(GAME_DIR, "dist");
@@ -332,12 +334,13 @@ function createAnimals(seed = 1) {
       const species = getCreatureSpecies(habitat.id, speciesIndex);
       const id = `animal-${habitat.id}-${slot}`;
       const ground = terrainHeightAt(x, z, seed);
+      const horse = habitat.id === "village" && slot < 2;
       animals.set(id, {
         id,
         species: species.id,
-        name: species.name,
-        model: species.model,
-        color: species.color,
+        name: horse ? (slot === 0 ? "Meadow Horse" : "Chestnut Horse") : species.name,
+        model: horse ? "horse" : species.model,
+        color: horse ? (slot === 0 ? "#b58b5c" : "#75472f") : species.color,
         habitat: species.habitat,
         aquatic: species.aquatic,
         scale: species.scale,
@@ -351,6 +354,7 @@ function createAnimals(seed = 1) {
         targetX: x,
         targetZ: z,
         walking: false,
+        riderId: null,
       });
     });
   }
@@ -395,7 +399,7 @@ function createAnimals(seed = 1) {
 }
 
 function serializeAnimals(room) {
-  return [...room.animals.values()].map(({ id, species, name, model, color, habitat, aquatic, flying, scale, pattern, x, y, z, yaw, walking }) => ({
+  return [...room.animals.values()].map(({ id, species, name, model, color, habitat, aquatic, flying, scale, pattern, x, y, z, yaw, walking, riderId }) => ({
     id,
     species,
     name,
@@ -411,6 +415,7 @@ function serializeAnimals(room) {
     z,
     yaw,
     walking,
+    riderId: riderId ?? null,
   }));
 }
 
@@ -661,7 +666,17 @@ function playerCanOccupy(room, x, eyeY, z) {
 function releaseVehicle(room, player) {
   const vehicle = room?.vehicles.get(player.vehicleId);
   if (vehicle?.occupantId === player.id) vehicle.occupantId = null;
+  const mount = room?.animals.get(player.mountId);
+  if (mount?.riderId === player.id) {
+    mount.riderId = null;
+    mount.walking = false;
+    mount.homeX = mount.x;
+    mount.homeZ = mount.z;
+    mount.targetX = mount.x;
+    mount.targetZ = mount.z;
+  }
   player.vehicleId = null;
+  player.mountId = null;
 }
 
 function restoreSavedRoom(saved) {
@@ -1005,7 +1020,7 @@ export function createGameServer({
 
   const roomSnapshot = (room) => ({
     type: "snapshot",
-    players: [...room.members].map((id) => players.get(id)).filter(Boolean).map(({ id, name, x, y, z, yaw, color, health, vehicleId }) => ({
+    players: [...room.members].map((id) => players.get(id)).filter(Boolean).map(({ id, name, x, y, z, yaw, color, health, vehicleId, mountId }) => ({
       id,
       name,
       x,
@@ -1015,6 +1030,7 @@ export function createGameServer({
       color,
       health,
       vehicleId: vehicleId ?? null,
+      mountId: mountId ?? null,
     })),
     bots: [...room.bots.values()],
     animals: serializeAnimals(room),
@@ -1077,7 +1093,7 @@ export function createGameServer({
     mode: room.mode,
     autosaveEnabled: room.autosaveEnabled !== false,
     chunkSize: CHUNK_SIZE,
-    players: [...room.members].map((id) => players.get(id)).filter(Boolean).map(({ id, name, x, y, z, yaw, color, health, vehicleId }) => ({
+    players: [...room.members].map((id) => players.get(id)).filter(Boolean).map(({ id, name, x, y, z, yaw, color, health, vehicleId, mountId }) => ({
       id,
       name,
       x,
@@ -1087,6 +1103,7 @@ export function createGameServer({
       color,
       health,
       vehicleId: vehicleId ?? null,
+      mountId: mountId ?? null,
     })),
     bots: [...room.bots.values()],
     animals: serializeAnimals(room),
@@ -1184,6 +1201,7 @@ export function createGameServer({
         }
       }
       for (const animal of room.animals.values()) {
+        if (animal.riderId) continue;
         if (animal.flying) {
           animal.flightPhase += 0.12;
           if (Math.hypot(animal.targetX - animal.x, animal.targetZ - animal.z) < 8) {
@@ -1344,6 +1362,7 @@ export function createGameServer({
       y: terrainHeightAt(0, 0, seed) + 2.65,
       z: 0,
       yaw: 0,
+      mountId: null,
       health: MAX_PLAYER_HEALTH,
       xp: 0,
       level: 0,
@@ -2232,6 +2251,68 @@ export function createGameServer({
         return;
       }
 
+      if (message.type === "buy_food") {
+        const room = rooms.get(player.roomId);
+        const meal = RESTAURANT_MENU_BY_ID.get(message.item);
+        if (!room?.started || player.health <= 0) return;
+        if (!meal) {
+          writeJson(socket, { type: "error", message: "That restaurant item is unavailable." });
+          return;
+        }
+        if (!isNearRestaurant(player.x, player.z, room.seed)) {
+          writeJson(socket, { type: "error", message: "Visit the Sunset Diner or Parkside Cafe to order food." });
+          return;
+        }
+        if (room.mode !== "design" && player.coins < meal.price) {
+          writeJson(socket, { type: "error", message: `You need ${meal.price} coins to buy ${meal.name}.` });
+          return;
+        }
+        if (room.mode !== "design") player.coins -= meal.price;
+        addItems(player.inventory, meal.id, 1);
+        writeJson(socket, {
+          type: "food_result",
+          action: "buy",
+          item: meal.id,
+          coins: player.coins,
+          message: `Bought ${meal.name} for ${room.mode === "design" ? 0 : meal.price} coins. Eat it from your inventory.`,
+        });
+        writeJson(socket, { type: "currency", coins: player.coins });
+        writeJson(socket, { type: "inventory", items: inventoryItems(player.inventory) });
+        return;
+      }
+
+      if (message.type === "eat_food") {
+        const room = rooms.get(player.roomId);
+        const meal = RESTAURANT_MENU_BY_ID.get(message.item);
+        if (!room?.started || player.health <= 0) return;
+        if (!meal) {
+          writeJson(socket, { type: "error", message: "That food cannot be eaten." });
+          return;
+        }
+        if ((player.inventory.get(meal.id) ?? 0) < 1) {
+          writeJson(socket, { type: "error", message: `You do not have ${meal.name}.` });
+          return;
+        }
+        const maxHealth = MAX_PLAYER_HEALTH + (player.gearTier ?? 0) * 10;
+        if (player.health >= maxHealth) {
+          writeJson(socket, { type: "error", message: "Your health is already full." });
+          return;
+        }
+        const previousHealth = player.health;
+        removeItems(player.inventory, meal.id, 1);
+        player.health = Math.min(maxHealth, player.health + meal.healing);
+        const restoredHealth = player.health - previousHealth;
+        writeJson(socket, {
+          type: "food_result",
+          action: "eat",
+          item: meal.id,
+          health: player.health,
+          message: `Ate ${meal.name} and restored ${restoredHealth} health.`,
+        });
+        writeJson(socket, { type: "inventory", items: inventoryItems(player.inventory) });
+        return;
+      }
+
       if (message.type === "use_potion") {
         const room = rooms.get(player.roomId);
         if (!room?.started || player.health <= 0) return;
@@ -2315,6 +2396,8 @@ export function createGameServer({
         const room = rooms.get(player.roomId);
         const vehicle = room?.vehicles.get(player.vehicleId);
         if (player.vehicleId && vehicle?.occupantId !== player.id) return;
+        const mount = room?.animals.get(player.mountId);
+        if (player.mountId && mount?.riderId !== player.id) return;
         if (
           vehicle?.type === "boat" &&
           terrainHeightAt(message.position.x, message.position.z, room.seed) >= 0
@@ -2325,8 +2408,17 @@ export function createGameServer({
           });
           return;
         }
+        if (mount && terrainHeightAt(message.position.x, message.position.z, room.seed) < 0) {
+          writeJson(socket, {
+            type: "move_rejected",
+            position: { x: player.x, y: player.y, z: player.z, yaw: player.yaw },
+          });
+          return;
+        }
         const aircraft = vehicle?.type === "plane" || vehicle?.type === "jet" ? vehicle : null;
-        const requestedY = aircraft && !aircraft.airborne
+        const requestedY = mount
+          ? terrainHeightAt(message.position.x, message.position.z, room.seed) + 3.65
+          : aircraft && !aircraft.airborne
           ? terrainHeightAt(message.position.x, message.position.z, room.seed) + 2.65
           : aircraft
             ? Math.max(
@@ -2356,6 +2448,15 @@ export function createGameServer({
           : terrainHeightAt(player.x, player.z, room.seed) + 2.65;
         if (vehicle?.type === "boat") player.y = vehicle.y + 2.65;
         player.yaw = message.position.yaw;
+        if (mount) {
+          const previousX = mount.x;
+          const previousZ = mount.z;
+          mount.x = player.x;
+          mount.z = player.z;
+          mount.y = terrainHeightAt(mount.x, mount.z, room.seed) + 1;
+          mount.yaw = player.yaw;
+          mount.walking = Math.hypot(wrapPlanetX(mount.x - previousX), mount.z - previousZ) > 0.01;
+        }
         if (vehicle) {
           const previousVehicleYaw = vehicle.yaw;
           const previousVehicleX = vehicle.x;
@@ -2492,6 +2593,64 @@ export function createGameServer({
         return;
       }
 
+      if (message.type === "animal_mount") {
+        const room = rooms.get(player.roomId);
+        const mount = room?.animals.get(message.animalId);
+        if (!room?.started || player.health <= 0) return;
+        if (mount?.id === player.mountId && mount.riderId === player.id) {
+          mount.riderId = null;
+          mount.walking = false;
+          player.mountId = null;
+          player.y = terrainHeightAt(player.x, player.z, room.seed) + 2.65;
+          writeJson(socket, {
+            type: "animal_mount_result",
+            mountId: null,
+            position: { x: player.x, y: player.y, z: player.z, yaw: player.yaw },
+            message: "You dismounted the horse.",
+          });
+          broadcastToRoom(room, roomSnapshot(room));
+          return;
+        }
+        if (
+          !mount ||
+          mount.model !== "horse" ||
+          mount.riderId ||
+          player.vehicleId ||
+          Math.hypot(wrapPlanetX(mount.x - player.x), mount.z - player.z) > 4
+        ) {
+          writeJson(socket, {
+            type: "animal_mount_result",
+            mountId: player.mountId ?? null,
+            message: "Move closer to an available horse to ride.",
+          });
+          return;
+        }
+        if (!playerCanOccupy(room, mount.x, mount.y + 2.65, mount.z)) {
+          writeJson(socket, {
+            type: "animal_mount_result",
+            mountId: player.mountId ?? null,
+            message: "There is not enough room to ride here.",
+          });
+          return;
+        }
+        releaseVehicle(room, player);
+        mount.riderId = player.id;
+        player.mountId = mount.id;
+        player.flightEnabled = false;
+        player.x = mount.x;
+        player.z = mount.z;
+        player.y = mount.y + 2.65;
+        player.yaw = mount.yaw;
+        writeJson(socket, {
+          type: "animal_mount_result",
+          mountId: mount.id,
+          position: { x: player.x, y: player.y, z: player.z, yaw: player.yaw },
+          message: `Riding ${mount.name}. Press E or Vehicle to dismount.`,
+        });
+        broadcastToRoom(room, roomSnapshot(room));
+        return;
+      }
+
       if (message.type === "vehicle_enter" || message.type === "vehicle_exit") {
         const room = rooms.get(player.roomId);
         if (!room?.started || player.health <= 0) return;
@@ -2541,7 +2700,7 @@ export function createGameServer({
 
       if (message.type === "fly_toggle") {
         const room = rooms.get(player.roomId);
-        if (!room?.started || player.health <= 0 || typeof message.enabled !== "boolean") {
+        if (!room?.started || player.health <= 0 || typeof message.enabled !== "boolean" || (message.enabled && player.mountId)) {
           writeJson(socket, { type: "fly_result", enabled: false, message: "Flight is unavailable right now." });
           return;
         }

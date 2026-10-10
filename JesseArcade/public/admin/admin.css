@@ -73,6 +73,11 @@ button:disabled { opacity: .55; cursor: wait; }
 .access-grid table, .blocked-panel table { font-size: 10px; }
 .access-grid td, .blocked-panel td { padding: 9px 7px; }
 .ip-address { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.ip-select { min-height: 24px; padding: 0; border: 0; color: var(--cyan); background: transparent; font: inherit; text-align: left; }
+.ip-select:hover:not(:disabled) { text-decoration: underline; transform: none; }
+.ip-location { display: block; max-width: 190px; margin-top: 3px; color: var(--muted); font-size: 9px; white-space: normal; }
+.ip-activity { margin-top: 16px; padding-top: 14px; border-top: 1px solid rgba(145, 160, 183, .18); }
+.ip-activity h3 { margin: 0; font-size: 12px; }
 .small-danger, .small-secondary { min-height: 30px; padding: 0 9px; font-size: 10px; }
 .small-danger { color: #fff1f1; background: #8c303d; border-color: #ba4b59; }
 .small-secondary { border-color: #34445b; color: #d6e4f7; background: #172236; }

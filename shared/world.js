@@ -927,9 +927,13 @@ export function listCityShops(seed = 1) {
       const column = cityColumnAt(x, z, normalizeSeed(seed));
       if (!column?.shop) continue;
       const names = ["MARKET", "BAKERY", "ARMOURY", "FURNITURE", "POTIONS", "TAVERN"];
+      const restaurant = cellZ === 0 && (cellX === -2 || cellX === 2);
       shops.push({
         id: `city-shop-${cellX}-${cellZ}`,
-        name: cellX === 1 && cellZ === 0 ? "MARKET" : names[Math.abs(cellX * 7 + cellZ * 11) % names.length],
+        name: restaurant
+          ? cellX < 0 ? "SUNSET DINER" : "PARKSIDE CAFE"
+          : cellX === 1 && cellZ === 0 ? "MARKET" : names[Math.abs(cellX * 7 + cellZ * 11) % names.length],
+        restaurant,
         x,
         y: 5.8,
         z: z - Math.floor(column.depth / 2) - 1,
@@ -937,6 +941,11 @@ export function listCityShops(seed = 1) {
     }
   }
   return shops;
+}
+
+export function isNearRestaurant(x, z, seed = 1, maxDistance = 6) {
+  return listCityShops(seed).some((shop) => shop.restaurant &&
+    Math.hypot(wrapPlanetX(x - shop.x), z - shop.z) <= maxDistance);
 }
 
 export function cityPropertyNear(x, z, seed = 1, maxDistance = 5) {

@@ -183,6 +183,8 @@
         <button class="close-help" id="close-help" aria-label="Close controls">×</button>
         <strong>Welcome to your world</strong>
         <p><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · <kbd>Space</kbd> jump · <kbd>F</kbd> punch · drag to look</p>
+        <p>Ride a horse near the village with <kbd>E</kbd> or the Vehicle button. Ride faster with <kbd>W</kbd>/<kbd>S</kbd>; press <kbd>E</kbd> again to dismount.</p>
+        <p>Order food at the Sunset Diner or Parkside Cafe in Glass City with <kbd>E</kbd>. Open your bag and choose <b>Eat 1</b> to restore health.</p>
         <p>While swimming: hold <kbd>Space</kbd> to rise or <kbd>Shift</kbd> to dive.</p>
         <p><kbd>R</kbd> fish from the harbor pier.</p>
         <p>At the harbor Boat Workshop, design a skiff, cutter, or galleon. Board at the waterline with <kbd>E</kbd>, sail with <kbd>W</kbd>/<kbd>S</kbd>, and steer with <kbd>A</kbd>/<kbd>D</kbd>.</p>
@@ -229,6 +231,17 @@
         <select id="shop-category" aria-label="Filter models by category"></select>
         <div class="shop-items" id="shop-items"></div>
         <p class="shop-notice" id="shop-notice" role="status"></p>
+      </section>
+
+      <section class="restaurant-panel" id="restaurant-panel" aria-label="Restaurant menu" hidden>
+        <header class="shop-heading">
+          <div><span class="eyebrow">GLASS CITY</span><h2>Restaurant menu</h2></div>
+          <button type="button" id="close-restaurant-button" aria-label="Close restaurant menu">×</button>
+        </header>
+        <p class="shop-hint">Order a meal here, then eat it from your inventory to restore health.</p>
+        <strong class="shop-balance" id="restaurant-coins">Coins 0</strong>
+        <div class="restaurant-items" id="restaurant-items"></div>
+        <p class="shop-notice" id="restaurant-notice" role="status"></p>
       </section>
 
       <section class="hotbar" id="hotbar" aria-label="Choose a block"></section>

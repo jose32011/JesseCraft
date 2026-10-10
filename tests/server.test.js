@@ -7,7 +7,7 @@ import { createGameServer } from "../server/index.js";
 import { BLOCK_TYPES, FISH_ITEMS, MAX_STACK_SIZE } from "../server/world.js";
 import { WebSocket } from "ws";
 import { MODEL_CATALOG, MODEL_ITEM_BY_ID } from "../shared/models.js";
-import { CITY_POLICE_STATION, getBaseBlockAt, listCityProperties, terrainHeightAt } from "../shared/world.js";
+import { CITY_POLICE_STATION, getBaseBlockAt, isNearRestaurant, listCityProperties, listCityShops, terrainHeightAt } from "../shared/world.js";
 
 function nextMessage(socket, predicate = () => true, timeoutMs = 5000) {
   return new Promise((resolve, reject) => {
@@ -139,6 +139,123 @@ test("bots approach nearby players and navigate around walls", async () => {
     await new Promise((resolve) => setTimeout(resolve, 800));
     assert.ok([...room.animals.values()].some((animal, index) =>
       Math.hypot(animal.x - animalPositions[index].x, animal.z - animalPositions[index].z) > 0.01));
+  } finally {
+    for (const socket of sockets) socket.terminate();
+    await server.close();
+  }
+});
+
+test("players can mount, ride, and dismount a village horse", async () => {
+  const server = createGameServer({ host: "127.0.0.1", port: 0, seed: 31 });
+  const sockets = [];
+  try {
+    const address = await server.listen();
+    const connection = connect(`ws://127.0.0.1:${address.port}/ws`);
+    sockets.push(connection.socket);
+    const lobby = nextMessage(connection.socket, (message) => message.type === "lobby");
+    await connection.opened;
+    await lobby;
+    const created = nextMessage(connection.socket, (message) => message.type === "room_created");
+    connection.socket.send(JSON.stringify({ type: "create_room", roomName: "Horse Ride Test" }));
+    const roomId = (await created).room.id;
+    const started = nextMessage(connection.socket, (message) => message.type === "init");
+    connection.socket.send(JSON.stringify({ type: "start_room" }));
+    await started;
+
+    const room = server.rooms.get(roomId);
+    const horse = room.animals.get("animal-village-0");
+    const player = server.players.get(room.members.values().next().value);
+    horse.x = 0;
+    horse.z = 0;
+    horse.y = terrainHeightAt(0, 0, room.seed) + 1;
+    horse.homeX = 0;
+    horse.homeZ = 0;
+    horse.targetX = 0;
+    horse.targetZ = 0;
+
+    const mounted = nextMessage(connection.socket, (message) => message.type === "animal_mount_result");
+    connection.socket.send(JSON.stringify({ type: "animal_mount", animalId: horse.id }));
+    const mountResult = await mounted;
+    assert.equal(mountResult.mountId, horse.id);
+    assert.equal(horse.riderId, player.id);
+    assert.equal(player.mountId, horse.id);
+
+    const moved = nextMessage(connection.socket, (message) => (
+      message.type === "snapshot" &&
+      message.animals.find(({ id }) => id === horse.id)?.x > 0.5
+    ));
+    connection.socket.send(JSON.stringify({
+      type: "move",
+      position: { x: 1, y: horse.y + 2.65, z: 0, yaw: 0 },
+    }));
+    await moved;
+    assert.equal(horse.x, 1);
+    assert.equal(horse.walking, true);
+
+    const dismounted = nextMessage(connection.socket, (message) => message.type === "animal_mount_result");
+    connection.socket.send(JSON.stringify({ type: "animal_mount", animalId: horse.id }));
+    const dismountResult = await dismounted;
+    assert.equal(dismountResult.mountId, null);
+    assert.equal(horse.riderId, null);
+  } finally {
+    for (const socket of sockets) socket.terminate();
+    await server.close();
+  }
+});
+
+test("players can buy restaurant food and eat it to restore health", async () => {
+  const server = createGameServer({ host: "127.0.0.1", port: 0, seed: 31 });
+  const sockets = [];
+  try {
+    const address = await server.listen();
+    const connection = connect(`ws://127.0.0.1:${address.port}/ws`);
+    sockets.push(connection.socket);
+    const lobby = nextMessage(connection.socket, (message) => message.type === "lobby");
+    await connection.opened;
+    await lobby;
+    const created = nextMessage(connection.socket, (message) => message.type === "room_created");
+    connection.socket.send(JSON.stringify({ type: "create_room", roomName: "Restaurant Test" }));
+    const roomId = (await created).room.id;
+    const started = nextMessage(connection.socket, (message) => message.type === "init");
+    connection.socket.send(JSON.stringify({ type: "start_room" }));
+    await started;
+
+    const room = server.rooms.get(roomId);
+    const player = server.players.get(room.members.values().next().value);
+    const startingCoins = player.coins;
+    const restaurant = listCityShops(room.seed).find(({ restaurant }) => restaurant);
+    assert.ok(restaurant);
+    assert.equal(isNearRestaurant(restaurant.x, restaurant.z, room.seed), true);
+
+    const tooFar = nextMessage(connection.socket, (message) => message.type === "error");
+    connection.socket.send(JSON.stringify({ type: "buy_food", item: "meal_sushi_bowl" }));
+    assert.match((await tooFar).message, /diner|cafe/i);
+    assert.equal(player.coins, startingCoins);
+
+    player.x = restaurant.x;
+    player.z = restaurant.z;
+    player.y = terrainHeightAt(player.x, player.z, room.seed) + 2.65;
+    player.coins = 0;
+    const insufficient = nextMessage(connection.socket, (message) => message.type === "error");
+    connection.socket.send(JSON.stringify({ type: "buy_food", item: "meal_sushi_bowl" }));
+    assert.match((await insufficient).message, /18 coins/);
+    assert.equal(player.inventory.has("meal_sushi_bowl"), false);
+    player.coins = startingCoins;
+
+    const bought = nextMessage(connection.socket, (message) => message.type === "food_result" && message.action === "buy");
+    connection.socket.send(JSON.stringify({ type: "buy_food", item: "meal_sushi_bowl" }));
+    const purchase = await bought;
+    assert.equal(purchase.item, "meal_sushi_bowl");
+    assert.equal(player.coins, startingCoins - 18);
+    assert.equal(player.inventory.get("meal_sushi_bowl"), 1);
+
+    player.health = 50;
+    const eaten = nextMessage(connection.socket, (message) => message.type === "food_result" && message.action === "eat");
+    connection.socket.send(JSON.stringify({ type: "eat_food", item: "meal_sushi_bowl" }));
+    const meal = await eaten;
+    assert.equal(meal.health, 66);
+    assert.equal(player.health, 66);
+    assert.equal(player.inventory.has("meal_sushi_bowl"), false);
   } finally {
     for (const socket of sockets) socket.terminate();
     await server.close();

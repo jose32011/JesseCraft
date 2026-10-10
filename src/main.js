@@ -9,6 +9,7 @@ import {
   canCraft,
   CHUNK_SIZE,
   cityPropertyNear,
+  isNearRestaurant,
   CITY_BEACH_OUTER_RADIUS,
   CITY_BLOCK_SIZE,
   CITY_POLICE_STATION,
@@ -46,6 +47,7 @@ import {
   MODEL_CATEGORIES_LIST,
   MODEL_ITEM_BY_ID,
 } from "../shared/models.js";
+import { RESTAURANT_MENU, RESTAURANT_MENU_BY_ID } from "../shared/food.js";
 import grassTextureUrl from "./assets/blocks/own/grass_top.png";
 import dirtTextureUrl from "./assets/new/PixelTexturePack/Textures/Rocks/DIRT.png";
 import stoneTextureUrl from "./assets/new/PixelTexturePack/Textures/Rocks/GRAYROCKS.png";
@@ -110,6 +112,10 @@ const shopCategory = document.querySelector("#shop-category");
 const shopSearch = document.querySelector("#shop-search");
 const shopNotice = document.querySelector("#shop-notice");
 const shopCoins = document.querySelector("#shop-coins");
+const restaurantPanel = document.querySelector("#restaurant-panel");
+const restaurantItems = document.querySelector("#restaurant-items");
+const restaurantNotice = document.querySelector("#restaurant-notice");
+const restaurantCoins = document.querySelector("#restaurant-coins");
 const homeProperties = document.querySelector("#home-properties");
 const homeNotice = document.querySelector("#home-notice");
 const thirdPersonToggle = document.querySelector("#third-person-toggle");
@@ -182,6 +188,24 @@ function renderHealthHudVisibility() {
   toggleHealthHudButton.setAttribute("aria-pressed", String(healthHudHidden));
 }
 
+function nearestAvailableHorse() {
+  if (state.vehicleId || state.mountId) return null;
+  let nearest = null;
+  let nearestDistance = 3.5;
+  for (const animal of state.roomAnimals) {
+    if (animal.model !== "horse" || animal.riderId) continue;
+    const distance = Math.hypot(
+      wrapPlanetX(animal.x - playerPosition.x),
+      animal.z - playerPosition.z,
+    );
+    if (distance < nearestDistance) {
+      nearest = animal;
+      nearestDistance = distance;
+    }
+  }
+  return nearest;
+}
+
 renderHealthHudVisibility();
 
 function createBrowserProfileId() {
@@ -251,7 +275,7 @@ const blockChoices = [
 const blockNames = new Map(blockChoices.map(([id, name]) => [id, name]));
 const blockChoiceById = new Map(blockChoices.map((choice) => [choice[0], choice]));
 function itemName(id) {
-  return blockNames.get(id) ?? MODEL_ITEM_BY_ID.get(id)?.name ?? id ?? "";
+  return blockNames.get(id) ?? MODEL_ITEM_BY_ID.get(id)?.name ?? RESTAURANT_MENU_BY_ID.get(id)?.name ?? id ?? "";
 }
 const HOTBAR_SIZE = 6;
 const hotbarItems = Array(HOTBAR_SIZE).fill(null);
@@ -686,6 +710,11 @@ const kenneyBlasterUrls = import.meta.glob("./assets/kenney-blaster-kit/*.glb", 
   import: "default",
   eager: true,
 });
+const foodPackAssetUrls = import.meta.glob("./assets/new/LowPolyFoodPack/Assets/*.glb", {
+  query: "?url",
+  import: "default",
+  eager: true,
+});
 const modAssetUrls = {
   ...import.meta.glob("./assets/mods/**/*.glb", {
     query: "?url",
@@ -729,6 +758,9 @@ for (const path of Object.keys(modAssetUrls)) {
         ? "mod-car-kit"
         : "mod-low-poly-plane";
   assetModelFiles.set(`${assetPrefix}/${fileName}`, path);
+}
+for (const path of Object.keys(foodPackAssetUrls)) {
+  assetModelFiles.set(`food-pack/${path.split("/").at(-1)}`, path);
 }
 const droppedItemMeshes = new Map();
 const marinePlantMeshes = [];
@@ -789,6 +821,7 @@ const state = {
   vehicles: [],
   vehicleId: null,
   vehicleType: null,
+  mountId: null,
   pendingHotbarItem: null,
   fishingCast: null,
   isFlying: false,
@@ -1265,7 +1298,7 @@ function loadPlacedAssetModel(assetKey) {
       const gltf = await placedAssetModelLoader.parseAsync(JSON.stringify(document), "");
       scene = gltf.scene;
     } else {
-      const url = modAssetUrls[sourcePath] ?? kenneyBlasterUrls[sourcePath];
+      const url = modAssetUrls[sourcePath] ?? kenneyBlasterUrls[sourcePath] ?? foodPackAssetUrls[sourcePath];
       if (typeof url !== "string") {
         throw new Error(`The model for ${assetKey} is unavailable.`);
       }
@@ -1875,7 +1908,7 @@ function renderWorld() {
     context.fillText(shop.name, 192, 51, 330);
     context.fillStyle = "#f5eee0";
     context.font = "bold 19px system-ui, sans-serif";
-    context.fillText("OPEN DAILY  ·  CITY MARKET", 192, 91);
+    context.fillText(shop.restaurant ? "FRESH MEALS  ·  ORDER HERE" : "OPEN DAILY  ·  CITY MARKET", 192, 91);
     const texture = new THREE.CanvasTexture(signCanvas);
     texture.colorSpace = THREE.SRGBColorSpace;
     const sign = new THREE.Group();
@@ -1931,6 +1964,49 @@ function renderWorld() {
     if (deltaX > PLANET_LONGITUDE_BLOCKS / 2) deltaX -= PLANET_LONGITUDE_BLOCKS;
     return Math.hypot(deltaX * longitudeScale, z - playerPosition.z) <= activeRenderDistance + 10;
   };
+  const awningCanvas = document.createElement("canvas");
+  awningCanvas.width = 64;
+  awningCanvas.height = 32;
+  const awningContext = awningCanvas.getContext("2d");
+  awningContext.fillStyle = "#f2dfbe";
+  awningContext.fillRect(0, 0, 64, 32);
+  awningContext.fillStyle = "#bd5147";
+  for (let x = 0; x < 64; x += 16) awningContext.fillRect(x, 0, 8, 32);
+  const awningTexture = new THREE.CanvasTexture(awningCanvas);
+  awningTexture.colorSpace = THREE.SRGBColorSpace;
+  const diningMaterials = [
+    new THREE.MeshLambertMaterial({ color: "#8a5838" }),
+    new THREE.MeshLambertMaterial({ color: "#b8875e" }),
+    new THREE.MeshLambertMaterial({ map: awningTexture, side: THREE.DoubleSide }),
+  ];
+  const diningGeometries = {
+    tabletop: new THREE.BoxGeometry(1.8, 0.14, 1.2),
+    tableLeg: new THREE.CylinderGeometry(0.07, 0.09, 0.76, 6),
+    bench: new THREE.BoxGeometry(1.35, 0.16, 0.42),
+    benchLeg: new THREE.BoxGeometry(0.12, 0.45, 0.12),
+    parasolPole: new THREE.CylinderGeometry(0.035, 0.05, 2.5, 6),
+    parasolTop: new THREE.ConeGeometry(1.12, 0.48, 8),
+  };
+  for (const restaurant of listCityShops(state.seed).filter(({ restaurant }) => restaurant)) {
+    if (!isCityFixtureNearby(restaurant.x, restaurant.z - 4)) continue;
+    const seating = new THREE.Group();
+    const addDiningPart = (geometry, material, x, y, z) => {
+      const part = new THREE.Mesh(geometry, material);
+      part.position.set(x, y, z);
+      seating.add(part);
+    };
+    addDiningPart(diningGeometries.tabletop, diningMaterials[0], 0, 0.86, 0);
+    for (const x of [-0.68, 0.68]) {
+      for (const z of [-0.42, 0.42]) addDiningPart(diningGeometries.tableLeg, diningMaterials[0], x, 0.43, z);
+    }
+    for (const z of [-1.05, 1.05]) {
+      addDiningPart(diningGeometries.bench, diningMaterials[1], 0, 0.5, z);
+      for (const x of [-0.52, 0.52]) addDiningPart(diningGeometries.benchLeg, diningMaterials[0], x, 0.23, z);
+    }
+    addDiningPart(diningGeometries.parasolPole, diningMaterials[0], 0, 2.05, 0);
+    addDiningPart(diningGeometries.parasolTop, diningMaterials[2], 0, 3.42, 0);
+    addCityFixture(seating, restaurant.x, terrainHeightAt(restaurant.x, restaurant.z, state.seed), restaurant.z - 4);
+  }
   const streetLampPole = new THREE.MeshLambertMaterial({ color: "#343d46" });
   const streetLampGlow = new THREE.MeshBasicMaterial({ color: "#ffe8a0" });
   const streetLampPoleGeometry = new THREE.CylinderGeometry(0.08, 0.13, 4.2, 7);
@@ -2393,7 +2469,7 @@ function updateAvatars(
         updateHeldAssetVisibility();
       }
       updateCharacterArmor();
-      selfAvatar.visible = thirdPersonView && state.connected && !state.vehicleId;
+      selfAvatar.visible = thirdPersonView && state.connected && (!state.vehicleId || entity.mountId);
       updateAvatarHealth(selfAvatar.userData.healthBar, entity.health);
       continue;
     }
@@ -2533,6 +2609,8 @@ function makeAnimal(entity) {
     addBox(head, [0.22, 0.18, 0.18], [0.16, -0.04, -0.18], accentMaterial);
     addBox(head, [0.18, 0.13, 0.13], [-0.16, -0.04, -0.18], accentMaterial);
     addBox(group, [0.96, 0.12, 0.12], [0, 0.24, 0.42], accentMaterial);
+    addBox(group, [0.64, 0.12, 0.48], [0, 1.17, 0.03], material("#563b2d"));
+    addBox(group, [0.72, 0.08, 0.3], [0, 1.09, 0.03], material("#98704b"));
   } else if (entity.model === "dragon") {
     addBox(head, [0.28, 0.24, 0.24], [0, 0.1, -0.08], accentMaterial);
     addBox(group, [0.2, 0.2, 0.2], [0, 0.76, 0.3], accentMaterial);
@@ -3083,7 +3161,11 @@ function updateVehicleHeadlights() {
 function updateVehicleButton() {
   const current = state.vehicles.find(({ id }) => id === state.vehicleId);
   const nearby = current ? null : nearestAvailableVehicle();
-  const inVehicle = Boolean(current);
+  const mountedHorse = state.roomAnimals.find(({ id }) => id === state.mountId);
+  const nearbyHorse = current || mountedHorse ? null : nearestAvailableHorse();
+  const atRestaurant = !current && !mountedHorse &&
+    isNearRestaurant(playerPosition.x, playerPosition.z, state.seed);
+  const inVehicle = Boolean(current || mountedHorse);
   const activeAircraft = current && isAircraftType(current.type) ? current : null;
   updateVehicleHeadlights();
   document.documentElement.classList.toggle("tank-aiming", state.vehicleType === "tank");
@@ -3101,12 +3183,18 @@ function updateVehicleButton() {
   placeButton.hidden = inVehicle;
   fishButton.hidden = inVehicle;
   fishMenuButton.hidden = inVehicle;
-  vehicleButton.hidden = !current && !nearby;
+  vehicleButton.hidden = !current && !nearby && !mountedHorse && !nearbyHorse && !atRestaurant;
   vehicleButton.textContent = current
     ? `Exit ${current.type}`
-    : nearby
-      ? `Enter ${nearby.type}`
-      : "Vehicle";
+    : mountedHorse
+      ? "Dismount horse"
+      : atRestaurant
+        ? "Order food"
+        : nearby
+          ? `Enter ${nearby.type}`
+          : nearbyHorse
+            ? "Ride horse"
+            : "Vehicle";
   vehicleButton.setAttribute("aria-label", vehicleButton.textContent);
   attackButton.textContent = state.vehicleType === "tank"
     ? "Fire"
@@ -3317,6 +3405,7 @@ function updateAnimals(current = []) {
       animalAvatars.set(entity.id, animal);
     }
     animal.userData.walking = Boolean(entity.walking);
+    animal.userData.ridden = Boolean(entity.riderId);
     const ground = terrainHeightAt(entity.x, entity.z, state.seed);
     const surfaceHeight = entity.y ?? ground + 1;
     const point = planetPointAt(entity.x, surfaceHeight, entity.z);
@@ -3352,7 +3441,7 @@ function animateAnimals(delta) {
 
 function updateLocalAvatar() {
   if (!selfAvatar) return;
-  selfAvatar.visible = thirdPersonView && state.connected && !state.vehicleId;
+  selfAvatar.visible = thirdPersonView && state.connected && (!state.vehicleId || state.mountId);
   if (!selfAvatar.visible) return;
   const surfaceHeight = playerPosition.y - 1.65;
   const point = planetPointAt(playerPosition.x, surfaceHeight, playerPosition.z);
@@ -3435,6 +3524,7 @@ function applySnapshot(message) {
   if (self?.name) state.playerName = self.name;
   const previousVehicleId = state.vehicleId;
   state.vehicleId = self?.vehicleId ?? null;
+  state.mountId = self?.mountId ?? null;
   state.vehicleType = state.vehicles.find(({ id }) => id === state.vehicleId)?.type ?? null;
   if (previousVehicleId !== state.vehicleId) {
     updateChunkWindow(true);
@@ -3475,7 +3565,9 @@ function updateCoins(coins) {
   state.coins = Number.isFinite(Number(coins)) ? Number(coins) : state.coins;
   coinHud.textContent = `Coins ${state.coins}`;
   shopCoins.textContent = `Coins ${state.coins}`;
+  restaurantCoins.textContent = `Coins ${state.coins}`;
   if (!shopPanel.hidden) renderShop();
+  if (!restaurantPanel.hidden) renderRestaurantMenu();
 }
 
 function renderPlayerProfile(profile) {
@@ -3809,6 +3901,7 @@ function updatePlayerName() {
 function showLobbyHome() {
   state.connected = false;
   moveKeys.clear();
+  restaurantPanel.hidden = true;
   lobbyRoom = null;
   multiplayerMenu.hidden = false;
   lobbyHome.hidden = false;
@@ -3900,6 +3993,7 @@ function connect() {
     } else if (message.type === "vehicle_result") {
       state.vehicleId = message.vehicleId;
       state.vehicleType = message.vehicleType ?? null;
+      state.mountId = null;
       if (state.vehicleId) {
         const vehicle = state.vehicles.find(({ id }) => id === state.vehicleId);
         if (vehicle) {
@@ -3916,6 +4010,23 @@ function connect() {
         desktopFlyButton.setAttribute("aria-pressed", "false");
         flyButton.textContent = "Fly";
         desktopFlyButton.textContent = "Fly";
+      }
+      updateVehicleButton();
+      notify(message.message);
+    } else if (message.type === "animal_mount_result") {
+      state.mountId = message.mountId ?? null;
+      if (message.position) {
+        playerPosition.set(message.position.x, message.position.y, message.position.z);
+        look.yaw = message.position.yaw ?? look.yaw;
+      } else if (state.mountId) {
+        const mount = state.roomAnimals.find(({ id }) => id === state.mountId);
+        if (mount) playerPosition.set(mount.x, mount.y + 2.65, mount.z);
+      }
+      if (state.mountId) {
+        if (state.isFlying) requestFlight(false);
+        state.isFlying = false;
+        state.flyVerticalDirection = 0;
+        flyToggle.checked = false;
       }
       updateVehicleButton();
       updateCamera();
@@ -3986,6 +4097,7 @@ function connect() {
       notify("Teleported to player.");
     } else if (message.type === "init") {
       state.connected = true;
+      restaurantPanel.hidden = true;
       multiplayerMenu.hidden = true;
       statusText.textContent = "Connected";
       state.id = message.id;
@@ -4074,6 +4186,11 @@ function connect() {
     } else if (message.type === "buy_result") {
       updateCoins(message.coins);
       shopNotice.textContent = message.message;
+      notify(message.message);
+    } else if (message.type === "food_result") {
+      if (Number.isFinite(Number(message.coins))) updateCoins(message.coins);
+      if (Number.isFinite(Number(message.health))) updateHealth(message.health);
+      restaurantNotice.textContent = message.message;
       notify(message.message);
     } else if (message.type === "xp") {
       updateXp(message.xp, message.level);
@@ -4221,6 +4338,11 @@ profileColorInput.addEventListener("input", () => {
   profileCharacterModel.style.setProperty("--character-color", profileColorInput.value);
 });
 function requestFlight(enabled) {
+  if (enabled && state.mountId) {
+    flyToggle.checked = false;
+    notify("Dismount your horse before taking off.");
+    return;
+  }
   if (enabled && state.vehicleType === "boat") {
     flyToggle.checked = false;
     notify("Leave your boat before taking off.");
@@ -4251,6 +4373,20 @@ function useVehicleOrPlace() {
   }
   if (state.vehicleId) {
     sendLobbyMessage({ type: "vehicle_exit" });
+    return;
+  }
+  if (state.mountId) {
+    sendLobbyMessage({ type: "animal_mount", animalId: state.mountId });
+    return;
+  }
+  if (isNearRestaurant(playerPosition.x, playerPosition.z, state.seed)) {
+    openRestaurantMenu();
+    return;
+  }
+  const horse = nearestAvailableHorse();
+  if (horse) {
+    if (state.isFlying) requestFlight(false);
+    sendLobbyMessage({ type: "animal_mount", animalId: horse.id });
     return;
   }
   const vehicle = nearestAvailableVehicle();
@@ -4375,9 +4511,17 @@ flyButton.addEventListener("click", () => requestFlight(!state.isFlying));
 desktopFlyButton.addEventListener("click", () => requestFlight(!state.isFlying));
 vehicleButton.addEventListener("click", () => {
   if (state.vehicleId) sendLobbyMessage({ type: "vehicle_exit" });
+  else if (state.mountId) sendLobbyMessage({ type: "animal_mount", animalId: state.mountId });
+  else if (isNearRestaurant(playerPosition.x, playerPosition.z, state.seed)) openRestaurantMenu();
   else {
-    const vehicle = nearestAvailableVehicle();
-    if (vehicle) sendLobbyMessage({ type: "vehicle_enter", vehicleId: vehicle.id });
+    const horse = nearestAvailableHorse();
+    if (horse) {
+      if (state.isFlying) requestFlight(false);
+      sendLobbyMessage({ type: "animal_mount", animalId: horse.id });
+    } else {
+      const vehicle = nearestAvailableVehicle();
+      if (vehicle) sendLobbyMessage({ type: "vehicle_enter", vehicleId: vehicle.id });
+    }
   }
 });
 thirdPersonToggle.addEventListener("change", () => {
@@ -4415,6 +4559,7 @@ document.querySelector("#close-world-map-button").addEventListener("click", () =
   worldMapPanel.hidden = true;
 });
 document.querySelector("#open-shop-button").addEventListener("click", () => {
+  restaurantPanel.hidden = true;
   shopPanel.hidden = false;
   gameMenu.hidden = true;
   gameMenuToggle.setAttribute("aria-expanded", "false");
@@ -4422,6 +4567,9 @@ document.querySelector("#open-shop-button").addEventListener("click", () => {
 });
 document.querySelector("#close-shop-button").addEventListener("click", () => {
   shopPanel.hidden = true;
+});
+document.querySelector("#close-restaurant-button").addEventListener("click", () => {
+  restaurantPanel.hidden = true;
 });
 document.querySelector("#go-home-button").addEventListener("click", () => {
   const home = state.properties.find(
@@ -4476,7 +4624,7 @@ function updateInventory(items) {
   const previousInventory = state.inventory;
   state.inventory = new Map(items);
   for (const [item, count] of state.inventory) {
-    if (count <= (previousInventory.get(item) ?? 0) || hotbarItems.includes(item)) continue;
+    if (RESTAURANT_MENU_BY_ID.has(item) || count <= (previousInventory.get(item) ?? 0) || hotbarItems.includes(item)) continue;
     const emptySlot = hotbarItems.indexOf(null);
     if (emptySlot < 0) break;
     hotbarItems[emptySlot] = item;
@@ -4543,14 +4691,26 @@ function renderInventory() {
       dropButton.textContent = "Drop 1";
       dropButton.setAttribute("aria-label", `Drop one ${itemName(id)}`);
       dropButton.addEventListener("click", () => sendInventoryAction({ type: "drop", item: id, count: 1 }));
-      const equipButton = document.createElement("button");
-      equipButton.className = "drop-item";
-      equipButton.type = "button";
-      equipButton.textContent = state.selected === id ? "Equipped" : "Equip";
-      equipButton.disabled = state.selected === id;
-      equipButton.setAttribute("aria-label", `Equip ${itemName(id)}`);
-      equipButton.addEventListener("click", () => equipInventoryItem(id));
-      const itemActions = [equipButton];
+      const isFood = RESTAURANT_MENU_BY_ID.has(id);
+      const itemActions = [];
+      if (isFood) {
+        const eatButton = document.createElement("button");
+        eatButton.className = "drop-item";
+        eatButton.type = "button";
+        eatButton.textContent = "Eat 1";
+        eatButton.setAttribute("aria-label", `Eat one ${itemName(id)}`);
+        eatButton.addEventListener("click", () => sendInventoryAction({ type: "eat_food", item: id }));
+        itemActions.push(eatButton);
+      } else {
+        const equipButton = document.createElement("button");
+        equipButton.className = "drop-item";
+        equipButton.type = "button";
+        equipButton.textContent = state.selected === id ? "Equipped" : "Equip";
+        equipButton.disabled = state.selected === id;
+        equipButton.setAttribute("aria-label", `Equip ${itemName(id)}`);
+        equipButton.addEventListener("click", () => equipInventoryItem(id));
+        itemActions.push(equipButton);
+      }
       if (FISH_TYPE_BY_ID.has(id)) {
         const sellButton = document.createElement("button");
         sellButton.className = "drop-item";
@@ -4844,7 +5004,7 @@ function requestModelPreview(model, previewImage) {
   void loading.then((image) => {
     if (!image) return;
     modelPreviewImages.set(model.id, image);
-    for (const imageElement of shopItems.querySelectorAll("img[data-model-id]")) {
+    for (const imageElement of document.querySelectorAll("img[data-model-id]")) {
       if (imageElement.dataset.modelId !== model.id) continue;
       imageElement.src = image;
       imageElement.closest(".shop-model-preview")?.classList.add("has-image");
@@ -4854,6 +5014,54 @@ function requestModelPreview(model, previewImage) {
   }).finally(() => {
     modelPreviewLoads.delete(model.id);
   });
+}
+
+function renderRestaurantMenu() {
+  restaurantItems.replaceChildren();
+  for (const meal of RESTAURANT_MENU) {
+    const row = document.createElement("div");
+    row.className = "restaurant-item";
+    const preview = document.createElement("div");
+    preview.className = "shop-model-preview restaurant-preview";
+    preview.style.setProperty("--preview-color", MODEL_ITEM_BY_ID.get(`dining_${meal.assetKey.split("/").at(-1).replace(/\.glb$/, "")}`)?.color ?? "#b77943");
+    const fallback = document.createElement("span");
+    fallback.textContent = meal.icon;
+    const image = document.createElement("img");
+    image.alt = `${meal.name} dish preview`;
+    image.dataset.modelId = MODEL_ITEM_BY_ID.get(`dining_${meal.assetKey.split("/").at(-1).replace(/\.glb$/, "")}`)?.id ?? "";
+    preview.append(fallback, image);
+    const details = document.createElement("div");
+    details.className = "shop-item-details";
+    const name = document.createElement("strong");
+    name.textContent = meal.name;
+    const description = document.createElement("span");
+    description.textContent = `${meal.description} Restores up to ${meal.healing} health.`;
+    details.append(name, description);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = state.mode === "design" ? "Order free" : `Order · ${meal.price}`;
+    button.disabled = state.mode !== "design" && state.coins < meal.price;
+    button.addEventListener("click", () => {
+      restaurantNotice.textContent = `Ordering ${meal.name}…`;
+      sendInventoryAction({ type: "buy_food", item: meal.id });
+    });
+    row.append(preview, details, button);
+    restaurantItems.append(row);
+    const model = MODEL_ITEM_BY_ID.get(image.dataset.modelId);
+    if (model) requestModelPreview(model, image);
+  }
+}
+
+function openRestaurantMenu() {
+  if (!isNearRestaurant(playerPosition.x, playerPosition.z, state.seed)) {
+    notify("Visit the Sunset Diner or Parkside Cafe to order food.");
+    return;
+  }
+  shopPanel.hidden = true;
+  gameMenu.hidden = true;
+  restaurantPanel.hidden = false;
+  restaurantNotice.textContent = "Order at the counter. Meals are added to your inventory.";
+  renderRestaurantMenu();
 }
 
 function renderShop() {
@@ -5381,6 +5589,10 @@ document.querySelector("#help-toggle").addEventListener("click", () => {
 
 window.addEventListener("keydown", (event) => {
   if (event.target instanceof HTMLInputElement) return;
+  if (event.code === "Escape" && !restaurantPanel.hidden) {
+    restaurantPanel.hidden = true;
+    return;
+  }
   if (event.code === "Escape" && !inventoryPanel.hidden) {
     toggleInventory(false);
     return;
@@ -5396,7 +5608,7 @@ window.addEventListener("keydown", (event) => {
       state.flyVerticalDirection = 1;
     } else if (state.isFlying || isAircraftType(state.vehicleType)) state.flyVerticalDirection = 1;
     else if (state.isSwimming) state.swimDirection = 1;
-    else if (!state.vehicleId && !event.repeat) jump();
+    else if (!state.vehicleId && !state.mountId && !event.repeat) jump();
     return;
   }
   if (event.code === "PageUp" && (state.isFlying || isAircraftType(state.vehicleType))) {
@@ -5628,6 +5840,7 @@ function waterSurfaceEyeAt(x, z) {
 }
 
 function jump() {
+  if (state.vehicleId || state.mountId) return;
   const groundY = groundEyeAt(playerPosition.x, playerPosition.z, playerPosition.y);
   if (playerPosition.y <= groundY + 0.02) {
     playerPosition.y = groundY;
@@ -5806,7 +6019,7 @@ function pollGamepad(delta) {
   const jumpWasPressed = previousGamepadButtons.has(0);
   if (jumpButtonPressed && !jumpWasPressed && isAircraftType(state.vehicleType) && !state.isFlying) {
     requestFlight(true);
-  } else if (jumpButtonPressed && !jumpWasPressed && !state.isFlying && !state.vehicleId) {
+  } else if (jumpButtonPressed && !jumpWasPressed && !state.isFlying && !state.vehicleId && !state.mountId) {
     jump();
   }
   if (jumpButtonPressed) previousGamepadButtons.add(0);
@@ -5852,7 +6065,7 @@ window.addEventListener("gamepaddisconnected", (event) => {
 });
 
 function updateMovement(delta) {
-  if (!state.connected || !gameMenu.hidden || !worldMapPanel.hidden || !shopPanel.hidden || boatWorkshopDialog.open) return;
+  if (!state.connected || !gameMenu.hidden || !worldMapPanel.hidden || !shopPanel.hidden || !restaurantPanel.hidden || boatWorkshopDialog.open) return;
   if (playerOccupiesSolidBlock(playerPosition.x, playerPosition.z, playerPosition.y)) {
     let safeEyeY = groundEyeAt(playerPosition.x, playerPosition.z, playerPosition.y);
     while (
@@ -5879,12 +6092,15 @@ function updateMovement(delta) {
   }
 
   const activeVehicle = state.vehicles.find(({ id }) => id === state.vehicleId);
+  const mountedHorse = state.roomAnimals.find(({ id }) => id === state.mountId);
   if (activeVehicle && strafeInput !== 0) {
     look.yaw -= strafeInput * delta * (isAircraftType(activeVehicle.type) ? 1.6 : 2.1);
     strafeInput = 0;
   }
   const speed = (
-    activeVehicle?.type === "jet"
+    mountedHorse
+      ? 8.5
+      : activeVehicle?.type === "jet"
       ? 24
       : activeVehicle?.type === "plane"
         ? 16
@@ -5907,7 +6123,34 @@ function updateMovement(delta) {
   );
   const nextX = nextPosition.x;
   const nextZ = nextPosition.z;
-  if (activeVehicle?.type === "boat") {
+  if (mountedHorse) {
+    const currentGround = terrainHeightAt(playerPosition.x, playerPosition.z, state.seed);
+    const nextGround = terrainHeightAt(nextX, nextZ, state.seed);
+    if (
+      magnitude > 0.01 &&
+      nextGround >= 0 &&
+      nextGround <= currentGround + 1.05 &&
+      !hasWallAt(nextX, nextZ, nextGround + 3.65)
+    ) {
+      playerPosition.x = nextX;
+      playerPosition.z = nextZ;
+      look.yaw = nextPosition.yaw;
+      mountedHorse.x = nextX;
+      mountedHorse.z = nextZ;
+    }
+    playerPosition.y = terrainHeightAt(playerPosition.x, playerPosition.z, state.seed) + 3.65;
+    mountedHorse.y = terrainHeightAt(mountedHorse.x, mountedHorse.z, state.seed) + 1;
+    mountedHorse.yaw = look.yaw;
+    mountedHorse.walking = magnitude > 0.01;
+    const horseMesh = animalAvatars.get(mountedHorse.id);
+    if (horseMesh) {
+      const point = planetPointAt(mountedHorse.x, mountedHorse.y, mountedHorse.z);
+      horseMesh.position.set(point.x, point.y, point.z);
+      horseMesh.quaternion.copy(surfaceQuaternionAt(mountedHorse.x, mountedHorse.z, mountedHorse.yaw));
+      horseMesh.userData.walking = mountedHorse.walking;
+    }
+    state.jumpVelocity = 0;
+  } else if (activeVehicle?.type === "boat") {
     if (
       terrainHeightAt(nextX, nextZ, state.seed) < 0 &&
       !hasWallAt(nextX, nextZ, activeVehicle.y + 2.65)
@@ -6010,12 +6253,16 @@ function updateMovement(delta) {
 
   const waterSurfaceEyeY = waterSurfaceEyeAt(playerPosition.x, playerPosition.z);
   const waterFloorEyeY = terrainHeightAt(playerPosition.x, playerPosition.z, state.seed) + 2.65;
-  const swimming = !activeVehicle && waterSurfaceEyeY !== null &&
+  const swimming = !activeVehicle && !mountedHorse && waterSurfaceEyeY !== null &&
     playerPosition.y >= waterFloorEyeY &&
     playerPosition.y <= waterSurfaceEyeY + 0.3;
   state.isSwimming = swimming;
   waterControls.hidden = !swimming;
-  if (activeVehicle?.type === "boat") {
+  if (mountedHorse) {
+    state.isSwimming = false;
+    state.swimDirection = 0;
+    waterControls.hidden = true;
+  } else if (activeVehicle?.type === "boat") {
     state.isSwimming = false;
     state.swimDirection = 0;
     waterControls.hidden = true;

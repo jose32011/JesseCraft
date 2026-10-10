@@ -5,3 +5,6 @@ dist/
 .env
 .env.*
 !.env.example
+androidApp/.gradle/
+androidApp/local.properties
+androidApp/app/build/
