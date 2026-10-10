@@ -226,7 +226,41 @@ test("players can buy restaurant food and eat it to restore health", async () =>
     const restaurant = listCityShops(room.seed).find(({ restaurant }) => restaurant);
     assert.ok(restaurant);
     assert.equal(isNearRestaurant(restaurant.x, restaurant.z, room.seed), true);
+    const serverBot = room.bots.get(`${restaurant.id}-bot-server`);
+    assert.ok(serverBot);
+    player.x = serverBot.x;
+    player.z = serverBot.z;
+    player.y = terrainHeightAt(player.x, player.z, room.seed) + 2.65;
+    const shopDoor = { x: restaurant.doorX, y: restaurant.doorY, z: restaurant.doorZ };
+    const openedShopDoor = nextMessage(connection.socket, (message) => message.type === "door_result");
+    connection.socket.send(JSON.stringify({ type: "door_toggle", position: shopDoor }));
+    assert.equal((await openedShopDoor).open, true);
+    assert.equal(room.openDoors.has(`${shopDoor.x},1,${shopDoor.z}`), true);
+    const dialogue = nextMessage(connection.socket, (message) => message.type === "restaurant_dialogue");
+    connection.socket.send(JSON.stringify({
+      type: "restaurant_talk",
+      botId: serverBot.id,
+      shopId: restaurant.id,
+    }));
+    assert.equal((await dialogue).botName, serverBot.name);
 
+    const seated = nextMessage(connection.socket, (message) => message.type === "restaurant_seat_result");
+    connection.socket.send(JSON.stringify({ type: "restaurant_seat", shopId: restaurant.id }));
+    assert.equal((await seated).seated, true);
+    assert.equal(player.sittingAt, restaurant.id);
+    const seatedPosition = { x: player.x, z: player.z };
+    connection.socket.send(JSON.stringify({
+      type: "move",
+      position: { x: player.x + 5, y: player.y, z: player.z, yaw: player.yaw },
+    }));
+    assert.deepEqual({ x: player.x, z: player.z }, seatedPosition);
+    const stood = nextMessage(connection.socket, (message) => message.type === "restaurant_seat_result");
+    connection.socket.send(JSON.stringify({ type: "restaurant_seat" }));
+    assert.equal((await stood).seated, false);
+    assert.equal(player.sittingAt, null);
+
+    player.x = 0;
+    player.z = 0;
     const tooFar = nextMessage(connection.socket, (message) => message.type === "error");
     connection.socket.send(JSON.stringify({ type: "buy_food", item: "meal_sushi_bowl" }));
     assert.match((await tooFar).message, /diner|cafe/i);
@@ -886,6 +920,10 @@ test("planes can fire their guns at ground enemies", async () => {
     const started = nextMessage(connection.socket, (message) => message.type === "init");
     connection.socket.send(JSON.stringify({ type: "start_room" }));
     const init = await started;
+    assert.deepEqual(
+      init.monsters.filter(({ id }) => ["monster-crab", "monster-slime", "monster-wisp"].includes(id)).map(({ id, level }) => [id, level]),
+      [["monster-crab", 1], ["monster-slime", 2], ["monster-wisp", 3]],
+    );
     const room = server.rooms.get(roomId);
     const player = server.players.get(init.id);
     const plane = room.vehicles.get("airport-plane");
@@ -956,6 +994,10 @@ test("monster kills award XP and coins that buy placeable models at the village 
     const started = nextMessage(connection.socket, (message) => message.type === "init");
     connection.socket.send(JSON.stringify({ type: "start_room" }));
     const init = await started;
+    assert.deepEqual(
+      init.monsters.filter(({ id }) => ["monster-crab", "monster-slime", "monster-wisp"].includes(id)).map(({ id, level }) => [id, level]),
+      [["monster-crab", 1], ["monster-slime", 2], ["monster-wisp", 3]],
+    );
     const room = server.rooms.get(roomId);
     const player = server.players.get(init.id);
     assert.equal(init.coins, 100);
@@ -977,9 +1019,24 @@ test("monster kills award XP and coins that buy placeable models at the village 
       coins: 125,
       xpGained: 50,
       coinsGained: 25,
+      monsterLevel: 1,
     });
     assert.equal(player.xp, 50);
     assert.equal(player.coins, 125);
+
+    crab.level = 3;
+    crab.health = 20;
+    crab.respawnAt = 0;
+    player.lastAttackAt = 0;
+    const highLevelAttackResult = nextMessage(connection.socket, (message) => message.type === "attack_result");
+    connection.socket.send(JSON.stringify({ type: "attack", targetId: crab.id }));
+    const highLevelAttack = await highLevelAttackResult;
+    assert.equal(highLevelAttack.reward.xpGained, 150);
+    assert.equal(highLevelAttack.reward.coinsGained, 75);
+    assert.equal(highLevelAttack.reward.monsterLevel, 3);
+    assert.equal(highLevelAttack.reward.xp, 200);
+    assert.equal(highLevelAttack.reward.level, 1);
+    assert.equal(player.coins, 200);
 
     player.x = 40;
     player.z = 40;
@@ -989,7 +1046,7 @@ test("monster kills award XP and coins that buy placeable models at the village 
     const inventory = nextMessage(connection.socket, (message) => message.type === "inventory");
     connection.socket.send(JSON.stringify({ type: "buy_model", item: model.id }));
     assert.equal((await buyResult).item, model.id);
-    assert.equal((await balance).coins, 125 - model.price);
+    assert.equal((await balance).coins, 200 - model.price);
     assert.equal((await inventory).items.find(([item]) => item === model.id)?.[1], 1);
 
     const position = { x: -30, y: 100, z: -30 };
@@ -1101,7 +1158,7 @@ test("generates seeded terrain and shares chunk edits with joining players", asy
     assert.equal(initial.inventory.length, BLOCK_TYPES.size + MODEL_CATALOG.length);
     assert.ok(initial.inventory.every(([, count]) => count === 64));
     assert.equal(initial.coins, 20_000);
-    assert.equal(initial.bots.length, 3);
+    assert.equal(initial.bots.length, 9);
     assert.ok(initial.vehicles.some((vehicle) => vehicle.id === "airport-plane"));
     assert.equal(initial.vehicles.filter(({ type }) => type === "jet").length, 3);
     assert.ok(initial.vehicles.filter(({ type }) => type === "tank").length >= 8);
@@ -1481,7 +1538,7 @@ test("rejoins an active world with player state after a disconnect", async () =>
   }
 });
 
-test("crafting awards XP levels and restores them with saved worlds", async () => {
+test("crafting XP follows progression thresholds and restores with saved worlds", async () => {
   const saveDirectory = mkdtempSync(join(tmpdir(), "voxland-saves-xp-"));
   const sockets = [];
   let server = createGameServer({ host: "127.0.0.1", port: 0, seed: 4321, saveDirectory });
@@ -1509,7 +1566,7 @@ test("crafting awards XP levels and restores them with saved worlds", async () =
     connection.socket.send(JSON.stringify({ type: "craft", recipe: "planks" }));
     const xp = await xpMessage;
     assert.equal(xp.xp, 2);
-    assert.equal(xp.level, 2);
+    assert.equal(xp.level, 0);
     assert.equal((await inventoryMessage).items.find(([item]) => item === "oak_planks")[1], 68);
 
     const saveMessage = nextMessage(connection.socket, (message) => message.type === "save_result");
@@ -1532,7 +1589,7 @@ test("crafting awards XP levels and restores them with saved worlds", async () =
     restoredConnection.socket.send(JSON.stringify({ type: "join_room", roomId }));
     const restored = await restoredJoin;
     assert.equal(restored.xp, 2);
-    assert.equal(restored.level, 2);
+    assert.equal(restored.level, 0);
   } finally {
     for (const socket of sockets) socket.terminate();
     await server.close();

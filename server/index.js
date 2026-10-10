@@ -13,6 +13,7 @@ import {
   canEditBlock,
   CHUNK_SIZE,
   CITY_BEACH_OUTER_RADIUS,
+  CITY_BLOCK_SIZE,
   CITY_POLICE_STATION,
   CITY_RADIUS,
   FISH_TYPES,
@@ -28,6 +29,7 @@ import {
   cityPropertyNear,
   isNearRestaurant,
   listCityProperties,
+  listCityShops,
   PLANET_MAX_X,
   PLANET_MAX_Z,
   PLANET_LATITUDE_BLOCKS,
@@ -82,8 +84,8 @@ const PLAYER_WEAPON_DAMAGE = new Map([
 const MONSTER_KILL_XP = 50;
 const MONSTER_KILL_COINS = 25;
 const XP_PER_LEVEL = 100;
+const MONSTER_BASE_ATTACK_DAMAGE = 8;
 const MONSTER_ATTACK_RANGE = 2;
-const MONSTER_ATTACK_DAMAGE = 8;
 const MONSTER_ATTACK_COOLDOWN_MS = 1400;
 const MONSTER_RESPAWN_MS = 8000;
 const MAX_PLAYER_MAGIC_POTION_STACK = 3;
@@ -119,6 +121,27 @@ const BOAT_SIZES = new Map([
 ]);
 const BOAT_HULL_COLORS = new Set(["#765238", "#a16c42", "#4b6173", "#7c3f3f", "#4d6949"]);
 const BOAT_SAIL_COLORS = new Set(["#eee2c6", "#b94a48", "#426c83", "#d4a84f", "#465348"]);
+
+function levelForExperience(xp) {
+  return Math.floor((Math.sqrt(1 + 8 * Math.max(0, xp) / XP_PER_LEVEL) - 1) / 2);
+}
+
+function awardMonsterKill(player, monster) {
+  const monsterLevel = Math.max(1, Math.floor(monster.level ?? 1));
+  const xpGained = MONSTER_KILL_XP * monsterLevel;
+  const coinsGained = MONSTER_KILL_COINS * monsterLevel;
+  player.xp = (player.xp ?? 0) + xpGained;
+  player.level = levelForExperience(player.xp);
+  player.coins = (player.coins ?? 0) + coinsGained;
+  return {
+    xp: player.xp,
+    level: player.level,
+    coins: player.coins,
+    xpGained,
+    coinsGained,
+    monsterLevel,
+  };
+}
 
 function normalizeBoatDesign(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) return null;
@@ -187,12 +210,40 @@ function writeJson(socket, message) {
   if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
 }
 
-function createBots() {
-  return new Map([
+function createBots(seed = 1) {
+  const bots = new Map([
     ["bot-moss", { id: "bot-moss", name: "Moss", x: -4, z: -2, homeX: -4, homeZ: -2, yaw: 0, color: "#76b86d", targetX: -4, targetZ: -2, behavior: "idle", walking: false, nextDecisionAt: 0, stuckTicks: 0 }],
     ["bot-pebble", { id: "bot-pebble", name: "Pebble", x: 1, z: -5, homeX: 1, homeZ: -5, yaw: 0, color: "#d3a36e", targetX: 1, targetZ: -5, behavior: "idle", walking: false, nextDecisionAt: 0, stuckTicks: 0 }],
     ["bot-fern", { id: "bot-fern", name: "Fern", x: 8, z: 1, homeX: 8, homeZ: 1, yaw: 0, color: "#8f8ed3", targetX: 8, targetZ: 1, behavior: "idle", walking: false, nextDecisionAt: 0, stuckTicks: 0 }],
   ]);
+  const restaurantNames = ["Mira", "Ollie", "Rae", "Pip", "Jules", "Nori"];
+  const restaurantColors = ["#a96f48", "#7d9b75", "#b56f62", "#7485a2", "#b68a4f", "#9479a8"];
+  for (const shop of listCityShops(seed).filter(({ foodShop }) => foodShop)) {
+    for (const [seat, role] of [[0, "server"], [1, "diner"]]) {
+      const id = `${shop.id}-bot-${role}`;
+      const x = shop.x + (seat === 0 ? -3 : 3);
+      const z = shop.interiorZ + (seat === 0 ? -3 : -1);
+      bots.set(id, {
+        id,
+        name: shop.bakery && role === "server" ? "Baker Bea" : restaurantNames[(Math.abs(shop.x) / CITY_BLOCK_SIZE + seat) % restaurantNames.length],
+        x,
+        z,
+        homeX: x,
+        homeZ: z,
+        yaw: seat === 0 ? Math.PI / 2 : -Math.PI / 2,
+        color: restaurantColors[(Math.abs(shop.x) / CITY_BLOCK_SIZE + seat) % restaurantColors.length],
+        targetX: x,
+        targetZ: z,
+        behavior: role === "diner" ? "eating" : "serving",
+        walking: false,
+        seated: role === "diner",
+        eating: role === "diner",
+        restaurantShopId: shop.id,
+        restaurantRole: role,
+      });
+    }
+  }
+  return bots;
 }
 
 function createVehicles(seed = 1) {
@@ -422,40 +473,40 @@ function serializeAnimals(room) {
 function createMonsters() {
   return new Map([
     ["monster-crab", {
-      id: "monster-crab", name: "Dune Crab", species: "crab", x: 0, z: 126, yaw: 0, color: "#e58154",
+      id: "monster-crab", name: "Dune Crab", species: "crab", level: 1, damage: 8, x: 0, z: 126, yaw: 0, color: "#e58154",
       homeX: 0, homeZ: 126, targetX: 0, targetZ: 126, health: 60, maxHealth: 60, lastAttackAt: 0, respawnAt: 0, boss: false, active: true,
     }],
     ["monster-slime", {
-      id: "monster-slime", name: "Moss Slime", species: "slime", x: 4, z: 210, yaw: 0, color: "#79c66f",
-      homeX: 4, homeZ: 210, targetX: 4, targetZ: 210, health: 60, maxHealth: 60, lastAttackAt: 0, respawnAt: 0, boss: false, active: true,
+      id: "monster-slime", name: "Moss Slime", species: "slime", level: 2, damage: 10, x: 4, z: 210, yaw: 0, color: "#79c66f",
+      homeX: 4, homeZ: 210, targetX: 4, targetZ: 210, health: 70, maxHealth: 70, lastAttackAt: 0, respawnAt: 0, boss: false, active: true,
     }],
     ["monster-wisp", {
-      id: "monster-wisp", name: "Highland Wisp", species: "wisp", x: 44, z: 284, yaw: 0, color: "#76cbd1",
-      homeX: 44, homeZ: 284, targetX: 44, targetZ: 284, health: 60, maxHealth: 60, lastAttackAt: 0, respawnAt: 0, boss: false, active: true,
+      id: "monster-wisp", name: "Highland Wisp", species: "wisp", level: 3, damage: 12, x: 44, z: 284, yaw: 0, color: "#76cbd1",
+      homeX: 44, homeZ: 284, targetX: 44, targetZ: 284, health: 90, maxHealth: 90, lastAttackAt: 0, respawnAt: 0, boss: false, active: true,
     }],
     ["monster-skeleton", {
-      id: "monster-skeleton", name: "Crypt Skeleton", species: "skeleton", x: -150, z: 112, yaw: 0, color: "#d0dae8",
-      homeX: -150, homeZ: 112, targetX: -150, targetZ: 112, health: 90, maxHealth: 90, lastAttackAt: 0, respawnAt: 0, boss: false, active: false,
+      id: "monster-skeleton", name: "Crypt Skeleton", species: "skeleton", level: 4, damage: 14, x: -150, z: 112, yaw: 0, color: "#d0dae8",
+      homeX: -150, homeZ: 112, targetX: -150, targetZ: 112, health: 120, maxHealth: 120, lastAttackAt: 0, respawnAt: 0, boss: false, active: false,
     }],
     ["monster-warden", {
-      id: "monster-warden", name: "Mine Warden", species: "warden", x: -120, z: -171, yaw: 0, color: "#a9e0b3",
-      homeX: -120, homeZ: -171, targetX: -120, targetZ: -171, health: 120, maxHealth: 120, lastAttackAt: 0, respawnAt: 0, boss: false, active: false,
+      id: "monster-warden", name: "Mine Warden", species: "warden", level: 6, damage: 18, x: -120, z: -171, yaw: 0, color: "#a9e0b3",
+      homeX: -120, homeZ: -171, targetX: -120, targetZ: -171, health: 180, maxHealth: 180, lastAttackAt: 0, respawnAt: 0, boss: false, active: false,
     }],
     ["boss-ashen-king", {
-      id: "boss-ashen-king", name: "Ashen King", species: "boss", x: 160, z: -120, yaw: 0, color: "#ffb166",
-      homeX: 160, homeZ: -120, targetX: 160, targetZ: -120, health: 220, maxHealth: 220, lastAttackAt: 0, respawnAt: 0, boss: true, active: false,
+      id: "boss-ashen-king", name: "Ashen King", species: "boss", level: 10, damage: 26, x: 160, z: -120, yaw: 0, color: "#ffb166",
+      homeX: 160, homeZ: -120, targetX: 160, targetZ: -120, health: 320, maxHealth: 320, lastAttackAt: 0, respawnAt: 0, boss: true, active: false,
     }],
     ["monster-spider", {
-      id: "monster-spider", name: "Thicket Spider", species: "spider", x: 12, z: 222, yaw: 0, color: "#a56e52",
-      homeX: 12, homeZ: 222, targetX: 12, targetZ: 222, health: 75, maxHealth: 75, lastAttackAt: 0, respawnAt: 0, boss: false, active: false,
+      id: "monster-spider", name: "Thicket Spider", species: "spider", level: 3, damage: 12, x: 12, z: 222, yaw: 0, color: "#a56e52",
+      homeX: 12, homeZ: 222, targetX: 12, targetZ: 222, health: 90, maxHealth: 90, lastAttackAt: 0, respawnAt: 0, boss: false, active: false,
     }],
     ["monster-golem", {
-      id: "monster-golem", name: "Ashvault Golem", species: "golem", x: 523, z: 35, yaw: 0, color: "#92776b",
-      homeX: 523, homeZ: 35, targetX: 523, targetZ: 35, health: 160, maxHealth: 160, lastAttackAt: 0, respawnAt: 0, boss: false, active: false,
+      id: "monster-golem", name: "Ashvault Golem", species: "golem", level: 7, damage: 20, x: 523, z: 35, yaw: 0, color: "#92776b",
+      homeX: 523, homeZ: 35, targetX: 523, targetZ: 35, health: 220, maxHealth: 220, lastAttackAt: 0, respawnAt: 0, boss: false, active: false,
     }],
     ["monster-phantom", {
-      id: "monster-phantom", name: "Dragonpeak Phantom", species: "phantom", x: -180, z: 250, yaw: 0, color: "#8872d6",
-      homeX: -180, homeZ: 250, targetX: -180, targetZ: 250, health: 110, maxHealth: 110, lastAttackAt: 0, respawnAt: 0, boss: false, active: false,
+      id: "monster-phantom", name: "Dragonpeak Phantom", species: "phantom", level: 8, damage: 22, x: -180, z: 250, yaw: 0, color: "#8872d6",
+      homeX: -180, homeZ: 250, targetX: -180, targetZ: 250, health: 250, maxHealth: 250, lastAttackAt: 0, respawnAt: 0, boss: false, active: false,
     }],
   ]);
 }
@@ -463,10 +514,11 @@ function createMonsters() {
 function serializeMonsters(room) {
   return [...room.monsters.values()]
     .filter((monster) => monster.health > 0 && monster.active !== false)
-    .map(({ id, name, species, x, z, yaw, color, health, maxHealth, boss }) => ({
+    .map(({ id, name, species, level, x, z, yaw, color, health, maxHealth, boss }) => ({
       id,
       name,
       species,
+      level,
       x,
       z,
       yaw,
@@ -677,6 +729,7 @@ function releaseVehicle(room, player) {
   }
   player.vehicleId = null;
   player.mountId = null;
+  player.sittingAt = null;
 }
 
 function restoreSavedRoom(saved) {
@@ -724,7 +777,7 @@ function restoreSavedRoom(saved) {
         : [],
     ),
     savedPlayers,
-    bots: createBots(),
+    bots: createBots(Number.isSafeInteger(saved.seed) ? saved.seed : 1),
     animals: createAnimals(Number.isSafeInteger(saved.seed) ? saved.seed : 1),
     monsters: createMonsters(),
     autosaveEnabled: saved.autosaveEnabled !== false,
@@ -956,7 +1009,7 @@ export function createGameServer({
   const profiles = new Map();
   const rooms = new Map(pool ? [] : loadSavedRooms(saveDirectory).map((room) => [room.id, room]));
   let databaseInitialized = false;
-  const bots = createBots();
+  const bots = createBots(seed);
   const ownsHttpServer = !sharedHttpServer;
   const httpServer = sharedHttpServer ?? createServer(staticResponse);
   const webSocketServer = new WebSocketServer({
@@ -1020,7 +1073,7 @@ export function createGameServer({
 
   const roomSnapshot = (room) => ({
     type: "snapshot",
-    players: [...room.members].map((id) => players.get(id)).filter(Boolean).map(({ id, name, x, y, z, yaw, color, health, vehicleId, mountId }) => ({
+    players: [...room.members].map((id) => players.get(id)).filter(Boolean).map(({ id, name, x, y, z, yaw, color, health, vehicleId, mountId, sittingAt }) => ({
       id,
       name,
       x,
@@ -1031,6 +1084,7 @@ export function createGameServer({
       health,
       vehicleId: vehicleId ?? null,
       mountId: mountId ?? null,
+      sittingAt: sittingAt ?? null,
     })),
     bots: [...room.bots.values()],
     animals: serializeAnimals(room),
@@ -1093,7 +1147,7 @@ export function createGameServer({
     mode: room.mode,
     autosaveEnabled: room.autosaveEnabled !== false,
     chunkSize: CHUNK_SIZE,
-    players: [...room.members].map((id) => players.get(id)).filter(Boolean).map(({ id, name, x, y, z, yaw, color, health, vehicleId, mountId }) => ({
+    players: [...room.members].map((id) => players.get(id)).filter(Boolean).map(({ id, name, x, y, z, yaw, color, health, vehicleId, mountId, sittingAt }) => ({
       id,
       name,
       x,
@@ -1104,6 +1158,7 @@ export function createGameServer({
       health,
       vehicleId: vehicleId ?? null,
       mountId: mountId ?? null,
+      sittingAt: sittingAt ?? null,
     })),
     bots: [...room.bots.values()],
     animals: serializeAnimals(room),
@@ -1152,6 +1207,10 @@ export function createGameServer({
     for (const room of rooms.values()) {
       if (!room.started) continue;
       for (const bot of room.bots.values()) {
+        if (bot.restaurantShopId) {
+          bot.walking = false;
+          continue;
+        }
         if (now >= bot.nextDecisionAt) {
           const nearby = findNearbyPlayer(room, players, bot, 10);
           if (nearby) {
@@ -1312,7 +1371,7 @@ export function createGameServer({
 
         if (closestPlayer && closestDistance <= MONSTER_ATTACK_RANGE) {
           if (now - monster.lastAttackAt >= MONSTER_ATTACK_COOLDOWN_MS) {
-            closestPlayer.health = Math.max(0, closestPlayer.health - MONSTER_ATTACK_DAMAGE);
+            closestPlayer.health = Math.max(0, closestPlayer.health - (monster.damage ?? MONSTER_BASE_ATTACK_DAMAGE));
             monster.lastAttackAt = now;
             changed = true;
           }
@@ -1481,7 +1540,7 @@ export function createGameServer({
           player.z = savedPlayer.z;
           player.yaw = savedPlayer.yaw;
           player.xp = Number.isFinite(Number(savedPlayer.xp)) ? Number(savedPlayer.xp) : 0;
-          player.level = Number.isFinite(Number(savedPlayer.level)) ? Number(savedPlayer.level) : 0;
+          player.level = levelForExperience(player.xp);
           player.coins = room.mode === "design"
             ? 20_000
             : Number.isFinite(Number(savedPlayer.coins)) ? Number(savedPlayer.coins) : 0;
@@ -1874,16 +1933,7 @@ export function createGameServer({
           if (monsterTarget && target.health === 0) {
             target.respawnAt = now + MONSTER_RESPAWN_MS;
             await incrementProfileStat(player, "creaturesDefeated", 1, profiles, pool);
-            player.xp = (player.xp ?? 0) + MONSTER_KILL_XP;
-            player.level = Math.max(player.level ?? 0, Math.floor(player.xp / XP_PER_LEVEL));
-            player.coins = (player.coins ?? 0) + MONSTER_KILL_COINS;
-            reward = {
-              xp: player.xp,
-              level: player.level,
-              coins: player.coins,
-              xpGained: MONSTER_KILL_XP,
-              coinsGained: MONSTER_KILL_COINS,
-            };
+            reward = awardMonsterKill(player, monsterTarget);
           }
           writeJson(socket, {
             type: "attack_result",
@@ -2150,10 +2200,7 @@ export function createGameServer({
         if (monsterTarget && target.health === 0) {
           target.respawnAt = now + MONSTER_RESPAWN_MS;
           await incrementProfileStat(player, "creaturesDefeated", 1, profiles, pool);
-          player.xp = (player.xp ?? 0) + MONSTER_KILL_XP;
-          player.level = Math.max(player.level ?? 0, Math.floor(player.xp / XP_PER_LEVEL));
-          player.coins = (player.coins ?? 0) + MONSTER_KILL_COINS;
-          reward = { xp: player.xp, level: player.level, coins: player.coins, xpGained: MONSTER_KILL_XP, coinsGained: MONSTER_KILL_COINS };
+          reward = awardMonsterKill(player, monsterTarget);
         }
         writeJson(socket, {
           type: "attack_result",
@@ -2260,7 +2307,7 @@ export function createGameServer({
           return;
         }
         if (!isNearRestaurant(player.x, player.z, room.seed)) {
-          writeJson(socket, { type: "error", message: "Visit the Sunset Diner or Parkside Cafe to order food." });
+          writeJson(socket, { type: "error", message: "Visit the Sunset Diner, Parkside Cafe, or Glass City Bakery to order food." });
           return;
         }
         if (room.mode !== "design" && player.coins < meal.price) {
@@ -2278,6 +2325,73 @@ export function createGameServer({
         });
         writeJson(socket, { type: "currency", coins: player.coins });
         writeJson(socket, { type: "inventory", items: inventoryItems(player.inventory) });
+        return;
+      }
+
+      if (message.type === "restaurant_talk") {
+        const room = rooms.get(player.roomId);
+        const bot = room?.bots.get(message.botId);
+        const shop = bot?.restaurantShopId
+          ? listCityShops(room.seed).find(({ id }) => id === bot.restaurantShopId && id === message.shopId)
+          : null;
+        if (!room?.started || player.health <= 0 || !bot || !shop ||
+          Math.hypot(wrapPlanetX(bot.x - player.x), bot.z - player.z) > 4) {
+          writeJson(socket, { type: "error", message: "Move closer to a diner or bakery worker to talk." });
+          return;
+        }
+        const greeting = bot.restaurantRole === "server"
+          ? shop.bakery
+            ? "Welcome! We have fresh bread and warm treats. What can I get for you?"
+            : `Welcome to ${shop.name}! Take a seat and have a look at today's menu.`
+          : "This is a lovely place to eat. The food is fresh and filling!";
+        writeJson(socket, {
+          type: "restaurant_dialogue",
+          botId: bot.id,
+          botName: bot.name,
+          shopId: shop.id,
+          shopName: shop.name,
+          greeting,
+        });
+        return;
+      }
+
+      if (message.type === "restaurant_seat") {
+        const room = rooms.get(player.roomId);
+        if (!room?.started || player.health <= 0 || player.vehicleId || player.mountId) return;
+        if (player.sittingAt) {
+          player.sittingAt = null;
+          player.y = terrainHeightAt(player.x, player.z, room.seed) + 2.65;
+          writeJson(socket, {
+            type: "restaurant_seat_result",
+            seated: false,
+            position: { x: player.x, y: player.y, z: player.z, yaw: player.yaw },
+            message: "You stand up.",
+          });
+          broadcastToRoom(room, roomSnapshot(room));
+          return;
+        }
+        const shop = listCityShops(room.seed).find(({ id, foodShop, x, doorZ, interiorZ }) =>
+          foodShop && id === message.shopId &&
+          Math.abs(wrapPlanetX(player.x - x)) <= 5 &&
+          player.z >= doorZ + 1 &&
+          player.z <= interiorZ + 2,
+        );
+        if (!shop) {
+          writeJson(socket, { type: "restaurant_seat_result", seated: false, message: "Choose a seat inside a diner or bakery." });
+          return;
+        }
+        player.x = wrapPlanetX(shop.x - 3);
+        player.z = shop.interiorZ - 1;
+        player.y = terrainHeightAt(player.x, player.z, room.seed) + 2.65;
+        player.yaw = 0;
+        player.sittingAt = shop.id;
+        writeJson(socket, {
+          type: "restaurant_seat_result",
+          seated: true,
+          position: { x: player.x, y: player.y, z: player.z, yaw: player.yaw },
+          message: `You sit down at ${shop.name}. Press E to stand.`,
+        });
+        broadcastToRoom(room, roomSnapshot(room));
         return;
       }
 
@@ -2389,6 +2503,7 @@ export function createGameServer({
 
       if (message.type === "move") {
         if (!rooms.get(player.roomId)?.started || player.health <= 0) return;
+        if (player.sittingAt) return;
         if (!validPlayerPosition(message.position)) {
           writeJson(socket, { type: "error", message: "Movement was outside the world." });
           return;
@@ -2825,7 +2940,7 @@ export function createGameServer({
         }
         addItems(player.inventory, recipe.result, recipe.resultCount);
         player.xp = (player.xp ?? 0) + 2;
-        player.level = (player.level ?? 0) + 2;
+        player.level = levelForExperience(player.xp);
         await incrementProfileStat(player, "itemsCrafted", recipe.resultCount, profiles, pool);
         writeJson(socket, { type: "xp", xp: player.xp, level: player.level });
         writeJson(socket, { type: "inventory", items: inventoryItems(player.inventory) });

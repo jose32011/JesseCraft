@@ -867,7 +867,7 @@ function cityColumnBlockAt(column, y) {
     y <= 4 &&
     (Math.abs(localX) <= 3 || localX === 0)
   ) {
-    return (localX === 0 && y <= 3) ? "oak_door" : "glass";
+    return (localX === 0 && y <= 2) ? "oak_door" : "glass";
   }
   if (
     y > 0 &&
@@ -901,7 +901,7 @@ export function listCityProperties(seed = 1) {
       const x = cellX * CITY_BLOCK_SIZE;
       const z = cellZ * CITY_BLOCK_SIZE;
       const column = cityColumnAt(x, z, worldSeed);
-      if (!column || column.street || column.policeStation) continue;
+      if (!column || column.street || column.policeStation || column.shop) continue;
       properties.push({
         id: `city-home-${cellX}-${cellZ}`,
         name: `Glass City Residence ${properties.length + 1}`,
@@ -928,15 +928,26 @@ export function listCityShops(seed = 1) {
       if (!column?.shop) continue;
       const names = ["MARKET", "BAKERY", "ARMOURY", "FURNITURE", "POTIONS", "TAVERN"];
       const restaurant = cellZ === 0 && (cellX === -2 || cellX === 2);
+      const bakery = cellZ === 0 && cellX === -1;
+      const foodShop = restaurant || bakery;
+      const entranceZ = z - Math.floor(column.depth / 2) - 1;
       shops.push({
         id: `city-shop-${cellX}-${cellZ}`,
         name: restaurant
           ? cellX < 0 ? "SUNSET DINER" : "PARKSIDE CAFE"
+          : bakery
+            ? "BAKERY"
           : cellX === 1 && cellZ === 0 ? "MARKET" : names[Math.abs(cellX * 7 + cellZ * 11) % names.length],
         restaurant,
+        bakery,
+        foodShop,
         x,
         y: 5.8,
-        z: z - Math.floor(column.depth / 2) - 1,
+        z: entranceZ,
+        doorX: x,
+        doorY: 1,
+        doorZ: entranceZ + 1,
+        interiorZ: entranceZ + 5,
       });
     }
   }
@@ -944,7 +955,7 @@ export function listCityShops(seed = 1) {
 }
 
 export function isNearRestaurant(x, z, seed = 1, maxDistance = 6) {
-  return listCityShops(seed).some((shop) => shop.restaurant &&
+  return listCityShops(seed).some((shop) => shop.foodShop &&
     Math.hypot(wrapPlanetX(x - shop.x), z - shop.z) <= maxDistance);
 }
 

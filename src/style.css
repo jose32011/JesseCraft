@@ -388,6 +388,14 @@ kbd {
   gap: 6px;
 }
 
+.restaurant-seat-button {
+  min-height: 34px;
+  border: 1px solid rgba(185, 233, 137, 0.35);
+  border-radius: 8px;
+  background: rgba(185, 233, 137, 0.1);
+  color: var(--lime);
+}
+
 .restaurant-item {
   display: grid;
   grid-template-columns: 62px minmax(0, 1fr) auto;

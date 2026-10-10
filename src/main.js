@@ -116,6 +116,8 @@ const restaurantPanel = document.querySelector("#restaurant-panel");
 const restaurantItems = document.querySelector("#restaurant-items");
 const restaurantNotice = document.querySelector("#restaurant-notice");
 const restaurantCoins = document.querySelector("#restaurant-coins");
+const restaurantTitle = document.querySelector("#restaurant-title");
+const restaurantSeatButton = document.querySelector("#restaurant-seat-button");
 const homeProperties = document.querySelector("#home-properties");
 const homeNotice = document.querySelector("#home-notice");
 const thirdPersonToggle = document.querySelector("#third-person-toggle");
@@ -200,6 +202,34 @@ function nearestAvailableHorse() {
     );
     if (distance < nearestDistance) {
       nearest = animal;
+      nearestDistance = distance;
+    }
+  }
+  return nearest;
+}
+
+function nearestFoodShop(maxDistance = 7) {
+  let nearest = null;
+  let nearestDistance = maxDistance;
+  for (const shop of listCityShops(state.seed)) {
+    if (!shop.foodShop) continue;
+    const distance = Math.hypot(wrapPlanetX(shop.x - playerPosition.x), shop.z - playerPosition.z);
+    if (distance < nearestDistance) {
+      nearest = shop;
+      nearestDistance = distance;
+    }
+  }
+  return nearest;
+}
+
+function nearestRestaurantBot(maxDistance = 4) {
+  let nearest = null;
+  let nearestDistance = maxDistance;
+  for (const bot of state.roomBots) {
+    if (!bot.restaurantShopId || !bot.restaurantRole) continue;
+    const distance = Math.hypot(wrapPlanetX(bot.x - playerPosition.x), bot.z - playerPosition.z);
+    if (distance < nearestDistance) {
+      nearest = bot;
       nearestDistance = distance;
     }
   }
@@ -816,12 +846,15 @@ const state = {
   isSwimming: false,
   inventory: new Map(),
   roomAnimals: [],
+  roomBots: [],
   roomMonsters: [],
   openDoors: new Set(),
   vehicles: [],
   vehicleId: null,
   vehicleType: null,
   mountId: null,
+  sittingAt: null,
+  activeFoodShopId: null,
   pendingHotbarItem: null,
   fishingCast: null,
   isFlying: false,
@@ -1908,7 +1941,11 @@ function renderWorld() {
     context.fillText(shop.name, 192, 51, 330);
     context.fillStyle = "#f5eee0";
     context.font = "bold 19px system-ui, sans-serif";
-    context.fillText(shop.restaurant ? "FRESH MEALS  ·  ORDER HERE" : "OPEN DAILY  ·  CITY MARKET", 192, 91);
+    context.fillText(
+      shop.bakery ? "FRESH BREAD  ·  E TO TALK" : shop.foodShop ? "DINING  ·  E TO TALK" : "OPEN DAILY  ·  CITY MARKET",
+      192,
+      91,
+    );
     const texture = new THREE.CanvasTexture(signCanvas);
     texture.colorSpace = THREE.SRGBColorSpace;
     const sign = new THREE.Group();
@@ -1987,7 +2024,7 @@ function renderWorld() {
     parasolPole: new THREE.CylinderGeometry(0.035, 0.05, 2.5, 6),
     parasolTop: new THREE.ConeGeometry(1.12, 0.48, 8),
   };
-  for (const restaurant of listCityShops(state.seed).filter(({ restaurant }) => restaurant)) {
+  for (const restaurant of listCityShops(state.seed).filter(({ foodShop }) => foodShop)) {
     if (!isCityFixtureNearby(restaurant.x, restaurant.z - 4)) continue;
     const seating = new THREE.Group();
     const addDiningPart = (geometry, material, x, y, z) => {
@@ -2006,6 +2043,44 @@ function renderWorld() {
     addDiningPart(diningGeometries.parasolPole, diningMaterials[0], 0, 2.05, 0);
     addDiningPart(diningGeometries.parasolTop, diningMaterials[2], 0, 3.42, 0);
     addCityFixture(seating, restaurant.x, terrainHeightAt(restaurant.x, restaurant.z, state.seed), restaurant.z - 4);
+
+    const interior = new THREE.Group();
+    const addInteriorPart = (geometry, material, x, y, z) => {
+      const part = new THREE.Mesh(geometry, material);
+      part.position.set(x, y, z);
+      interior.add(part);
+    };
+    const chairSeat = new THREE.BoxGeometry(0.78, 0.16, 0.78);
+    const chairLeg = new THREE.BoxGeometry(0.11, 0.46, 0.11);
+    const chairBack = new THREE.BoxGeometry(0.78, 0.76, 0.13);
+    const plate = new THREE.CylinderGeometry(0.28, 0.25, 0.055, 12);
+    const foodBowl = new THREE.SphereGeometry(0.2, 10, 7);
+    const dishMaterial = new THREE.MeshLambertMaterial({ color: "#e8dfc9" });
+    const mealMaterial = new THREE.MeshLambertMaterial({ color: restaurant.bakery ? "#c98e48" : "#d79e4c" });
+    addInteriorPart(diningGeometries.tabletop, diningMaterials[0], 0, 0.86, 0);
+    for (const x of [-0.68, 0.68]) {
+      for (const z of [-0.42, 0.42]) addInteriorPart(diningGeometries.tableLeg, diningMaterials[0], x, 0.43, z);
+    }
+    for (const x of [-1.55, 1.55]) {
+      addInteriorPart(chairSeat, diningMaterials[1], x, 0.49, 1.12);
+      addInteriorPart(chairBack, diningMaterials[0], x, 0.88, 1.44);
+      for (const z of [0.84, 1.4]) {
+        addInteriorPart(chairLeg, diningMaterials[0], x - 0.28, 0.23, z);
+        addInteriorPart(chairLeg, diningMaterials[0], x + 0.28, 0.23, z);
+      }
+    }
+    addInteriorPart(plate, dishMaterial, -0.42, 0.96, 0);
+    addInteriorPart(foodBowl, mealMaterial, -0.42, 1.08, 0);
+    addInteriorPart(plate, dishMaterial, 0.42, 0.96, 0);
+    addInteriorPart(foodBowl, mealMaterial, 0.42, 1.08, 0);
+    addInteriorPart(new THREE.BoxGeometry(3.2, 0.84, 0.72), diningMaterials[0], 0, 0.42, 3.1);
+    addInteriorPart(new THREE.BoxGeometry(3.35, 0.14, 0.82), diningMaterials[1], 0, 0.92, 3.1);
+    addCityFixture(
+      interior,
+      restaurant.x,
+      terrainHeightAt(restaurant.x, restaurant.interiorZ, state.seed),
+      restaurant.interiorZ,
+    );
   }
   const streetLampPole = new THREE.MeshLambertMaterial({ color: "#343d46" });
   const streetLampGlow = new THREE.MeshBasicMaterial({ color: "#ffe8a0" });
@@ -2447,6 +2522,20 @@ function makeMonster(entity) {
   return group;
 }
 
+function setAvatarSeatedPose(avatar, seated, eating = false, gait = 0) {
+  avatar.userData.seated = seated;
+  avatar.userData.eating = eating;
+  const legAngle = seated ? Math.PI / 2 : 0;
+  avatar.userData.leftLeg.rotation.x = legAngle;
+  avatar.userData.rightLeg.rotation.x = legAngle;
+  avatar.userData.leftArm.rotation.x = seated ? 1.1 : 0;
+  avatar.userData.rightArm.rotation.x = seated
+    ? eating ? 0.9 + Math.sin(gait) * 0.22 : 1.1
+    : 0;
+  avatar.userData.leftArm.rotation.z = 0;
+  avatar.userData.rightArm.rotation.z = eating ? Math.sin(gait * 0.5) * 0.08 : 0;
+}
+
 function updateAvatars(
   current,
   target,
@@ -2471,6 +2560,7 @@ function updateAvatars(
       updateCharacterArmor();
       selfAvatar.visible = thirdPersonView && state.connected && (!state.vehicleId || entity.mountId);
       updateAvatarHealth(selfAvatar.userData.healthBar, entity.health);
+      setAvatarSeatedPose(selfAvatar, Boolean(entity.sittingAt));
       continue;
     }
     let avatar = avatarMeshes.get(entity.id);
@@ -2483,9 +2573,11 @@ function updateAvatars(
     if (entity.color) avatar.children[0].material.color.set(entity.color);
     updateAvatarHealth(avatar.userData.healthBar, entity.health);
     avatar.userData.walking = Boolean(entity.walking);
+    const seated = Boolean(entity.sittingAt || entity.seated);
+    setAvatarSeatedPose(avatar, seated, Boolean(entity.eating), avatar.userData.gait);
     const surfaceHeight = entity.y === undefined
-      ? terrainHeightAt(entity.x, entity.z, state.seed) + 1
-      : entity.y - 1.65;
+      ? terrainHeightAt(entity.x, entity.z, state.seed) + (entity.seated ? 0.48 : 1)
+      : entity.y - 1.65 - (entity.sittingAt ? 0.5 : 0);
     const point = planetPointAt(entity.x, surfaceHeight, entity.z);
     const target = new THREE.Vector3(point.x, point.y, point.z);
     avatar.position.lerp(target, isBot ? 0.42 : 0.32);
@@ -2499,6 +2591,10 @@ function updateAvatars(
 function animateBots(delta) {
   for (const bot of botAvatars.values()) {
     bot.userData.gait += delta * (bot.userData.walking ? 10 : 2);
+    if (bot.userData.seated) {
+      setAvatarSeatedPose(bot, true, bot.userData.eating, bot.userData.gait);
+      continue;
+    }
     const stride = bot.userData.walking ? Math.sin(bot.userData.gait) * 0.55 : 0;
     bot.userData.leftLeg.rotation.x = stride;
     bot.userData.rightLeg.rotation.x = -stride;
@@ -2513,12 +2609,16 @@ function animatePlayerAttack(delta) {
   const strike = Math.sin(Math.PI * progress);
   if (selfAvatar) {
     selfAvatar.userData.gait += delta * (selfAvatar.userData.walking ? 10 : 2);
-    const stride = selfAvatar.userData.walking ? Math.sin(selfAvatar.userData.gait) * 0.55 : 0;
-    selfAvatar.userData.leftLeg.rotation.x = stride;
-    selfAvatar.userData.rightLeg.rotation.x = -stride;
-    selfAvatar.userData.leftArm.rotation.x = -stride * 0.7;
-    selfAvatar.userData.rightArm.rotation.x = stride * 0.7 + strike * 1.5;
-    selfAvatar.userData.rightArm.rotation.z = -strike * 0.32;
+    if (selfAvatar.userData.seated) {
+      setAvatarSeatedPose(selfAvatar, true, false, selfAvatar.userData.gait);
+    } else {
+      const stride = selfAvatar.userData.walking ? Math.sin(selfAvatar.userData.gait) * 0.55 : 0;
+      selfAvatar.userData.leftLeg.rotation.x = stride;
+      selfAvatar.userData.rightLeg.rotation.x = -stride;
+      selfAvatar.userData.leftArm.rotation.x = -stride * 0.7;
+      selfAvatar.userData.rightArm.rotation.x = stride * 0.7 + strike * 1.5;
+      selfAvatar.userData.rightArm.rotation.z = -strike * 0.32;
+    }
   }
   cameraFist.position.set(0.34 + strike * 0.05, -0.3 + strike * 0.04, -0.68 - strike * 0.34);
   cameraFist.rotation.set(-0.2 + strike * 1.25, -0.16, 0.1 - strike * 0.12);
@@ -2659,7 +2759,7 @@ function makeAnimal(entity) {
   group.userData.color = entity.color;
   group.userData.pattern = entity.pattern;
   group.userData.species = entity.species;
-  group.add(avatarLabel(entity.name, "#fff1c6"));
+  group.add(avatarLabel(`${entity.name} · Lv ${entity.level ?? 1}`, "#fff1c6"));
   scene.add(group);
   return group;
 }
@@ -3163,6 +3263,7 @@ function updateVehicleButton() {
   const nearby = current ? null : nearestAvailableVehicle();
   const mountedHorse = state.roomAnimals.find(({ id }) => id === state.mountId);
   const nearbyHorse = current || mountedHorse ? null : nearestAvailableHorse();
+  const restaurantBot = !current && !mountedHorse ? nearestRestaurantBot() : null;
   const atRestaurant = !current && !mountedHorse &&
     isNearRestaurant(playerPosition.x, playerPosition.z, state.seed);
   const inVehicle = Boolean(current || mountedHorse);
@@ -3183,13 +3284,18 @@ function updateVehicleButton() {
   placeButton.hidden = inVehicle;
   fishButton.hidden = inVehicle;
   fishMenuButton.hidden = inVehicle;
-  vehicleButton.hidden = !current && !nearby && !mountedHorse && !nearbyHorse && !atRestaurant;
+  vehicleButton.hidden = !current && !nearby && !mountedHorse && !nearbyHorse &&
+    !atRestaurant && !restaurantBot && !state.sittingAt;
   vehicleButton.textContent = current
     ? `Exit ${current.type}`
     : mountedHorse
       ? "Dismount horse"
+      : state.sittingAt
+        ? "Stand up"
+        : restaurantBot
+          ? `Talk to ${restaurantBot.name}`
       : atRestaurant
-        ? "Order food"
+        ? "Enter dining shop"
         : nearby
           ? `Enter ${nearby.type}`
           : nearbyHorse
@@ -3443,7 +3549,7 @@ function updateLocalAvatar() {
   if (!selfAvatar) return;
   selfAvatar.visible = thirdPersonView && state.connected && (!state.vehicleId || state.mountId);
   if (!selfAvatar.visible) return;
-  const surfaceHeight = playerPosition.y - 1.65;
+  const surfaceHeight = playerPosition.y - 1.65 - (state.sittingAt ? 0.5 : 0);
   const point = planetPointAt(playerPosition.x, surfaceHeight, playerPosition.z);
   selfAvatar.position.set(point.x, point.y, point.z);
   selfAvatar.quaternion.copy(surfaceQuaternionAt(playerPosition.x, playerPosition.z, look.yaw));
@@ -3506,6 +3612,7 @@ function applySnapshot(message) {
   const playerList = message.players ?? [];
   const botList = message.bots ?? [];
   state.roomAnimals = message.animals ?? [];
+  state.roomBots = botList;
   state.roomPlayers = playerList;
   state.properties = message.properties ?? state.properties;
   state.roomMonsters = message.monsters ?? [];
@@ -3525,6 +3632,7 @@ function applySnapshot(message) {
   const previousVehicleId = state.vehicleId;
   state.vehicleId = self?.vehicleId ?? null;
   state.mountId = self?.mountId ?? null;
+  state.sittingAt = self?.sittingAt ?? null;
   state.vehicleType = state.vehicles.find(({ id }) => id === state.vehicleId)?.type ?? null;
   if (previousVehicleId !== state.vehicleId) {
     updateChunkWindow(true);
@@ -3557,7 +3665,8 @@ function updateHealth(health) {
 function updateXp(xp, level) {
   state.xp = Number.isFinite(Number(xp)) ? Number(xp) : state.xp;
   state.level = Number.isFinite(Number(level)) ? Number(level) : state.level;
-  xpHud.textContent = `XP ${state.xp} · Lv ${state.level}`;
+  const xpToNextLevel = Math.max(0, 100 * (state.level + 1) * (state.level + 2) / 2 - state.xp);
+  xpHud.textContent = `XP ${state.xp} · Lv ${state.level} · ${xpToNextLevel} to next`;
   renderCharacterProfile();
 }
 
@@ -4032,6 +4141,25 @@ function connect() {
       updateCamera();
       updateLocalAvatar();
       notify(message.message);
+    } else if (message.type === "restaurant_dialogue") {
+      const shop = listCityShops(state.seed).find(({ id }) => id === message.shopId);
+      state.activeFoodShopId = message.shopId;
+      openRestaurantMenu(shop);
+      restaurantTitle.textContent = message.shopName;
+      restaurantNotice.textContent = `${message.botName}: ${message.greeting}`;
+    } else if (message.type === "restaurant_seat_result") {
+      if (message.seated === true || message.seated === false) {
+        state.sittingAt = message.seated ? state.activeFoodShopId : null;
+      }
+      if (message.position) {
+        playerPosition.set(message.position.x, message.position.y, message.position.z);
+        look.yaw = message.position.yaw ?? look.yaw;
+        updateCamera();
+        updateLocalAvatar();
+      }
+      if (!restaurantPanel.hidden) renderRestaurantMenu();
+      updateVehicleButton();
+      notify(message.message);
     } else if (message.type === "door_result") {
       notify(message.message);
     } else if (message.type === "autosave_result") {
@@ -4364,6 +4492,10 @@ function requestFlight(enabled) {
   sendLobbyMessage({ type: "fly_toggle", enabled });
 }
 function useVehicleOrPlace() {
+  if (state.sittingAt) {
+    sendLobbyMessage({ type: "restaurant_seat" });
+    return;
+  }
   const target = targetBlock();
   if (target && worldBlocks.get(blockKey(...target.coords)) === "oak_door") {
     if (state.socket?.readyState === WebSocket.OPEN) {
@@ -4379,8 +4511,18 @@ function useVehicleOrPlace() {
     sendLobbyMessage({ type: "animal_mount", animalId: state.mountId });
     return;
   }
-  if (isNearRestaurant(playerPosition.x, playerPosition.z, state.seed)) {
-    openRestaurantMenu();
+  const restaurantBot = nearestRestaurantBot();
+  if (restaurantBot) {
+    sendLobbyMessage({
+      type: "restaurant_talk",
+      botId: restaurantBot.id,
+      shopId: restaurantBot.restaurantShopId,
+    });
+    return;
+  }
+  const foodShop = nearestFoodShop();
+  if (foodShop) {
+    openRestaurantMenu(foodShop);
     return;
   }
   const horse = nearestAvailableHorse();
@@ -4509,21 +4651,7 @@ document.querySelector("#boat-workshop-dialog").addEventListener("click", (event
 flyToggle.addEventListener("change", () => requestFlight(flyToggle.checked));
 flyButton.addEventListener("click", () => requestFlight(!state.isFlying));
 desktopFlyButton.addEventListener("click", () => requestFlight(!state.isFlying));
-vehicleButton.addEventListener("click", () => {
-  if (state.vehicleId) sendLobbyMessage({ type: "vehicle_exit" });
-  else if (state.mountId) sendLobbyMessage({ type: "animal_mount", animalId: state.mountId });
-  else if (isNearRestaurant(playerPosition.x, playerPosition.z, state.seed)) openRestaurantMenu();
-  else {
-    const horse = nearestAvailableHorse();
-    if (horse) {
-      if (state.isFlying) requestFlight(false);
-      sendLobbyMessage({ type: "animal_mount", animalId: horse.id });
-    } else {
-      const vehicle = nearestAvailableVehicle();
-      if (vehicle) sendLobbyMessage({ type: "vehicle_enter", vehicleId: vehicle.id });
-    }
-  }
-});
+vehicleButton.addEventListener("click", useVehicleOrPlace);
 thirdPersonToggle.addEventListener("change", () => {
   thirdPersonView = thirdPersonToggle.checked;
   document.documentElement.classList.toggle("first-person-view", !thirdPersonView);
@@ -4570,6 +4698,18 @@ document.querySelector("#close-shop-button").addEventListener("click", () => {
 });
 document.querySelector("#close-restaurant-button").addEventListener("click", () => {
   restaurantPanel.hidden = true;
+});
+restaurantSeatButton.addEventListener("click", () => {
+  if (state.sittingAt) {
+    sendLobbyMessage({ type: "restaurant_seat" });
+    return;
+  }
+  const shop = listCityShops(state.seed).find(({ id }) => id === state.activeFoodShopId) ?? nearestFoodShop();
+  if (!shop) {
+    notify("Choose a seat inside a diner or bakery.");
+    return;
+  }
+  sendLobbyMessage({ type: "restaurant_seat", shopId: shop.id });
 });
 document.querySelector("#go-home-button").addEventListener("click", () => {
   const home = state.properties.find(
@@ -5017,6 +5157,9 @@ function requestModelPreview(model, previewImage) {
 }
 
 function renderRestaurantMenu() {
+  const shop = listCityShops(state.seed).find(({ id }) => id === state.activeFoodShopId) ?? nearestFoodShop();
+  restaurantSeatButton.textContent = state.sittingAt ? "Stand up" : "Take a seat";
+  restaurantSeatButton.disabled = !shop;
   restaurantItems.replaceChildren();
   for (const meal of RESTAURANT_MENU) {
     const row = document.createElement("div");
@@ -5052,15 +5195,17 @@ function renderRestaurantMenu() {
   }
 }
 
-function openRestaurantMenu() {
-  if (!isNearRestaurant(playerPosition.x, playerPosition.z, state.seed)) {
-    notify("Visit the Sunset Diner or Parkside Cafe to order food.");
+function openRestaurantMenu(shop = nearestFoodShop()) {
+  if (!shop || !shop.foodShop || !isNearRestaurant(playerPosition.x, playerPosition.z, state.seed)) {
+    notify("Visit the Sunset Diner, Parkside Cafe, or Glass City Bakery to order food.");
     return;
   }
+  state.activeFoodShopId = shop.id;
+  restaurantTitle.textContent = shop.name;
   shopPanel.hidden = true;
   gameMenu.hidden = true;
   restaurantPanel.hidden = false;
-  restaurantNotice.textContent = "Order at the counter. Meals are added to your inventory.";
+  restaurantNotice.textContent = "Talk to the staff, take a seat, then order a meal.";
   renderRestaurantMenu();
 }
 
@@ -5593,6 +5738,11 @@ window.addEventListener("keydown", (event) => {
     restaurantPanel.hidden = true;
     return;
   }
+  if (event.code === "KeyE" && !restaurantPanel.hidden) {
+    if (state.sittingAt) sendLobbyMessage({ type: "restaurant_seat" });
+    restaurantPanel.hidden = true;
+    return;
+  }
   if (event.code === "Escape" && !inventoryPanel.hidden) {
     toggleInventory(false);
     return;
@@ -5840,7 +5990,7 @@ function waterSurfaceEyeAt(x, z) {
 }
 
 function jump() {
-  if (state.vehicleId || state.mountId) return;
+  if (state.vehicleId || state.mountId || state.sittingAt) return;
   const groundY = groundEyeAt(playerPosition.x, playerPosition.z, playerPosition.y);
   if (playerPosition.y <= groundY + 0.02) {
     playerPosition.y = groundY;
@@ -6065,7 +6215,7 @@ window.addEventListener("gamepaddisconnected", (event) => {
 });
 
 function updateMovement(delta) {
-  if (!state.connected || !gameMenu.hidden || !worldMapPanel.hidden || !shopPanel.hidden || !restaurantPanel.hidden || boatWorkshopDialog.open) return;
+  if (!state.connected || state.sittingAt || !gameMenu.hidden || !worldMapPanel.hidden || !shopPanel.hidden || !restaurantPanel.hidden || boatWorkshopDialog.open) return;
   if (playerOccupiesSolidBlock(playerPosition.x, playerPosition.z, playerPosition.y)) {
     let safeEyeY = groundEyeAt(playerPosition.x, playerPosition.z, playerPosition.y);
     while (
@@ -6093,8 +6243,10 @@ function updateMovement(delta) {
 
   const activeVehicle = state.vehicles.find(({ id }) => id === state.vehicleId);
   const mountedHorse = state.roomAnimals.find(({ id }) => id === state.mountId);
-  if (activeVehicle && strafeInput !== 0) {
-    look.yaw -= strafeInput * delta * (isAircraftType(activeVehicle.type) ? 1.6 : 2.1);
+  if ((activeVehicle || mountedHorse) && strafeInput !== 0) {
+    look.yaw -= strafeInput * delta * (
+      mountedHorse ? 1.8 : isAircraftType(activeVehicle.type) ? 1.6 : 2.1
+    );
     strafeInput = 0;
   }
   const speed = (

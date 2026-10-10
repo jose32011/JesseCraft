@@ -61,9 +61,15 @@ test("Glass City restaurants are present in every seed and food can be ordered a
   for (const seed of [1, 31, 2026]) {
     const restaurants = listCityShops(seed).filter(({ restaurant }) => restaurant);
     assert.deepEqual(restaurants.map(({ name }) => name), ["SUNSET DINER", "PARKSIDE CAFE"]);
-    for (const restaurant of restaurants) {
-      assert.equal(isNearRestaurant(restaurant.x, restaurant.z, seed), true);
-      assert.equal(isNearRestaurant(restaurant.x, restaurant.z + 10, seed), false);
+    const bakery = listCityShops(seed).find(({ bakery }) => bakery);
+    assert.equal(bakery?.name, "BAKERY");
+    for (const foodShop of [...restaurants, bakery]) {
+      assert.equal(foodShop.foodShop, true);
+      assert.equal(isNearRestaurant(foodShop.x, foodShop.z, seed), true);
+      assert.equal(isNearRestaurant(foodShop.x, foodShop.z + 10, seed), false);
+      assert.equal(getBaseBlockAt(foodShop.doorX, 1, foodShop.doorZ, seed), "oak_door");
+      assert.equal(getBaseBlockAt(foodShop.doorX, 2, foodShop.doorZ, seed), "oak_door");
+      assert.equal(getBaseBlockAt(foodShop.doorX, 3, foodShop.doorZ, seed), "glass");
     }
   }
 });
