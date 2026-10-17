@@ -400,6 +400,41 @@ kbd {
   text-align: left;
 }
 
+.missions-panel button {
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(241, 246, 228, 0.08);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.missions-panel button:hover:not(:disabled) {
+  border-color: rgba(185, 233, 137, 0.6);
+}
+
+.missions-panel button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.missions-panel #close-missions-button {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+}
+
+.missions-active strong,
+.missions-active span {
+  color: var(--ink);
+}
+
+.missions-active span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .restaurant-panel {
   position: absolute;
   z-index: 5;
