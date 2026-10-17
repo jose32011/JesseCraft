@@ -1,0 +1,10 @@
+Dragon model: Dragon.glb from Animated Monsters by Quaternius.
+
+The model is dedicated to the public domain under CC0 1.0 Universal:
+https://creativecommons.org/publicdomain/zero/1.0/
+
+Optional attribution: Animated Monsters by Quaternius
+https://www.patreon.com/quaternius
+
+Downloaded from:
+https://github.com/BastiaanOlij/godot_dungeon/tree/ca64298a651587ab2e18bd0877d38e14e2fde81e/assets/quaternius.com/Animated%20Monster%20Pack

@@ -1,0 +1,319 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: API specification
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: players
+    description: Admin-managed player accounts
+  - name: lobbies
+    description: Match lobbies and team selection
+  - name: dashboard
+    description: Admin dashboard metrics
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      description: Returns server health status
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+  /players:
+    get:
+      operationId: listPlayers
+      tags: [players]
+      summary: List players
+      responses:
+        "200":
+          description: Player list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Player"
+    post:
+      operationId: createPlayer
+      tags: [players]
+      summary: Create a player account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlayerInput"
+      responses:
+        "201":
+          description: Created player
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Player"
+  /players/{id}:
+    delete:
+      operationId: deletePlayer
+      tags: [players]
+      summary: Remove a player account
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "204":
+          description: Player removed
+  /lobbies:
+    get:
+      operationId: listLobbies
+      tags: [lobbies]
+      summary: List open lobbies
+      responses:
+        "200":
+          description: Lobby list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Lobby"
+    post:
+      operationId: createLobby
+      tags: [lobbies]
+      summary: Create a lobby
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LobbyInput"
+      responses:
+        "201":
+          description: Created lobby
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Lobby"
+  /lobbies/{id}:
+    get:
+      operationId: getLobby
+      tags: [lobbies]
+      summary: Get lobby details
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Lobby
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Lobby"
+  /lobbies/{id}/join:
+    post:
+      operationId: joinLobby
+      tags: [lobbies]
+      summary: Join a player to a lobby
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LobbyJoinInput"
+      responses:
+        "200":
+          description: Updated lobby
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Lobby"
+  /lobbies/{id}/team:
+    post:
+      operationId: saveTeam
+      tags: [lobbies]
+      summary: Save a player's seven Pokémon team
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TeamSelectionInput"
+      responses:
+        "200":
+          description: Updated lobby
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Lobby"
+  /lobbies/{id}/start:
+    post:
+      operationId: startBattle
+      tags: [lobbies]
+      summary: Start the battle when both teams are ready
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Started lobby
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Lobby"
+  /lobbies/{id}/event:
+    post:
+      operationId: publishBattleEvent
+      tags: [lobbies]
+      summary: Publish a battle move for the other device
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BattleEventInput"
+      responses:
+        "200":
+          description: Updated lobby with the latest battle event
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Lobby"
+  /dashboard-summary:
+    get:
+      operationId: getDashboardSummary
+      tags: [dashboard]
+      summary: Get admin dashboard summary
+      responses:
+        "200":
+          description: Dashboard summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardSummary"
+components:
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+    Player:
+      type: object
+      required: [id, username, status, wins, losses]
+      properties:
+        id: { type: string }
+        username: { type: string }
+        status: { type: string, enum: [online, offline, battling] }
+        wins: { type: integer }
+        losses: { type: integer }
+    PlayerInput:
+      type: object
+      required: [username]
+      properties:
+        username: { type: string, minLength: 2 }
+    Lobby:
+      type: object
+      required: [id, code, host, guest, status, hostReady, guestReady, hostTeam, guestTeam, battleTurn, battleEvent]
+      properties:
+        id: { type: string }
+        code: { type: string }
+        host: { $ref: "#/components/schemas/Player" }
+        guest:
+          type: ["object", "null"]
+          allOf:
+            - $ref: "#/components/schemas/Player"
+        status: { type: string, enum: [waiting, team-select, battle, complete] }
+        hostReady: { type: boolean }
+        guestReady: { type: boolean }
+        hostTeam:
+          type: array
+          items: { $ref: "#/components/schemas/Pokemon" }
+        guestTeam:
+          type: array
+          items: { $ref: "#/components/schemas/Pokemon" }
+        battleTurn: { type: integer }
+        battleEvent:
+          type: ["object", "null"]
+          allOf:
+            - $ref: "#/components/schemas/BattleEvent"
+    LobbyInput:
+      type: object
+      required: [hostPlayerId]
+      properties:
+        hostPlayerId: { type: string }
+    LobbyJoinInput:
+      type: object
+      required: [playerId]
+      properties:
+        playerId: { type: string }
+    TeamSelectionInput:
+      type: object
+      required: [playerId, pokemonIds]
+      properties:
+        playerId: { type: string }
+        pokemonIds:
+          type: array
+          minItems: 7
+          maxItems: 7
+          items: { type: integer }
+    BattleEventInput:
+      type: object
+      required: [playerId, moveName, moveType, moveKind, movePower, moveDescription]
+      properties:
+        playerId: { type: string }
+        moveName: { type: string }
+        moveType: { type: string }
+        moveKind: { type: string }
+        movePower: { type: integer }
+        moveDescription: { type: string }
+    BattleEvent:
+      type: object
+      required: [eventId, playerId, turn, moveName, moveType, moveKind, movePower, moveDescription]
+      properties:
+        eventId: { type: string }
+        playerId: { type: string }
+        turn: { type: integer }
+        moveName: { type: string }
+        moveType: { type: string }
+        moveKind: { type: string }
+        movePower: { type: integer }
+        moveDescription: { type: string }
+    Pokemon:
+      type: object
+      required: [id, name, type, hp, image]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        type: { type: string }
+        hp: { type: integer }
+        image: { type: string }
+    DashboardSummary:
+      type: object
+      required: [totalPlayers, activeLobbies, battlesToday, readyTeams]
+      properties:
+        totalPlayers: { type: integer }
+        activeLobbies: { type: integer }
+        battlesToday: { type: integer }
+        readyTeams: { type: integer }
+

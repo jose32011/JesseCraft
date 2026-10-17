@@ -1,0 +1,167 @@
+{
+  "schemaVersion": 2,
+  "title": "Pirate Kit - Ships and Boats Selection",
+  "edition": "11 native static GLB files from Kenney Pirate Kit 2.1",
+  "sourceUrl": "https://kenney.nl/assets/pirate-kit",
+  "upstreamId": "pirate-kit@2.1",
+  "author": "Kenney",
+  "license": "CC0-1.0",
+  "unofficialPackagingBy": "Eclair Assets",
+  "sourceArchiveSha256": "667ED2CAF92954DDB98F7B7CEDE831FE99AB75063C26B25E23D32715BEE9C943",
+  "modelCount": 11,
+  "payloadFileCount": 13,
+  "payloadBytes": 1159256,
+  "triangleCount": 12850,
+  "animationClips": 0,
+  "skins": 0,
+  "externalTextureUri": "Textures/colormap.png",
+  "selfContainedGlb": false,
+  "geometryMaterialAndTextureBytesUnchanged": true,
+  "scope": "Payload manifest only; does not certify release ZIP, media, application compatibility or world scale.",
+  "files": [
+    {
+      "path": "License.txt",
+      "bytes": 699,
+      "sha256": "5E99246A5A65FA3420A1A1C7A8616F096202C78866F73D7AACFE73C0AAB0CA36",
+      "kind": "original-license"
+    },
+    {
+      "path": "Models/GLB format/boat-row-large.glb",
+      "bytes": 15972,
+      "sha256": "B496C0D5F9053EBC7E9B9A39A4770D5CCAFF5510C51B7C72C1B8391442E61D0F",
+      "kind": "model",
+      "nodes": 2,
+      "meshes": 2,
+      "triangles": 174,
+      "animationCount": 0,
+      "skinCount": 0
+    },
+    {
+      "path": "Models/GLB format/boat-row-small.glb",
+      "bytes": 17616,
+      "sha256": "846D9B17A73F80E03F7201D3BF0AD1B1BBB49E114B99697740D3426E4F42482D",
+      "kind": "model",
+      "nodes": 2,
+      "meshes": 2,
+      "triangles": 168,
+      "animationCount": 0,
+      "skinCount": 0
+    },
+    {
+      "path": "Models/GLB format/mast-ropes.glb",
+      "bytes": 36156,
+      "sha256": "AD2BD14ACACD3F4901177D8B13BCC6158F558E8C1959B6E19576E17EA8B10570",
+      "kind": "model",
+      "nodes": 3,
+      "meshes": 3,
+      "triangles": 350,
+      "animationCount": 0,
+      "skinCount": 0,
+      "description": "Bare mast with yardarms, flag and rigging; no cloth sail"
+    },
+    {
+      "path": "Models/GLB format/mast.glb",
+      "bytes": 30816,
+      "sha256": "22B04158E300D9A1C99C27D884214BE5241D599DC93CBA7394E9164043F99DB8",
+      "kind": "model",
+      "nodes": 3,
+      "meshes": 3,
+      "triangles": 302,
+      "animationCount": 0,
+      "skinCount": 0,
+      "description": "Bare mast with yardarms and flag; no cloth sail"
+    },
+    {
+      "path": "Models/GLB format/ship-ghost.glb",
+      "bytes": 155692,
+      "sha256": "16A99FC478826C151A2F2612F385EC3EAE440EC86700491EB0049E05E70793CE",
+      "kind": "model",
+      "nodes": 6,
+      "meshes": 6,
+      "triangles": 1703,
+      "animationCount": 0,
+      "skinCount": 0
+    },
+    {
+      "path": "Models/GLB format/ship-large.glb",
+      "bytes": 155792,
+      "sha256": "270FFF44A9C97F0F5038B0776F9A9B661961FF2098109A9CE614B645CC5E0D20",
+      "kind": "model",
+      "nodes": 6,
+      "meshes": 6,
+      "triangles": 1849,
+      "animationCount": 0,
+      "skinCount": 0
+    },
+    {
+      "path": "Models/GLB format/ship-medium.glb",
+      "bytes": 144944,
+      "sha256": "279EA019268F855240C3CEBF7616644C8141C20BEE617DA72EAE4733B8E310AF",
+      "kind": "model",
+      "nodes": 6,
+      "meshes": 6,
+      "triangles": 1723,
+      "animationCount": 0,
+      "skinCount": 0
+    },
+    {
+      "path": "Models/GLB format/ship-pirate-large.glb",
+      "bytes": 177216,
+      "sha256": "7C3959E0F039A13E5294904282DDC678DFC442FB8B055555CC45EAE7A0D2ADF8",
+      "kind": "model",
+      "nodes": 6,
+      "meshes": 6,
+      "triangles": 1938,
+      "animationCount": 0,
+      "skinCount": 0
+    },
+    {
+      "path": "Models/GLB format/ship-pirate-medium.glb",
+      "bytes": 166388,
+      "sha256": "193590503ED533ACE1260E4A4C6B30E13B13BF7C2CE6F5FAD667CDE5979859CC",
+      "kind": "model",
+      "nodes": 6,
+      "meshes": 6,
+      "triangles": 1812,
+      "animationCount": 0,
+      "skinCount": 0
+    },
+    {
+      "path": "Models/GLB format/ship-pirate-small.glb",
+      "bytes": 131464,
+      "sha256": "4B075CD7F90CC152ACD477C2636B38DAD08890391C5947B060A7AC0C6DA8FCDB",
+      "kind": "model",
+      "nodes": 4,
+      "meshes": 4,
+      "triangles": 1461,
+      "animationCount": 0,
+      "skinCount": 0
+    },
+    {
+      "path": "Models/GLB format/ship-small.glb",
+      "bytes": 116440,
+      "sha256": "6FDABDFD358F345AD3DD0510AF4165843AB3FFFE46357395C94CA00DB4F317B3",
+      "kind": "model",
+      "nodes": 4,
+      "meshes": 4,
+      "triangles": 1370,
+      "animationCount": 0,
+      "skinCount": 0
+    },
+    {
+      "path": "Models/GLB format/Textures/colormap.png",
+      "bytes": 10061,
+      "sha256": "451E1D7A53B8E76F4B2EE58742E241509FEE5F82CF2CEE6E3F7ACA86BA718ABE",
+      "kind": "palette"
+    }
+  ],
+  "packageEdition": "20260908_0450",
+  "selection": {
+    "completeShipsWithClothSails": 7,
+    "rowboatsWithPaddles": 2,
+    "bareMastsWithFlags": 2,
+    "standaloneMastsHaveClothSails": false,
+    "mastRopesIncludesRigging": true,
+    "pirateVariantsRetainGenericSkullMotifs": 3
+  }
+}

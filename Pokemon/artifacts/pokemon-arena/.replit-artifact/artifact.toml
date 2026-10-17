@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Pokémon Arena"
+description = "A mobile-friendly multiplayer Pokémon battle lobby where an admin creates players, players join a room, draft seven Pokémon, and face off in a cinematic arena."
+version = "1.0.0"
+id = "artifacts/pokemon-arena"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 23455
+
+[services.development]
+run = "pnpm --filter @workspace/pokemon-arena run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/pokemon-arena", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/pokemon-arena/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "23455"
+BASE_PATH = "/"

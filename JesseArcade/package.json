@@ -1,0 +1,25 @@
+{
+  "name": "yugioh",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "build:jesse-craft": "npm --prefix .. run build:arcade",
+    "prestart": "npm run build:jesse-craft",
+    "start": "node server.js",
+    "test": "node --test ludo.test.js chess.test.js snakesLadders.test.js uno.test.js pacman.test.js angryBirds.test.js rts.test.js server.test.js cardApi.test.js adminDashboard.test.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "axios": "^1.20.0",
+    "chess.js": "^1.4.0",
+    "express": "^5.2.1",
+    "maxmind": "^5.0.7",
+    "proxy-addr": "^2.0.8",
+    "socket.io": "^4.8.4",
+    "ws": "^8.22.0"
+  }
+}

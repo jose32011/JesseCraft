@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">JesseCraft</string>
+    <string name="settings_title">Connect to your server</string>
+    <string name="settings_description">Enter the JesseCraft server address. It will be saved on this phone and opened automatically next time.</string>
+    <string name="server_url_label">Server URL</string>
+    <string name="server_url_hint">https://example.com</string>
+    <string name="save_and_continue">Save and continue</string>
+    <string name="invalid_server_url">Enter a valid server address, such as https://example.com.</string>
+</resources>

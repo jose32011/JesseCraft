@@ -1,0 +1,38 @@
+{
+  "name": "voxland-game",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.34.6",
+  "type": "module",
+  "scripts": {
+    "dev": "npm run build:pokemon && npm run build:jesse-craft:dev && concurrently --restart-tries 10 --restart-after 2000 -n arcade,client,world -c green,blue,magenta \"npm:dev:arcade-server\" \"npm:dev:arcade-client\" \"npm:dev:watch-jesse-craft\"",
+    "dev:arcade-server": "PORT=3101 node JesseArcade/server.js",
+    "dev:arcade-client": "vite --config vite.arcade.config.js --host 0.0.0.0",
+    "dev:jesse-craft-server": "PORT=3001 node server/index.js",
+    "dev:watch-jesse-craft": "vite build --base=/jesse-craft/ --outDir=JesseArcade/dist --emptyOutDir=false --watch",
+    "build:jesse-craft:dev": "vite build --base=/jesse-craft/ --outDir=JesseArcade/dist",
+    "dev:arcade": "node JesseArcade/server.js",
+    "server:dev": "node server/index.js",
+    "client:dev": "vite --host 0.0.0.0",
+    "db:up": "docker compose up -d db",
+    "db:down": "docker compose down",
+    "db:logs": "docker compose logs -f db",
+    "build": "vite build",
+    "install:pokemon": "npm exec --yes pnpm@10.34.6 -- --dir Pokemon install --frozen-lockfile",
+    "build:pokemon": "npm run install:pokemon && npm exec --yes pnpm@10.34.6 -- --dir Pokemon run typecheck && PORT=5001 BASE_PATH=/pokemon-arena/ npm exec --yes pnpm@10.34.6 -- --dir Pokemon --filter @workspace/api-server --filter @workspace/pokemon-arena run build",
+    "build:arcade": "npm run build:pokemon && vite build --base=/jesse-craft/ --outDir=JesseArcade/dist",
+    "prestart": "npm run build:arcade",
+    "start": "node JesseArcade/server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "dotenv": "^18.0.7",
+    "pg": "^8.23.1",
+    "three": "^0.183.0",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "vite": "^6.4.1"
+  }
+}
