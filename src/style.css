@@ -361,6 +361,45 @@ kbd {
   display: none;
 }
 
+.missions-panel {
+  position: absolute;
+  z-index: 4;
+  top: 88px;
+  left: 22px;
+  display: grid;
+  gap: 9px;
+  width: min(390px, calc(100vw - 44px));
+  max-height: min(650px, calc(100vh - 180px));
+  overflow: auto;
+  padding: 17px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--panel);
+  box-shadow: 0 16px 42px rgba(17, 29, 24, 0.3);
+  backdrop-filter: blur(17px);
+}
+
+.missions-panel[hidden] {
+  display: none;
+}
+
+.missions-active {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.missions-offers {
+  display: grid;
+  gap: 7px;
+}
+
+.missions-offers button {
+  text-align: left;
+}
+
 .restaurant-panel {
   position: absolute;
   z-index: 5;

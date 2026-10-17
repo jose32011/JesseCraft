@@ -46,6 +46,15 @@ import {
 import { MODEL_CATALOG, MODEL_ITEM_BY_ID } from "../shared/models.js";
 import { CREATURE_HABITATS, getCreatureSpecies } from "../shared/creatures.js";
 import { RESTAURANT_MENU_BY_ID } from "../shared/food.js";
+import {
+  acceptMission,
+  createEmptyMissions,
+  failMission,
+  isMissionExpired,
+  normalizeMissions,
+  progressMission,
+  refreshMissionOffers,
+} from "../shared/missions.js";
 
 const GAME_DIR = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const DIST_DIR = resolve(GAME_DIR, "dist");
@@ -187,6 +196,35 @@ function levelForExperience(xp) {
   return Math.floor((Math.sqrt(1 + 8 * Math.max(0, xp) / XP_PER_LEVEL) - 1) / 2);
 }
 
+// Applies progress to the player's active mission, failing it first if its deadline has passed.
+// Returns a notice string for the player, or null when nothing changed for them.
+// Fails the active mission if its deadline has passed. Returns a notice string or null.
+function expireMissionIfDue(player) {
+  const missions = player.missions ?? createEmptyMissions();
+  if (!isMissionExpired(missions, Date.now())) return null;
+  const failed = failMission(missions);
+  player.missions = failed.missions;
+  player.coins = Math.max(0, (player.coins ?? 0) - failed.penalty);
+  return `Mission expired. -${failed.penalty} coins.`;
+}
+
+function applyMissionEvent(player, type, amount) {
+  let notice = expireMissionIfDue(player);
+  let missions = player.missions ?? createEmptyMissions();
+  const result = progressMission(missions, type, amount);
+  missions = result.missions;
+  if (result.completed) {
+    player.coins = (player.coins ?? 0) + result.completed;
+    notice = `Mission complete! +${result.completed} coins.`;
+  }
+  player.missions = missions;
+  return notice;
+}
+
+function sendMissionState(player) {
+  writeJson(player.socket, { type: "missions", missions: player.missions ?? createEmptyMissions(), now: Date.now() });
+}
+
 function awardMonsterKill(player, monster) {
   const monsterLevel = Math.max(1, Math.floor(monster.level ?? 1));
   const xpGained = MONSTER_KILL_XP * monsterLevel;
@@ -194,6 +232,8 @@ function awardMonsterKill(player, monster) {
   player.xp = (player.xp ?? 0) + xpGained;
   player.level = levelForExperience(player.xp);
   player.coins = (player.coins ?? 0) + coinsGained;
+  const missionNotice = applyMissionEvent(player, "defeat", 1);
+  sendMissionState(player);
   return {
     xp: player.xp,
     level: player.level,
@@ -201,6 +241,7 @@ function awardMonsterKill(player, monster) {
     xpGained,
     coinsGained,
     monsterLevel,
+    ...(missionNotice ? { missionNotice } : {}),
   };
 }
 
@@ -893,6 +934,7 @@ function roomSaveData(room, players) {
       xp: player.xp ?? 0,
       level: player.level ?? 0,
       coins: player.coins ?? 0,
+      missions: player.missions ?? createEmptyMissions(),
     });
   }
   room.savedPlayers = savedPlayers;
@@ -1495,6 +1537,7 @@ export function createGameServer({
       xp: 0,
       level: 0,
       coins: STARTING_COINS,
+      missions: createEmptyMissions(),
       profileId: null,
       profileStats: { ...DEFAULT_PROFILE_STATS },
       lastAttackAt: 0,
@@ -1590,6 +1633,7 @@ export function createGameServer({
         room.members.add(player.id);
         player.roomId = room.id;
         const savedPlayer = room.savedPlayers?.get(player.name.toLowerCase());
+        player.missions = normalizeMissions(savedPlayer?.missions);
         player.inventory = savedPlayer
           ? new Map(savedPlayer.inventory)
           : createInventory(room.mode);
@@ -2302,6 +2346,42 @@ export function createGameServer({
         return;
       }
 
+      if (message.type === "mission_offers") {
+        expireMissionIfDue(player);
+        if (!player.missions.active && player.missions.offers.length === 0) {
+          player.missions = refreshMissionOffers(player.missions);
+        }
+        sendMissionState(player);
+        return;
+      }
+
+      if (message.type === "mission_accept") {
+        expireMissionIfDue(player);
+        const result = acceptMission(player.missions, String(message.offerId ?? ""), Date.now());
+        player.missions = result.missions;
+        sendMissionState(player);
+        writeJson(socket, {
+          type: "mission_result",
+          message: result.error ?? `Mission accepted: ${player.missions.active.label}.`,
+        });
+        return;
+      }
+
+      if (message.type === "mission_abandon") {
+        expireMissionIfDue(player);
+        if (!player.missions.active) {
+          writeJson(socket, { type: "mission_result", message: "You have no active mission." });
+          return;
+        }
+        const failed = failMission(player.missions);
+        player.missions = failed.missions;
+        player.coins = Math.max(0, (player.coins ?? 0) - failed.penalty);
+        sendMissionState(player);
+        writeJson(socket, { type: "currency", coins: player.coins });
+        writeJson(socket, { type: "mission_result", message: `Mission abandoned. -${failed.penalty} coins.` });
+        return;
+      }
+
       if (message.type === "fish") {
         const room = rooms.get(player.roomId);
         const now = Date.now();
@@ -2345,13 +2425,15 @@ export function createGameServer({
         }
         const payout = fish.value * count;
         player.coins = (player.coins ?? 0) + payout;
+        const missionNotice = applyMissionEvent(player, "sell_fish", count);
+        sendMissionState(player);
         writeJson(socket, {
           type: "sell_result",
           item,
           count,
           value: payout,
           coins: player.coins,
-          message: `Sold ${count} ${fish.label} for ${payout} coins.`,
+          message: `Sold ${count} ${fish.label} for ${payout} coins.${missionNotice ? ` ${missionNotice}` : ""}`,
         });
         writeJson(socket, { type: "currency", coins: player.coins });
         writeJson(socket, { type: "inventory", items: inventoryItems(player.inventory) });

@@ -119,6 +119,15 @@ const restaurantItems = document.querySelector("#restaurant-items");
 const restaurantNotice = document.querySelector("#restaurant-notice");
 const restaurantCoins = document.querySelector("#restaurant-coins");
 const restaurantTitle = document.querySelector("#restaurant-title");
+const openMissionsButton = document.querySelector("#open-missions-button");
+const missionsPanel = document.querySelector("#missions-panel");
+const missionsActive = document.querySelector("#missions-active");
+const missionsOffers = document.querySelector("#missions-offers");
+const missionsNotice = document.querySelector("#missions-notice");
+const abandonMissionButton = document.querySelector("#abandon-mission-button");
+let missionState = null;
+let missionClockOffset = 0;
+let missionTimer = null;
 const restaurantSeatButton = document.querySelector("#restaurant-seat-button");
 const homeProperties = document.querySelector("#home-properties");
 const homeNotice = document.querySelector("#home-notice");
@@ -4332,6 +4341,7 @@ function connect() {
       }
       notify(message.message);
     } else if (message.type === "attack_result") {
+      if (message.reward?.missionNotice) notify(message.reward.missionNotice);
       if (message.hit && message.targetId && !message.tank && !message.aircraft) {
         showCombatIndicator(message.targetId, true);
         const target = (state.roomMonsters ?? []).find(({ id }) => id === message.targetId);
@@ -4498,6 +4508,13 @@ function connect() {
     } else if (message.type === "xp") {
       updateXp(message.xp, message.level);
       notify(`Crafting XP +2. Total XP: ${message.xp} · Level: ${message.level}`);
+    } else if (message.type === "missions") {
+      missionState = message.missions;
+      missionClockOffset = Number.isFinite(message.now) ? message.now - Date.now() : 0;
+      renderMissions();
+    } else if (message.type === "mission_result") {
+      missionsNotice.textContent = message.message;
+      notify(message.message);
     } else if (message.type === "sell_result") {
       updateCoins(message.coins);
       notify(message.message);
@@ -4885,6 +4902,11 @@ document.querySelector("#open-shop-button").addEventListener("click", () => {
 document.querySelector("#close-shop-button").addEventListener("click", () => {
   shopPanel.hidden = true;
 });
+openMissionsButton.addEventListener("click", openMissionsPanel);
+document.querySelector("#close-missions-button").addEventListener("click", () => {
+  missionsPanel.hidden = true;
+});
+abandonMissionButton.addEventListener("click", () => sendLobbyMessage({ type: "mission_abandon" }));
 document.querySelector("#close-restaurant-button").addEventListener("click", () => {
   restaurantPanel.hidden = true;
 });
@@ -5382,6 +5404,64 @@ function renderRestaurantMenu() {
     const model = MODEL_ITEM_BY_ID.get(image.dataset.modelId);
     if (model) requestModelPreview(model, image);
   }
+}
+
+function formatMissionTime(ms) {
+  const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+  return `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, "0")}`;
+}
+
+function renderMissions() {
+  if (!missionState) return;
+  const active = missionState.active;
+  missionsActive.replaceChildren();
+  if (active) {
+    const title = document.createElement("strong");
+    title.textContent = `${active.label} · ${active.progress}/${active.target}`;
+    const timer = document.createElement("span");
+    timer.textContent = `Time left ${formatMissionTime(active.expiresAt - (Date.now() + missionClockOffset))} · Reward ${active.reward} coins · Penalty ${active.penalty} coins`;
+    missionsActive.append(title, timer);
+  } else {
+    const empty = document.createElement("span");
+    empty.textContent = "No active mission. Accept one below.";
+    missionsActive.append(empty);
+  }
+  abandonMissionButton.disabled = !active;
+  missionsOffers.replaceChildren();
+  for (const offer of missionState.offers) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = `${offer.label} — reward ${offer.reward}, penalty ${offer.penalty}`;
+    button.disabled = Boolean(active);
+    button.addEventListener("click", () => sendLobbyMessage({ type: "mission_accept", offerId: offer.offerId }));
+    missionsOffers.append(button);
+  }
+  if (!missionState.offers.length && !active) {
+    const none = document.createElement("span");
+    none.textContent = "No offers right now.";
+    missionsOffers.append(none);
+  }
+}
+
+function updateMissionTimer() {
+  if (missionsPanel.hidden) {
+    clearInterval(missionTimer);
+    missionTimer = null;
+    return;
+  }
+  if (missionState?.active) renderMissions();
+}
+
+function openMissionsPanel() {
+  restaurantPanel.hidden = true;
+  shopPanel.hidden = true;
+  gameMenu.hidden = true;
+  gameMenuToggle.setAttribute("aria-expanded", "false");
+  missionsPanel.hidden = false;
+  missionsNotice.textContent = "";
+  sendLobbyMessage({ type: "mission_offers" });
+  clearInterval(missionTimer);
+  missionTimer = setInterval(updateMissionTimer, 1000);
 }
 
 function openRestaurantMenu(shop = nearestFoodShop()) {

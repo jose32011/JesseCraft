@@ -86,6 +86,7 @@
         <button type="button" id="save-world-button">Save world</button>
         <button type="button" id="open-world-map-button">Open map</button>
         <button type="button" id="open-shop-button">Village market</button>
+        <button type="button" id="open-missions-button">Missions</button>
         <button type="button" id="open-boat-workshop-button">Boat workshop</button>
         <button type="button" id="go-home-button">Go to my home</button>
         <button type="button" id="toggle-health-hud-button" aria-pressed="false">Hide health &amp; XP bar</button>
@@ -98,6 +99,18 @@
         <button type="button" id="fish-menu-button">Fish at harbor</button>
         <button type="button" id="logout-button">Log out</button>
         <span class="game-menu-status" id="game-menu-status" role="status"></span>
+      </section>
+
+      <section class="missions-panel" id="missions-panel" aria-label="Missions" hidden>
+        <header class="shop-heading">
+          <div><span class="eyebrow">MISSIONS</span><h2>Mission board</h2></div>
+          <button type="button" id="close-missions-button" aria-label="Close missions">×</button>
+        </header>
+        <p class="shop-hint">Accept one mission at a time. Finish it within 10 minutes for coins, or lose coins if it expires.</p>
+        <section class="missions-active" id="missions-active" aria-label="Active mission"></section>
+        <div class="missions-offers" id="missions-offers"></div>
+        <button type="button" id="abandon-mission-button">Abandon mission</button>
+        <p class="shop-notice" id="missions-notice" role="status"></p>
       </section>
 
       <section class="world-map-panel" id="world-map-panel" aria-label="World map" hidden>
