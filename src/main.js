@@ -2677,9 +2677,20 @@ function updateAvatars(
   for (const entity of current) target.set(entity.id, entity);
 }
 
+// One full leg cycle per ~1.6 units of ground travel, so the feet keep pace with the body.
+const BOT_GAIT_PER_UNIT = (Math.PI * 2) / 1.6;
+
 function animateBots(delta) {
   for (const bot of botAvatars.values()) {
-    bot.userData.gait += delta * (bot.userData.walking ? 12 : 2);
+    // Leg swing follows the bot's measured ground speed so feet match the distance covered.
+    const bobbedY = bot.userData.bob ?? 0;
+    bot.position.y -= bobbedY;
+    bot.userData.bob = 0;
+    const previous = bot.userData.previousPosition ??= bot.position.clone();
+    const measuredSpeed = delta > 0 ? bot.position.distanceTo(previous) / delta : 0;
+    previous.copy(bot.position);
+    bot.userData.speed = (bot.userData.speed ?? 0) * 0.8 + measuredSpeed * 0.2;
+    bot.userData.gait += bot.userData.walking ? bot.userData.speed * BOT_GAIT_PER_UNIT * delta : delta * 2;
     if (bot.userData.seated) {
       setAvatarSeatedPose(bot, true, bot.userData.eating, bot.userData.gait);
       continue;
@@ -2690,6 +2701,7 @@ function animateBots(delta) {
     bot.userData.rightLeg.rotation.x = -stride;
     bot.userData.leftArm.rotation.x = -stride * 0.85;
     bot.userData.rightArm.rotation.x = stride * 0.85;
+    bot.userData.bob = bob;
     bot.position.y += bob;
   }
 }
