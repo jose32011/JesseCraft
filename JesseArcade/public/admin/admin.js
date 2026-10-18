@@ -132,6 +132,62 @@ function appendActivity(name, detail) {
   document.getElementById('gameActivity').append(row);
 }
 
+let savedWorldsSignature = '';
+
+function renderSavedWorlds(worlds) {
+  const signature = JSON.stringify(worlds);
+  if (signature === savedWorldsSignature) return;
+  savedWorldsSignature = signature;
+  const rows = document.getElementById('savedWorldRows');
+  rows.replaceChildren();
+  if (worlds.length === 0) {
+    const row = document.createElement('tr');
+    appendCell(row, 'No saved worlds.', 'muted');
+    rows.append(row);
+    return;
+  }
+  for (const world of worlds) {
+    const row = document.createElement('tr');
+    appendCell(row, world.name);
+    appendCell(row, world.mode);
+    appendCell(row, String(world.players));
+    appendCell(row, world.id);
+    const actionCell = document.createElement('td');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = 'Delete';
+    button.dataset.roomId = world.id;
+    button.dataset.worldName = world.name;
+    button.className = 'danger';
+    actionCell.append(button);
+    row.append(actionCell);
+    rows.append(row);
+  }
+}
+
+document.getElementById('savedWorldRows').addEventListener('click', async event => {
+  const button = event.target.closest('button[data-room-id]');
+  if (!button) return;
+  if (!window.confirm(`Delete saved world "${button.dataset.worldName}"? Players in it will be sent to the menu. This cannot be undone.`)) return;
+  button.disabled = true;
+  try {
+    const result = await request('/api/admin/saved-worlds/delete', {
+      method: 'POST',
+      body: JSON.stringify({ roomId: button.dataset.roomId })
+    });
+    setStatus(dashboardStatus, result.message, 'success');
+    savedWorldsSignature = '';
+    await loadMetrics();
+  } catch (error) {
+    if (error.status === 401) {
+      showLogin('Your admin session expired. Sign in again.');
+      return;
+    }
+    button.disabled = false;
+    setStatus(dashboardStatus, error.message, 'error');
+  }
+});
+
 function renderMetrics(metrics) {
   const { system } = metrics;
   const memoryPercent = system.memory.usedBytes / system.memory.totalBytes * 100;
@@ -191,6 +247,7 @@ function renderMetrics(metrics) {
     'JesseCraft',
     `${craft.playersOnline} players · ${craft.activeWorlds} active worlds · ${craft.savedWorlds} saved`
   );
+  renderSavedWorlds(craft.savedWorldList || []);
 }
 
 function appendCell(row, value, className = '') {

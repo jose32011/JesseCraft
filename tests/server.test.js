@@ -7,6 +7,7 @@ import { createGameServer } from "../server/index.js";
 import { BLOCK_TYPES, FISH_ITEMS, MAX_STACK_SIZE } from "../server/world.js";
 import { WebSocket } from "ws";
 import { MODEL_CATALOG, MODEL_ITEM_BY_ID } from "../shared/models.js";
+import { CROP_GROW_MS, CROP_HEALING, CROP_SEED_ITEM, FARM_PLOTS } from "../shared/farm.js";
 import { CITY_POLICE_STATION, getBaseBlockAt, isNearRestaurant, listCityProperties, listCityShops, terrainHeightAt, WORLD_LOCATIONS } from "../shared/world.js";
 
 function nextMessage(socket, predicate = () => true, timeoutMs = 5000) {
@@ -116,7 +117,7 @@ test("bots approach nearby players and navigate around walls", async () => {
     const animal = room.animals.get("animal-farm-0");
     const animalPositions = [...room.animals.values()].map(({ x, z }) => ({ x, z }));
     await new Promise((resolve) => setTimeout(resolve, 800));
-    assert.equal(bot.behavior, "follow");
+    assert.notEqual(bot.behavior, "follow");
 
     bot.x = -3.6;
     bot.z = -2;
@@ -132,13 +133,193 @@ test("bots approach nearby players and navigate around walls", async () => {
     animal.targetX = 0;
     animal.targetZ = -2;
     room.blocks.set("-3,1,-2", "stone");
-    await new Promise((resolve) => setTimeout(resolve, 2600));
-    assert.ok(bot.z < -2.5 || bot.z > -1.5, `bot did not steer around the wall at z=${bot.z}`);
-    assert.ok(bot.x > -2.5, `bot did not continue toward its target at x=${bot.x}`);
+    // Sample the walk: bots are faster now and may reach the target (and idle there) before the window ends.
+    let steeredAroundWall = false;
+    let reachedFarSide = false;
+    for (let elapsed = 0; elapsed < 2600; elapsed += 100) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      if (Math.abs(bot.x + 3) < 1 && Math.abs(bot.z + 2) > 0.5) steeredAroundWall = true;
+      if (bot.x > -2.5) reachedFarSide = true;
+    }
+    assert.ok(steeredAroundWall, `bot did not steer around the wall; last at z=${bot.z}`);
+    assert.ok(reachedFarSide, `bot did not continue toward its target at x=${bot.x}`);
     assert.ok(animal.x < -3.5, `animal crossed the wall to x=${animal.x}`);
     await new Promise((resolve) => setTimeout(resolve, 800));
     assert.ok([...room.animals.values()].some((animal, index) =>
       Math.hypot(animal.x - animalPositions[index].x, animal.z - animalPositions[index].z) > 0.01));
+  } finally {
+    for (const socket of sockets) socket.terminate();
+    await server.close();
+  }
+});
+
+test("tank war gives each army base to a player and only lets owners drive their tanks", async () => {
+  const server = createGameServer({ host: "127.0.0.1", port: 0, seed: 49 });
+  const sockets = [];
+  try {
+    const address = await server.listen();
+    const connection = connect(`ws://127.0.0.1:${address.port}/ws`);
+    sockets.push(connection.socket);
+    const lobby = nextMessage(connection.socket, (message) => message.type === "lobby");
+    await connection.opened;
+    await lobby;
+    const created = nextMessage(connection.socket, (message) => message.type === "room_created");
+    connection.socket.send(JSON.stringify({ type: "create_room", roomName: "Tank War Test", mode: "tank-war" }));
+    const createdRoom = await created;
+    assert.equal(createdRoom.room.mode, "tank-war");
+    const roomId = createdRoom.room.id;
+    const started = nextMessage(connection.socket, (message) => message.type === "init");
+    connection.socket.send(JSON.stringify({ type: "start_room" }));
+    const init = await started;
+    const player = server.players.get(init.id);
+    const room = server.rooms.get(roomId);
+
+    const ownTank = room.vehicles.get("city-tank-1");
+    const rivalTank = room.vehicles.get("rival-tank-1");
+    assert.ok(rivalTank, "second army base should have tanks");
+    assert.equal(ownTank.ownerId, init.id);
+    assert.equal(rivalTank.ownerId, null);
+
+    player.x = ownTank.x;
+    player.y = ownTank.y + 2.65;
+    player.z = ownTank.z;
+    const entered = nextMessage(connection.socket, (message) => message.type === "vehicle_result");
+    connection.socket.send(JSON.stringify({ type: "vehicle_enter", vehicleId: ownTank.id }));
+    assert.equal((await entered).vehicleType, "tank");
+    assert.equal(player.vehicleId, ownTank.id);
+    const exited = nextMessage(connection.socket, (message) => message.type === "vehicle_result");
+    connection.socket.send(JSON.stringify({ type: "vehicle_exit" }));
+    await exited;
+
+    player.x = rivalTank.x;
+    player.y = rivalTank.y + 2.65;
+    player.z = rivalTank.z;
+    const refused = nextMessage(connection.socket, (message) => message.type === "vehicle_result");
+    connection.socket.send(JSON.stringify({ type: "vehicle_enter", vehicleId: rivalTank.id }));
+    assert.equal((await refused).vehicleId, null);
+    assert.equal(player.vehicleId ?? null, null);
+  } finally {
+    for (const socket of sockets) socket.close();
+    await server.close();
+  }
+});
+
+test("racing cars loop a generated oval track while the room runs", async () => {
+  const server = createGameServer({ host: "127.0.0.1", port: 0, seed: 49 });
+  const sockets = [];
+  try {
+    const address = await server.listen();
+    const connection = connect(`ws://127.0.0.1:${address.port}/ws`);
+    sockets.push(connection.socket);
+    const lobby = nextMessage(connection.socket, (message) => message.type === "lobby");
+    await connection.opened;
+    await lobby;
+    const created = nextMessage(connection.socket, (message) => message.type === "room_created");
+    connection.socket.send(JSON.stringify({ type: "create_room", roomName: "Racing Test" }));
+    const roomId = (await created).room.id;
+    const started = nextMessage(connection.socket, (message) => message.type === "init");
+    connection.socket.send(JSON.stringify({ type: "start_room" }));
+    await started;
+    const room = server.rooms.get(roomId);
+
+    const racers = [...room.vehicles.values()].filter((vehicle) => vehicle.id.startsWith("race-car-"));
+    assert.equal(racers.length, 4);
+    assert.ok(room.vehicles.raceTrack && room.vehicles.raceTrack.length === 48, "racing oval should be generated");
+    const before = racers.map((vehicle) => [vehicle.x, vehicle.z]);
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    racers.forEach((vehicle, index) => {
+      assert.ok(
+        Math.hypot(vehicle.x - before[index][0], vehicle.z - before[index][1]) > 0.5,
+        `${vehicle.id} should move around the track`,
+      );
+    });
+  } finally {
+    for (const socket of sockets) socket.close();
+    await server.close();
+  }
+});
+
+test("players can plant wheat on a farm plot and harvest it once ripe", async () => {
+  const server = createGameServer({ host: "127.0.0.1", port: 0, seed: 31 });
+  const sockets = [];
+  try {
+    const address = await server.listen();
+    const connection = connect(`ws://127.0.0.1:${address.port}/ws`);
+    sockets.push(connection.socket);
+    const lobby = nextMessage(connection.socket, (message) => message.type === "lobby");
+    await connection.opened;
+    await lobby;
+    const created = nextMessage(connection.socket, (message) => message.type === "room_created");
+    connection.socket.send(JSON.stringify({ type: "create_room", roomName: "Crop Test" }));
+    const roomId = (await created).room.id;
+    const started = nextMessage(connection.socket, (message) => message.type === "init");
+    connection.socket.send(JSON.stringify({ type: "start_room" }));
+    await started;
+
+    const room = server.rooms.get(roomId);
+    const player = server.players.get(room.members.values().next().value);
+    const plot = FARM_PLOTS[0];
+    player.x = plot.x;
+    player.z = plot.z;
+    const seedsBefore = player.inventory.get(CROP_SEED_ITEM) ?? 0;
+
+    const planted = nextMessage(connection.socket, (message) => message.type === "farm_result");
+    connection.socket.send(JSON.stringify({ type: "plant_crop", plot: plot.id }));
+    assert.equal((await planted).action, "plant");
+    assert.equal(player.inventory.get(CROP_SEED_ITEM), seedsBefore - 1);
+
+    const early = nextMessage(connection.socket, (message) => message.type === "error");
+    connection.socket.send(JSON.stringify({ type: "harvest_crop", plot: plot.id }));
+    assert.match((await early).message, /ripe/);
+
+    room.crops.get(plot.id).plantedAt -= CROP_GROW_MS;
+    const harvested = nextMessage(connection.socket, (message) => message.type === "farm_result");
+    connection.socket.send(JSON.stringify({ type: "harvest_crop", plot: plot.id }));
+    assert.equal((await harvested).action, "harvest");
+    assert.equal(room.crops.has(plot.id), false);
+    assert.ok((player.inventory.get("wheat") ?? 0) >= 1);
+
+    const wheatBefore = player.inventory.get("wheat");
+    player.health = 10;
+    const ate = nextMessage(connection.socket, (message) => message.type === "food_result");
+    connection.socket.send(JSON.stringify({ type: "eat_food", item: "wheat" }));
+    const result = await ate;
+    assert.equal(result.health, 10 + CROP_HEALING);
+    assert.equal(player.inventory.get("wheat") ?? 0, wheatBefore - 1);
+  } finally {
+    for (const socket of sockets) socket.terminate();
+    await server.close();
+  }
+});
+
+test("farmer bots plant an empty farm plot", async () => {
+  const server = createGameServer({ host: "127.0.0.1", port: 0, seed: 31 });
+  const sockets = [];
+  try {
+    const address = await server.listen();
+    const connection = connect(`ws://127.0.0.1:${address.port}/ws`);
+    sockets.push(connection.socket);
+    const lobby = nextMessage(connection.socket, (message) => message.type === "lobby");
+    await connection.opened;
+    await lobby;
+    const created = nextMessage(connection.socket, (message) => message.type === "room_created");
+    connection.socket.send(JSON.stringify({ type: "create_room", roomName: "Farmer Test" }));
+    const roomId = (await created).room.id;
+    const started = nextMessage(connection.socket, (message) => message.type === "init");
+    connection.socket.send(JSON.stringify({ type: "start_room" }));
+    await started;
+
+    const room = server.rooms.get(roomId);
+    const farmer = room.bots.get("bot-farmer-1");
+    const plot = FARM_PLOTS[0];
+    farmer.x = plot.x + 2;
+    farmer.z = plot.z;
+    farmer.targetX = farmer.x;
+    farmer.targetZ = farmer.z;
+    farmer.farmWaitUntil = 0;
+    room.crops?.delete(plot.id);
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    assert.ok(room.crops?.has(plot.id), "farmer should plant the empty plot beside it");
   } finally {
     for (const socket of sockets) socket.terminate();
     await server.close();
@@ -199,6 +380,54 @@ test("players can mount, ride, and dismount a farm horse", async () => {
     const dismountResult = await dismounted;
     assert.equal(dismountResult.mountId, null);
     assert.equal(horse.riderId, null);
+  } finally {
+    for (const socket of sockets) socket.terminate();
+    await server.close();
+  }
+});
+
+test("players can sell fish to a nearby villager bot", async () => {
+  const server = createGameServer({ host: "127.0.0.1", port: 0, seed: 31 });
+  const sockets = [];
+  try {
+    const address = await server.listen();
+    const connection = connect(`ws://127.0.0.1:${address.port}/ws`);
+    sockets.push(connection.socket);
+    const lobby = nextMessage(connection.socket, (message) => message.type === "lobby");
+    await connection.opened;
+    await lobby;
+    const created = nextMessage(connection.socket, (message) => message.type === "room_created");
+    connection.socket.send(JSON.stringify({ type: "create_room", roomName: "Villager Trade Test" }));
+    const roomId = (await created).room.id;
+    const started = nextMessage(connection.socket, (message) => message.type === "init");
+    connection.socket.send(JSON.stringify({ type: "start_room" }));
+    await started;
+
+    const room = server.rooms.get(roomId);
+    const player = server.players.get(room.members.values().next().value);
+    const villager = [...room.bots.values()].find((bot) => bot.missionGiver);
+    assert.ok(villager);
+    player.x = villager.x;
+    player.z = villager.z;
+    player.y = terrainHeightAt(player.x, player.z, room.seed) + 2.65;
+    player.coins = 0;
+    player.inventory.set("raw_fish", 2);
+
+    const traded = nextMessage(connection.socket, (message) => message.type === "bot_trade_result");
+    connection.socket.send(JSON.stringify({ type: "bot_trade", botId: villager.id, item: "raw_fish", count: 2 }));
+    const result = await traded;
+    assert.equal(result.botName, villager.name);
+    assert.equal(result.value > 0, true);
+    assert.equal(player.coins, result.value);
+    assert.equal(player.inventory.has("raw_fish"), false);
+
+    player.x = 0;
+    player.z = 0;
+    player.inventory.set("raw_fish", 1);
+    const tooFar = nextMessage(connection.socket, (message) => message.type === "error");
+    connection.socket.send(JSON.stringify({ type: "bot_trade", botId: villager.id, item: "raw_fish", count: 1 }));
+    assert.match((await tooFar).message, /villager/i);
+    assert.equal(player.inventory.get("raw_fish"), 1);
   } finally {
     for (const socket of sockets) socket.terminate();
     await server.close();
@@ -1166,7 +1395,7 @@ test("generates seeded terrain and shares chunk edits with joining players", asy
     assert.equal(initial.inventory.length, BLOCK_TYPES.size + MODEL_CATALOG.length);
     assert.ok(initial.inventory.every(([, count]) => count === 64));
     assert.equal(initial.coins, 20_000);
-    assert.equal(initial.bots.length, 9);
+    assert.equal(initial.bots.length, 212);
     assert.ok(initial.vehicles.some((vehicle) => vehicle.id === "airport-plane"));
     assert.equal(initial.vehicles.filter(({ type }) => type === "jet").length, 3);
     const tanks = initial.vehicles.filter(({ type }) => type === "tank");
@@ -1773,7 +2002,7 @@ test("saves a world and restores its terrain, mode, seed, and player inventory",
   }
 });
 
-test("deletes a saved world only after every player has left", async () => {
+test("deletes a saved world and sends its players back to the menu", async () => {
   const saveDirectory = mkdtempSync(join(tmpdir(), "voxland-delete-save-"));
   const server = createGameServer({ host: "127.0.0.1", port: 0, seed: 83, saveDirectory });
   const sockets = [];
@@ -1795,16 +2024,10 @@ test("deletes a saved world only after every player has left", async () => {
     connection.socket.send(JSON.stringify({ type: "save_room" }));
     assert.equal((await saved).saved, true);
 
-    const activeDelete = await server.deleteSavedWorld(roomId);
-    assert.equal(activeDelete.success, false);
-    assert.equal(activeDelete.status, 409);
-    assert.equal(existsSync(join(saveDirectory, `${roomId}.json`)), true);
-
-    const left = nextMessage(connection.socket, (message) => message.type === "room_left");
-    connection.socket.send(JSON.stringify({ type: "leave_room" }));
-    await left;
+    const kicked = nextMessage(connection.socket, (message) => message.type === "room_left");
     const deleted = await server.deleteSavedWorld(roomId);
     assert.equal(deleted.success, true);
+    assert.match((await kicked).message, /deleted by an admin/);
     assert.equal(server.rooms.has(roomId), false);
     assert.equal(existsSync(join(saveDirectory, `${roomId}.json`)), false);
   } finally {

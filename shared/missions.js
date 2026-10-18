@@ -37,6 +37,17 @@ export function refreshMissionOffers(missions, random = Math.random) {
   return { ...missions, offers };
 }
 
+// Adds one specific template to the board. Returns { missions, error }.
+export function addMissionToBoard(missions, templateId, index) {
+  const template = MISSION_TEMPLATE_BY_ID.get(templateId);
+  if (!template) return { missions, error: "I don't have that job right now." };
+  if (missions.offers.some((entry) => entry.templateId === templateId)) {
+    return { missions, error: "That job is already on your mission board." };
+  }
+  if (missions.offers.length >= MISSION_BOARD_SIZE) return { missions, error: "Your mission board is full." };
+  return { missions: { ...missions, offers: [...missions.offers, offerFromTemplate(template, index)] }, error: null };
+}
+
 // Accepts one offer. Returns { missions, error }.
 export function acceptMission(missions, offerId, now) {
   if (missions.active) return { missions, error: "Finish or abandon your current mission first." };

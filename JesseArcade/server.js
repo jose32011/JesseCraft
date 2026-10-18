@@ -161,7 +161,6 @@ class Game {
         player.field.extraDeck = extraDeck;
         this.shuffleDeck(player.deck);
         for (let i = 0; i < 5; i++) player.hand.push(player.deck.pop());
-        console.log(`Player ${player.name} starts with ${player.hand.length} cards and ${player.deck.length} cards in deck`);
       });
 
       this.turn = 0;
@@ -230,7 +229,6 @@ class Game {
     }
 
     player.hand.push(player.deck.pop());
-    console.log(`Player ${player.name} drew a card; ${player.deck.length} cards remain in deck`);
     return true;
   }
 
@@ -692,10 +690,6 @@ class Game {
     const opponent = this.getOpponent(playerId);
     const playerIds = Object.keys(this.players);
     
-    console.log(`Getting game state for ${player.name}:`);
-    console.log(`  Deck length: ${player.deck.length}`);
-    console.log(`  Hand length: ${player.hand.length}`);
-    console.log(`  Game started: ${this.gameStarted}`);
     
     return {
       roomId: this.roomId,
@@ -851,7 +845,6 @@ io.on('connection', (socket) => {
       }
     });
   });
-  console.log('User connected:', socket.id);
 
   socket.on('endAllArcadeGames', () => {
     const { endedRooms } = endAllArcadeGames(arcadeRoomGroups);
@@ -1112,7 +1105,6 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => {
     persistConnectionEvent(accessControl.disconnected(`arcade:${socket.id}`));
-    console.log('User disconnected:', socket.id);
     const game = games[socket.data.roomId];
     const player = game && game.players[socket.data.playerToken];
     if (player && player.socket === socket) {
@@ -1140,7 +1132,8 @@ const arcadeRoomGroups = {
 let jesseCraftMetrics = () => ({
   playersOnline: 0,
   activeWorlds: 0,
-  savedWorlds: 0
+  savedWorlds: 0,
+  savedWorldList: []
 });
 let jesseCraftServerInstance = null;
 
@@ -1328,7 +1321,8 @@ async function startServer() {
   jesseCraftMetrics = () => ({
     playersOnline: jesseCraftServer.players.size,
     activeWorlds: [...jesseCraftServer.rooms.values()].filter(room => room.started).length,
-    savedWorlds: [...jesseCraftServer.rooms.values()].filter(room => room.saved).length
+    savedWorlds: [...jesseCraftServer.rooms.values()].filter(room => room.saved).length,
+    savedWorldList: jesseCraftServer.listSavedWorlds()
   });
 
   server.once('listening', async () => {

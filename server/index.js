@@ -47,7 +47,20 @@ import { MODEL_CATALOG, MODEL_ITEM_BY_ID } from "../shared/models.js";
 import { CREATURE_HABITATS, getCreatureSpecies } from "../shared/creatures.js";
 import { RESTAURANT_MENU_BY_ID } from "../shared/food.js";
 import {
+  CROP_HARVEST_ITEM,
+  CROP_HEALING,
+  CROP_HARVEST_SEEDS,
+  CROP_HARVEST_YIELD,
+  CROP_SEED_ITEM,
+  cropStage,
+  FARM_PLOTS,
+  STARTING_SEED_COUNT,
+} from "../shared/farm.js";
+import {
   acceptMission,
+  addMissionToBoard,
+  MISSION_TEMPLATE_BY_ID,
+  MISSION_TEMPLATES,
   createEmptyMissions,
   failMission,
   isMissionExpired,
@@ -82,6 +95,7 @@ const STARTING_LOADOUT = [
   ["iron_armor", 1],
   ["wooden_sword", 1],
   ["shield", 1],
+  [CROP_SEED_ITEM, STARTING_SEED_COUNT],
 ];
 const PLAYER_WEAPON_DAMAGE = new Map([
   ["wooden_sword", 24],
@@ -122,6 +136,85 @@ const CITY_CAR_PAINTS = [
   ["#ce5f88", "#f3d4df"],
   ["#52a8b5", "#eaf8ef"],
 ];
+
+const RIVAL_TANK_PAINTS = [
+  ["#8a3f3a", "#e8c17a"],
+  ["#3e5a7a", "#d9e4ea"],
+  ["#5b4a7a", "#f0d37a"],
+  ["#4f6f4a", "#e0b070"],
+  ["#7a6a3f", "#dfe8ea"],
+];
+
+const RACE_TRACK_POINTS = 48;
+const RACE_TRACK_RX = 34; // oval half-width along X
+const RACE_TRACK_RZ = 22; // oval half-depth along Z
+const RACE_CAR_STEP = 1.1; // units per race tick (250ms)
+const RACE_CAR_COUNT = 4;
+const RACE_CAR_PAINTS = [
+  ["#f2c230", "#1d1d1d"],
+  ["#e8e8e8", "#c4201b"],
+  ["#2d8f4e", "#f5f5f5"],
+  ["#1e5fbf", "#ffd23f"],
+];
+
+function isRaceCar(vehicle) {
+  return vehicle.id.startsWith("race-car-");
+}
+
+// Average distance between track waypoints, used to convert car speed into waypoint progress.
+function raceTrackSpacing() {
+  const radius = Math.sqrt((RACE_TRACK_RX * RACE_TRACK_RX + RACE_TRACK_RZ * RACE_TRACK_RZ) / 2);
+  return (2 * Math.PI * radius) / RACE_TRACK_POINTS;
+}
+
+// Finds flat dry land for a racing oval and returns its waypoints, or null when none fits.
+const raceTrackCache = new Map();
+function findRaceTrack(seed) {
+  if (raceTrackCache.has(seed)) return raceTrackCache.get(seed);
+  const track = searchRaceTrack(seed);
+  raceTrackCache.set(seed, track);
+  return track;
+}
+
+function searchRaceTrack(seed) {
+  for (let cx = -780; cx <= 780; cx += 30) {
+    for (let cz = -380; cz <= 380; cz += 30) {
+      if (Math.hypot(cx - ARMY_BASE.x, cz - ARMY_BASE.z) < 70) continue;
+      const points = [];
+      let lowest = Infinity;
+      let highest = -Infinity;
+      for (let index = 0; index < RACE_TRACK_POINTS; index += 1) {
+        const theta = (index / RACE_TRACK_POINTS) * Math.PI * 2;
+        const x = Math.round(cx + Math.cos(theta) * RACE_TRACK_RX);
+        const z = Math.round(cz + Math.sin(theta) * RACE_TRACK_RZ);
+        const height = terrainHeightAt(x, z, seed);
+        lowest = Math.min(lowest, height);
+        highest = Math.max(highest, height);
+        if (lowest < 2 || highest - lowest > 3) break;
+        points.push({ x, z });
+      }
+      if (points.length < RACE_TRACK_POINTS) continue;
+      const sampled = points.filter((_, index) => index % 6 === 0);
+      if (sampled.every((point) => vehicleHasGroundClearance({ type: "car" }, point.x, point.z, 0, seed))) {
+        return points;
+      }
+    }
+  }
+  return null;
+}
+
+// Finds dry land for the second army base, away from the first one.
+function findRivalBaseCenter(seed) {
+  for (let radius = 60; radius <= 220; radius += 10) {
+    for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 12) {
+      const x = Math.round(ARMY_BASE.x + Math.cos(angle) * radius);
+      const z = Math.round(ARMY_BASE.z + Math.sin(angle) * radius);
+      if (terrainHeightAt(x, z, seed) < 3) continue;
+      if (vehicleHasGroundClearance({ type: "tank" }, x, z, 0, seed)) return { x, z };
+    }
+  }
+  return null;
+}
 
 function vehicleFootprint(type) {
   if (type === "tank") return { halfWidth: 1.45, halfLength: 1.9 };
@@ -318,6 +411,8 @@ function createBots(seed = 1) {
     ["bot-pebble", { id: "bot-pebble", name: "Pebble", x: 1, z: -5, homeX: 1, homeZ: -5, yaw: 0, color: "#d3a36e", targetX: 1, targetZ: -5, behavior: "idle", walking: false, nextDecisionAt: 0, stuckTicks: 0 }],
     ["bot-fern", { id: "bot-fern", name: "Fern", x: 8, z: 1, homeX: 8, homeZ: 1, yaw: 0, color: "#8f8ed3", targetX: 8, targetZ: 1, behavior: "idle", walking: false, nextDecisionAt: 0, stuckTicks: 0 }],
   ]);
+  bots.set("bot-wren", { id: "bot-wren", name: "Wren", x: 4, z: 3, homeX: 4, homeZ: 3, yaw: Math.PI, color: "#e0a84b", targetX: 4, targetZ: 3, behavior: "idle", walking: false, nextDecisionAt: 0, stuckTicks: 0, missionGiver: true, missionTemplateId: "defeat-small" });
+  addRoamingBots(bots, seed);
   const restaurantNames = ["Mira", "Ollie", "Rae", "Pip", "Jules", "Nori"];
   const restaurantColors = ["#a96f48", "#7d9b75", "#b56f62", "#7485a2", "#b68a4f", "#9479a8"];
   for (const shop of listCityShops(seed).filter(({ foodShop }) => foodShop)) {
@@ -345,14 +440,132 @@ function createBots(seed = 1) {
       });
     }
   }
+  for (const [index, name] of ["Sage", "Tansy"].entries()) {
+    const x = -30 + (index === 0 ? -10 : 10);
+    const z = 22 + 8;
+    bots.set(`bot-farmer-${index + 1}`, {
+      id: `bot-farmer-${index + 1}`,
+      name,
+      x,
+      z,
+      homeX: x,
+      homeZ: z,
+      yaw: 0,
+      color: "#c9a04d",
+      targetX: x,
+      targetZ: z,
+      behavior: "farm",
+      walking: false,
+      nextDecisionAt: 0,
+      stuckTicks: 0,
+      farmer: true,
+      farmPlotId: null,
+      farmWaitUntil: 0,
+    });
+  }
   return bots;
 }
 
-function createVehicles(seed = 1) {
+const ROAMING_BOT_COUNT = 200;
+
+function createSeededRandom(seed) {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let value = state;
+    value = Math.imul(value ^ (value >>> 15), value | 1);
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function addRoamingBots(bots, seed) {
+  const random = createSeededRandom(seed + 7919);
+  const firstNames = ["Ada", "Bram", "Cass", "Dov", "Eli", "Fae", "Gus", "Hana", "Ivo", "Juno", "Kit", "Lark", "Milo", "Nell", "Otto", "Pia"];
+  const lastNames = ["Ash", "Brook", "Cole", "Dune", "Early", "Frost", "Glen", "Holt", "Lane", "Marsh", "North", "Rowe"];
+  const colors = ["#c46b6b", "#6b9ac4", "#7fb069", "#c9a04d", "#9b6bc4", "#4dbfb0"];
+  let placed = 0;
+  const maxAttempts = ROAMING_BOT_COUNT * 200;
+  for (let attempt = 0; attempt < maxAttempts && placed < ROAMING_BOT_COUNT; attempt += 1) {
+    const x = Math.round(random() * 180 - 90);
+    const z = Math.round(random() * 180 - 90);
+    if (Math.hypot(x, z) < 12) continue;
+    const ground = terrainHeightAt(x, z, seed);
+    if (getBaseBlockAt(x, ground, z, seed) === "water") continue;
+    const feetType = getBaseBlockAt(x, ground + 1, z, seed);
+    const headType = getBaseBlockAt(x, ground + 2, z, seed);
+    if ((feetType && feetType !== "water") || (headType && headType !== "water")) continue;
+    let crowded = false;
+    for (const other of bots.values()) {
+      if (Math.hypot(other.x - x, other.z - z) < 4) {
+        crowded = true;
+        break;
+      }
+    }
+    if (crowded) continue;
+    const id = `bot-roam-${placed}`;
+    const name = `${firstNames[placed % firstNames.length]} ${lastNames[Math.floor(placed / firstNames.length) % lastNames.length]}`;
+    bots.set(id, {
+      id,
+      name,
+      x,
+      z,
+      homeX: x,
+      homeZ: z,
+      yaw: 0,
+      color: colors[placed % colors.length],
+      targetX: x,
+      targetZ: z,
+      behavior: "idle",
+      walking: false,
+      nextDecisionAt: 0,
+      stuckTicks: 0,
+      missionGiver: placed % 3 === 0,
+      missionTemplateId: MISSION_TEMPLATES[Math.floor(placed / 3) % MISSION_TEMPLATES.length].id,
+    });
+    placed += 1;
+  }
+}
+
+function createVehicles(seed = 1, mode = "survival") {
   const spawns = VEHICLE_SPAWNS.map((spawn) => {
     const position = findClearVehiclePosition({ ...spawn, yaw: spawn.yaw ?? 0 }, seed);
     return position ? { ...spawn, ...position } : spawn;
   });
+  if (mode === "tank-war") {
+    const rivalBase = findRivalBaseCenter(seed);
+    if (rivalBase) {
+      RIVAL_TANK_PAINTS.forEach(([color, accent], index) => {
+        const candidate = {
+          id: `rival-tank-${index + 1}`,
+          type: "tank",
+          x: rivalBase.x + 10,
+          z: rivalBase.z + 10 - index * 5,
+          color,
+          accent,
+        };
+        const position = findClearVehiclePosition({ ...candidate, yaw: 0 }, seed);
+        if (position) spawns.push({ ...candidate, ...position });
+      });
+    }
+  }
+  const raceTrack = findRaceTrack(seed);
+  if (raceTrack) {
+    RACE_CAR_PAINTS.forEach(([color, accent], index) => {
+      const progress = (index * RACE_TRACK_POINTS) / RACE_CAR_COUNT;
+      const start = raceTrack[Math.floor(progress)];
+      const next = raceTrack[(Math.floor(progress) + 1) % raceTrack.length];
+      spawns.push({
+        id: `race-car-${index + 1}`,
+        type: "car",
+        x: start.x,
+        z: start.z,
+        yaw: Math.atan2(-(next.x - start.x), next.z - start.z),
+        color,
+        accent,
+      });
+    });
+  }
   const cityRoadCandidates = [];
   for (let x = -100; x <= 100; x += 4) {
     for (let z = -100; z <= 100; z += 4) {
@@ -398,12 +611,18 @@ function createVehicles(seed = 1) {
     policeIndex += 1;
     if (policeIndex >= 3) break;
   }
-  return new Map(spawns.map(({ id, type, x, z, yaw = 0, color, accent }) => [
+  const vehicles = new Map(spawns.map(({ id, type, x, z, yaw = 0, color, accent }) => [
     id,
     {
       id,
       type,
       ...(color ? { color, accent } : {}),
+      ...(id.startsWith("city-car-") || id.startsWith("city-police-")
+        ? { laneAxis: yaw === 0 ? "z" : "x", laneDir: 1, stopped: false }
+        : {}),
+      ...(id.startsWith("race-car-")
+        ? { raceProgress: ((Number(id.slice("race-car-".length)) - 1) * RACE_TRACK_POINTS) / RACE_CAR_COUNT }
+        : {}),
       x,
       y: terrainHeightAt(x, z, seed),
       z,
@@ -416,6 +635,8 @@ function createVehicles(seed = 1) {
       occupantId: null,
     },
   ]));
+  vehicles.raceTrack = raceTrack;
+  return vehicles;
 }
 
 function restoreVehicles(savedVehicles, seed, blocks = null) {
@@ -558,6 +779,15 @@ function createAnimals(seed = 1) {
     });
   });
   return animals;
+}
+
+function serializeCrops(room) {
+  const now = Date.now();
+  return FARM_PLOTS.flatMap((plot) => {
+    const crop = room.crops?.get(plot.id);
+    if (!crop) return [];
+    return [{ id: plot.id, x: plot.x, z: plot.z, stage: cropStage(crop, now) }];
+  });
 }
 
 function serializeAnimals(room) {
@@ -729,6 +959,13 @@ function getRoomBlockAt(room, x, y, z) {
   return room.blocks.has(key) ? room.blocks.get(key) : getBaseBlockAt(x, y, z, room.seed);
 }
 
+function cachedBaseBlockAt(room, x, y, z) {
+  room.baseBlockCache ??= new Map();
+  const key = blockKey(x, y, z);
+  if (!room.baseBlockCache.has(key)) room.baseBlockCache.set(key, getBaseBlockAt(x, y, z, room.seed));
+  return room.baseBlockCache.get(key);
+}
+
 function entityCanOccupy(room, x, z, feetY, radius = 0.3) {
   for (const offsetX of [-radius, 0, radius]) {
     for (const offsetZ of [-radius, 0, radius]) {
@@ -738,7 +975,7 @@ function entityCanOccupy(room, x, z, feetY, radius = 0.3) {
         const key = blockKey(blockX, blockY, blockZ);
         const type = room.blocks.has(key)
           ? room.blocks.get(key)
-          : getBaseBlockAt(blockX, blockY, blockZ, room.seed);
+          : cachedBaseBlockAt(room, blockX, blockY, blockZ);
         const doorBaseY = type === "oak_door" ? doorBaseYAt(room, blockX, blockY, blockZ) : null;
         const openDoor = doorBaseY !== null &&
           room.openDoors?.has(blockKey(blockX, doorBaseY, blockZ));
@@ -758,19 +995,15 @@ function botCanMove(room, bot, x, z) {
   return entityCanOccupy(room, x, z, nextGround + 1, bot.aquatic ? 0.2 : 0.35);
 }
 
-function findNearbyPlayer(room, players, bot, range) {
-  let nearest = null;
-  let nearestDistance = range;
+const BOT_SIMULATION_RANGE = 60;
+
+// Bots far from every player are not simulated or sent to clients.
+function isBotNearPlayers(room, players, bot) {
   for (const id of room.members) {
     const candidate = players.get(id);
-    if (!candidate || candidate.health <= 0) continue;
-    const distance = Math.hypot(candidate.x - bot.x, candidate.z - bot.z);
-    if (distance < nearestDistance) {
-      nearest = candidate;
-      nearestDistance = distance;
-    }
+    if (candidate && Math.hypot(candidate.x - bot.x, candidate.z - bot.z) <= BOT_SIMULATION_RANGE) return true;
   }
-  return nearest ? { player: nearest, distance: nearestDistance } : null;
+  return false;
 }
 
 function chooseBotStep(room, bot, step) {
@@ -812,6 +1045,135 @@ function chooseBotStep(room, bot, step) {
     }
   }
   return best;
+}
+
+const BOT_TALK_DURATION_MS = 10000;
+const BOT_STEP = 0.7; // units per bot tick (250ms)
+const CITY_CAR_STEP = 1.2; // units per traffic tick (250ms)
+const CITY_CAR_STOP_AHEAD = 5; // a city car stops when someone is this close ahead in its lane
+const ROAD_CAR_CLEARANCE = 9; // bots wait before stepping onto a road this close to a moving car
+
+function isCityCar(vehicle) {
+  return vehicle.id.startsWith("city-car-") || vehicle.id.startsWith("city-police-");
+}
+
+function isRoadAt(room, x, z) {
+  return getBaseBlockAt(Math.round(x), 0, Math.round(z), room.seed) === "black_concrete";
+}
+
+// True when a moving city car is close enough that a bot should wait before stepping onto the road.
+function movingCarNear(room, x, z) {
+  for (const vehicle of room.vehicles.values()) {
+    if (!isCityCar(vehicle) || vehicle.occupantId || vehicle.stopped) continue;
+    if (Math.hypot(wrapPlanetX(vehicle.x - x), vehicle.z - z) <= ROAD_CAR_CLEARANCE) return true;
+  }
+  return false;
+}
+
+// True when a player or bot stands on the car's lane a few units ahead of it.
+function pedestrianAhead(room, vehicle, axis, dir, players) {
+  const isBlocking = (x, z) => {
+    const offsetX = wrapPlanetX(x - vehicle.x);
+    const along = (axis === "z" ? z - vehicle.z : offsetX) * dir;
+    const across = axis === "z" ? Math.abs(offsetX) : Math.abs(z - vehicle.z);
+    return along > 0 && along <= CITY_CAR_STOP_AHEAD && across <= 1.5;
+  };
+  for (const id of room.members) {
+    const player = players.get(id);
+    if (!player || player.health <= 0 || player.vehicleId) continue;
+    if (isBlocking(player.x, player.z)) return true;
+  }
+  for (const bot of room.bots.values()) {
+    if (!bot.restaurantShopId && isBlocking(bot.x, bot.z)) return true;
+  }
+  return false;
+}
+
+// Drives unoccupied city cars along their lane, stopping for pedestrians and turning back at road ends.
+function updateCityTraffic(room, players) {
+  for (const vehicle of room.vehicles.values()) {
+    if (!isCityCar(vehicle) || vehicle.occupantId) continue;
+    const axis = vehicle.laneAxis ?? "z";
+    const dir = vehicle.laneDir ?? 1;
+    if (pedestrianAhead(room, vehicle, axis, dir, players)) {
+      vehicle.stopped = true;
+      continue;
+    }
+    vehicle.stopped = false;
+    const nextX = axis === "x" ? vehicle.x + dir * CITY_CAR_STEP : vehicle.x;
+    const nextZ = axis === "z" ? vehicle.z + dir * CITY_CAR_STEP : vehicle.z;
+    if (!isRoadAt(room, nextX, nextZ)) {
+      vehicle.laneDir = -dir;
+      continue;
+    }
+    vehicle.x = nextX;
+    vehicle.z = nextZ;
+    vehicle.y = terrainHeightAt(nextX, nextZ, room.seed);
+    vehicle.yaw = axis === "z" ? (dir > 0 ? 0 : Math.PI) : (dir > 0 ? -Math.PI / 2 : Math.PI / 2);
+  }
+}
+
+// Racer cars loop the racing oval at a steady pace. A player can still enter one and drive it.
+function updateRaceCars(room) {
+  const track = room.vehicles.raceTrack;
+  if (!track) return;
+  const spacing = raceTrackSpacing();
+  for (const vehicle of room.vehicles.values()) {
+    if (!isRaceCar(vehicle) || vehicle.occupantId) continue;
+    const count = track.length;
+    vehicle.raceProgress = (vehicle.raceProgress + RACE_CAR_STEP / spacing) % count;
+    const index = Math.floor(vehicle.raceProgress);
+    const fraction = vehicle.raceProgress - index;
+    const from = track[index];
+    const to = track[(index + 1) % count];
+    const x = from.x + (to.x - from.x) * fraction;
+    const z = from.z + (to.z - from.z) * fraction;
+    vehicle.x = x;
+    vehicle.z = z;
+    vehicle.y = terrainHeightAt(x, z, room.seed);
+    vehicle.yaw = Math.atan2(-(to.x - from.x), to.z - from.z);
+  }
+}
+
+// Farmer bots walk to a ripe plot to harvest it, or an empty plot to plant it, then wait briefly.
+function updateFarmerBot(room, bot, now) {
+  if (now < bot.farmWaitUntil) return;
+  room.crops ??= new Map();
+  const ripe = FARM_PLOTS.find((plot) => {
+    const crop = room.crops.get(plot.id);
+    return crop && cropStage(crop, now) === "ripe";
+  });
+  const claimedByOther = (plot) => [...room.bots.values()].some((other) => (
+    other !== bot && other.farmer && other.farmPlotId === plot.id
+  ));
+  const plot = ripe ?? FARM_PLOTS.find((candidate) => !room.crops.has(candidate.id) && !claimedByOther(candidate));
+  if (!plot) return;
+  bot.farmPlotId = plot.id;
+  bot.targetX = plot.x + 2;
+  bot.targetZ = plot.z;
+  if (Math.hypot(wrapPlanetX(bot.x - plot.x), bot.z - plot.z) > 2.5) return;
+  if (ripe) room.crops.delete(plot.id);
+  else room.crops.set(plot.id, { plantedAt: now, ownerId: bot.id });
+  bot.farmPlotId = null;
+  bot.farmWaitUntil = now + 2000;
+  bot.targetX = bot.x;
+  bot.targetZ = bot.z;
+}
+
+// While a player talks to a villager, the villager stands still and faces that player.
+function engageBotWithPlayer(bot, player, now = Date.now()) {
+  bot.talkingPlayerId = player.id;
+  bot.talkUntil = now + BOT_TALK_DURATION_MS;
+  bot.targetX = bot.x;
+  bot.targetZ = bot.z;
+  bot.walking = false;
+  bot.stuckTicks = 0;
+  faceBotToward(bot, player);
+}
+
+function faceBotToward(bot, target) {
+  const angle = Math.atan2(target.z - bot.z, wrapPlanetX(target.x - bot.x));
+  bot.yaw = Math.atan2(-Math.cos(angle), Math.sin(angle));
 }
 
 function chooseBotWanderTarget(room, bot) {
@@ -1203,7 +1565,7 @@ export function createGameServer({
       mountId: mountId ?? null,
       sittingAt: sittingAt ?? null,
     })),
-    bots: [...room.bots.values()],
+    bots: [...room.bots.values()].filter((bot) => bot.restaurantShopId || isBotNearPlayers(room, players, bot)),
     animals: serializeAnimals(room),
     monsters: serializeMonsters(room),
     drops: [...room.droppedItems.values()].map(({ id, item, count, x, z }) => ({
@@ -1214,6 +1576,7 @@ export function createGameServer({
       z,
     })),
     vehicles: [...room.vehicles.values()],
+    crops: serializeCrops(room),
     openDoors: [...(room.openDoors ?? [])],
     properties: [...(room.properties ?? new Map()).entries()].map(([id, property]) => ({ id, ...property })),
   });
@@ -1324,17 +1687,27 @@ export function createGameServer({
     for (const room of rooms.values()) {
       if (!room.started) continue;
       for (const bot of room.bots.values()) {
+        if (!bot.restaurantShopId && !isBotNearPlayers(room, players, bot)) continue;
         if (bot.restaurantShopId) {
           bot.walking = false;
           continue;
         }
-        if (now >= bot.nextDecisionAt) {
-          const nearby = findNearbyPlayer(room, players, bot, 10);
-          if (nearby) {
-            bot.targetX = nearby.distance > 2.2 ? nearby.player.x : bot.x;
-            bot.targetZ = nearby.distance > 2.2 ? nearby.player.z : bot.z;
-            bot.behavior = "follow";
-          } else if (bot.behavior === "follow" || bot.behavior === "idle"
+        if (bot.talkUntil) {
+          if (now < bot.talkUntil) {
+            const talker = players.get(bot.talkingPlayerId);
+            if (talker) faceBotToward(bot, talker);
+            bot.walking = false;
+            continue;
+          }
+          // Talk finished: pause briefly before wandering again.
+          bot.talkUntil = 0;
+          bot.talkingPlayerId = null;
+          bot.behavior = "idle";
+          bot.nextDecisionAt = now + 1500 + Math.random() * 2000;
+        }
+        if (bot.farmer) updateFarmerBot(room, bot, now);
+        else if (now >= bot.nextDecisionAt) {
+          if (bot.behavior === "follow" || bot.behavior === "idle"
             || Math.hypot(bot.targetX - bot.x, bot.targetZ - bot.z) < 1) {
             const target = chooseBotWanderTarget(room, bot);
             bot.targetX = target.x;
@@ -1347,16 +1720,25 @@ export function createGameServer({
         const deltaX = bot.targetX - bot.x;
         const deltaZ = bot.targetZ - bot.z;
         const distance = Math.hypot(deltaX, deltaZ);
-        const nearby = bot.behavior === "follow" ? findNearbyPlayer(room, players, bot, 10) : null;
-        const stopDistance = nearby ? 2.2 : 0.45;
+        const stopDistance = 0.45;
         if (distance <= stopDistance) {
+          if (bot.behavior === "wander") {
+            // Arrived: idle for a moment instead of turning toward a new target every tick.
+            bot.behavior = "idle";
+            bot.nextDecisionAt = now + 1500 + Math.random() * 2000;
+          }
           bot.walking = false;
           bot.stuckTicks = 0;
           continue;
         }
 
-        const step = Math.min(0.32, distance - stopDistance);
+        const step = Math.min(BOT_STEP, distance - stopDistance);
         const movement = chooseBotStep(room, bot, step);
+        if (movement && isRoadAt(room, movement.x, movement.z) && movingCarNear(room, movement.x, movement.z)) {
+          // Wait for passing traffic before crossing onto the road.
+          bot.walking = false;
+          continue;
+        }
         if (movement) {
           bot.x = movement.x;
           bot.z = movement.z;
@@ -1376,6 +1758,8 @@ export function createGameServer({
           }
         }
       }
+      updateCityTraffic(room, players);
+      updateRaceCars(room);
       for (const animal of room.animals.values()) {
         if (animal.riderId) continue;
         if (animal.flying) {
@@ -1586,7 +1970,7 @@ export function createGameServer({
           name: roomName || `${player.name}'s World`,
           hostId: player.id,
           members: new Set([player.id]),
-          mode: message.mode === "design" ? "design" : "survival",
+          mode: message.mode === "design" ? "design" : message.mode === "tank-war" ? "tank-war" : "survival",
           seed,
           started: false,
           blocks: new Map(),
@@ -1595,7 +1979,7 @@ export function createGameServer({
           blockRebuilds: new Map(),
           blockRebuildTimers: new Map(),
           droppedItems: new Map(),
-          vehicles: createVehicles(seed),
+          vehicles: createVehicles(seed, message.mode === "tank-war" ? "tank-war" : "survival"),
           properties: new Map(),
           savedPlayers: new Map(),
           bots: new Map([...bots].map(([botId, bot]) => [botId, { ...bot }])),
@@ -1697,6 +2081,16 @@ export function createGameServer({
           return;
         }
         room.started = true;
+        if (room.mode === "tank-war") {
+          // Each player owns one army base; the second base goes to the next member, if any.
+          const otherMemberId = [...room.members].find((id) => id !== room.hostId) ?? null;
+          room.tankWarOwners = [room.hostId, otherMemberId];
+          room.tankWarOver = false;
+          for (const vehicle of room.vehicles.values()) {
+            if (vehicle.id.startsWith("city-tank-")) vehicle.ownerId = room.tankWarOwners[0];
+            if (vehicle.id.startsWith("rival-tank-")) vehicle.ownerId = room.tankWarOwners[1];
+          }
+        }
         for (const memberId of room.members) {
           const member = players.get(memberId);
           if (member) sendInitial(member, room);
@@ -2177,6 +2571,16 @@ export function createGameServer({
               }
             }
             room.vehicles.delete(targetVehicle.id);
+            if (room.mode === "tank-war" && !room.tankWarOver) {
+              const hasTanks = (prefix) => [...room.vehicles.values()].some((tank) => tank.id.startsWith(prefix));
+              const cityAlive = hasTanks("city-tank-");
+              const rivalAlive = hasTanks("rival-tank-");
+              if (!cityAlive || !rivalAlive) {
+                room.tankWarOver = true;
+                room.winnerId = cityAlive ? room.tankWarOwners[0] : room.tankWarOwners[1];
+                broadcastToRoom(room, { type: "tank_war_over", winnerId: room.winnerId ?? null });
+              }
+            }
           }
           writeJson(socket, {
             type: "attack_result",
@@ -2495,6 +2899,62 @@ export function createGameServer({
         return;
       }
 
+      if (message.type === "bot_trade") {
+        const room = rooms.get(player.roomId);
+        const bot = room?.bots.get(message.botId);
+        const item = typeof message.item === "string" ? message.item : "";
+        const count = Number(message.count);
+        if (!room?.started || player.health <= 0 || !bot?.missionGiver || !Number.isInteger(count) || count < 1 ||
+          Math.hypot(wrapPlanetX(bot.x - player.x), bot.z - player.z) > 4) {
+          writeJson(socket, { type: "error", message: "Move closer to a villager to trade." });
+          return;
+        }
+        if (!removeItems(player.inventory, item, count)) {
+          writeJson(socket, { type: "error", message: "You do not have that many of that item." });
+          return;
+        }
+        const fish = FISH_TYPE_BY_ID.get(item);
+        const payout = fish ? fish.value * count : 0;
+        player.coins = (player.coins ?? 0) + payout;
+        if (fish) {
+          applyMissionEvent(player, "sell_fish", count);
+          sendMissionState(player);
+        }
+        writeJson(socket, {
+          type: "bot_trade_result",
+          botName: bot.name,
+          item,
+          count,
+          value: payout,
+          coins: player.coins,
+          message: payout > 0
+            ? `${bot.name} bought ${count} for ${payout} coins.`
+            : `${bot.name} thanks you for the gift!`,
+        });
+        writeJson(socket, { type: "inventory", items: inventoryItems(player.inventory) });
+        writeJson(socket, { type: "currency", coins: player.coins });
+        return;
+      }
+
+      if (message.type === "bot_talk") {
+        const room = rooms.get(player.roomId);
+        const bot = room?.bots.get(message.botId);
+        if (!room?.started || player.health <= 0 || !bot?.missionGiver ||
+          Math.hypot(wrapPlanetX(bot.x - player.x), bot.z - player.z) > 4) {
+          writeJson(socket, { type: "error", message: "Move closer to a villager to talk." });
+          return;
+        }
+        engageBotWithPlayer(bot, player);
+        const greetings = ["Good to see you! Got a minute?", "The creatures have been restless lately.", "Fair weather for a walk, isn't it?", "Stop by the board if you want work."];
+        expireMissionIfDue(player);
+        const added = bot.missionTemplateId ? addMissionToBoard(player.missions, bot.missionTemplateId, Date.now()) : null;
+        if (added) player.missions = added.missions;
+        sendMissionState(player);
+        const index = bot.id.split("").reduce((sum, char) => sum + char.charCodeAt(0), 0) % greetings.length;
+        writeJson(socket, { type: "bot_greeting", botId: bot.id, botName: bot.name, greeting: added ? (added.error ?? `I've added "${MISSION_TEMPLATE_BY_ID.get(bot.missionTemplateId).label}" to your mission board. Want to take it?`) : greetings[index] });
+        return;
+      }
+
       if (message.type === "restaurant_talk") {
         const room = rooms.get(player.roomId);
         const bot = room?.bots.get(message.botId);
@@ -2562,9 +3022,49 @@ export function createGameServer({
         return;
       }
 
+      if (message.type === "plant_crop" || message.type === "harvest_crop") {
+        const room = rooms.get(player.roomId);
+        if (!room?.started || player.health <= 0) return;
+        const plot = FARM_PLOTS[Number(message.plot)];
+        if (!plot) {
+          writeJson(socket, { type: "error", message: "That plot does not exist." });
+          return;
+        }
+        if (Math.hypot(wrapPlanetX(player.x - plot.x), player.z - plot.z) > 6) {
+          writeJson(socket, { type: "error", message: "Walk up to the plot first." });
+          return;
+        }
+        room.crops ??= new Map();
+        const crop = room.crops.get(plot.id);
+        if (message.type === "plant_crop") {
+          if (crop) {
+            writeJson(socket, { type: "error", message: "This plot is already planted." });
+            return;
+          }
+          if (!removeItems(player.inventory, CROP_SEED_ITEM, 1)) {
+            writeJson(socket, { type: "error", message: "You need a wheat seed to plant." });
+            return;
+          }
+          room.crops.set(plot.id, { plantedAt: Date.now(), ownerId: player.id });
+          writeJson(socket, { type: "farm_result", action: "plant", plot: plot.id, message: "Planted wheat." });
+        } else {
+          if (!crop || cropStage(crop) !== "ripe") {
+            writeJson(socket, { type: "error", message: "Nothing ripe to harvest here." });
+            return;
+          }
+          room.crops.delete(plot.id);
+          addItems(player.inventory, CROP_HARVEST_ITEM, CROP_HARVEST_YIELD);
+          addItems(player.inventory, CROP_SEED_ITEM, CROP_HARVEST_SEEDS);
+          writeJson(socket, { type: "farm_result", action: "harvest", plot: plot.id, message: "Harvested wheat." });
+        }
+        writeJson(socket, { type: "inventory", items: inventoryItems(player.inventory) });
+        return;
+      }
+
       if (message.type === "eat_food") {
         const room = rooms.get(player.roomId);
-        const meal = RESTAURANT_MENU_BY_ID.get(message.item);
+        const meal = RESTAURANT_MENU_BY_ID.get(message.item)
+          ?? (message.item === CROP_HARVEST_ITEM ? { id: CROP_HARVEST_ITEM, name: "Wheat", healing: CROP_HEALING } : null);
         if (!room?.started || player.health <= 0) return;
         if (!meal) {
           writeJson(socket, { type: "error", message: "That food cannot be eaten." });
@@ -2962,6 +3462,7 @@ export function createGameServer({
         if (
           !vehicle ||
           (vehicle.occupantId && vehicle.occupantId !== player.id) ||
+          (room.mode === "tank-war" && vehicle.type === "tank" && vehicle.ownerId !== player.id) ||
           Math.hypot(wrapPlanetX(vehicle.x - player.x), vehicle.z - player.z) > 4
         ) {
           writeJson(socket, { type: "vehicle_result", vehicleId: null, message: "Move closer to an available vehicle." });
@@ -3255,26 +3756,25 @@ export function createGameServer({
     rooms,
     players,
     bots,
+    listSavedWorlds() {
+      return [...rooms.values()]
+        .filter((room) => room.saved && !room.deleting)
+        .map((room) => ({ id: room.id, name: room.name, mode: room.mode, players: room.members.size }));
+    },
     async deleteSavedWorld(requestedRoomId) {
       const roomId = typeof requestedRoomId === "string" ? requestedRoomId.toUpperCase() : "";
       const room = rooms.get(roomId);
       if (!/^[A-Z0-9]{6}$/.test(roomId) || !room?.saved) {
         return { success: false, status: 404, message: "That saved world could not be found." };
       }
-      if (room.members.size > 0 || room.deleting) {
-        return {
-          success: false,
-          status: 409,
-          message: room.deleting
-            ? "That saved world is already being deleted."
-            : "Players are still in that world. Ask them to leave before deleting it."
-        };
+      if (room.deleting) {
+        return { success: false, status: 409, message: "That saved world is already being deleted." };
       }
 
       room.deleting = true;
       try {
         await room.autosavePromise;
-        if (rooms.get(room.id) !== room || room.members.size > 0) {
+        if (rooms.get(room.id) !== room) {
           room.deleting = false;
           return {
             success: false,
@@ -3283,6 +3783,15 @@ export function createGameServer({
           };
         }
         await removeSavedRoom(room, saveDirectory, pool);
+        for (const memberId of room.members) {
+          const member = players.get(memberId);
+          if (!member) continue;
+          releaseVehicle(room, member);
+          member.roomId = null;
+          writeJson(member.socket, { type: "room_left", message: `${room.name} was deleted by an admin.` });
+        }
+        room.members.clear();
+        room.hostId = null;
         if (room.disconnectTimer) clearTimeout(room.disconnectTimer);
         rooms.delete(room.id);
         sendLobbyRooms();

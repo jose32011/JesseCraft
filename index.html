@@ -25,7 +25,7 @@
             <p class="eyebrow">YOUR ADVENTURE</p>
             <h2>Choose a world</h2>
             <label class="lobby-field">Player name<input id="lobby-player-name" maxlength="16" value="Explorer" autocomplete="nickname" /></label>
-            <label class="lobby-field world-mode-field">World mode<select id="world-mode"><option value="survival">Survival · gather resources</option><option value="design">Design · unlimited blocks</option></select></label>
+            <label class="lobby-field world-mode-field">World mode<select id="world-mode"><option value="survival">Survival · gather resources</option><option value="design">Design · unlimited blocks</option><option value="tank-war">Tank war · two army bases</option></select></label>
             <div class="lobby-create-row">
               <label class="lobby-field">New world<input id="room-name-input" maxlength="30" placeholder="Name your world" /></label>
               <button class="lobby-primary" id="create-room-button" type="button">Create world</button>
@@ -110,6 +110,7 @@
         <section class="missions-active" id="missions-active" aria-label="Active mission"></section>
         <div class="missions-offers" id="missions-offers"></div>
         <button type="button" id="abandon-mission-button">Abandon mission</button>
+        <button type="button" id="trade-fish-button">Sell all fish to villager</button>
         <p class="shop-notice" id="missions-notice" role="status"></p>
       </section>
 

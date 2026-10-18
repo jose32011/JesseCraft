@@ -683,6 +683,36 @@ function structureBlockAt(x, y, z, seed = 1) {
   return null;
 }
 
+const ISLAND_CELL_SIZE = 100;
+
+function namedIslands(seed) {
+  return [
+    { x: 500 + Math.floor(seededValue(10, 20, seed) * 17) - 8, z: 52 + Math.floor(seededValue(20, 30, seed) * 17) - 8, radius: 68 },
+    { x: -520 + Math.floor(seededValue(30, 40, seed) * 17) - 8, z: -100 + Math.floor(seededValue(40, 50, seed) * 17) - 8, radius: 72 },
+    { x: 120 + Math.floor(seededValue(50, 60, seed) * 17) - 8, z: 360 + Math.floor(seededValue(60, 70, seed) * 17) - 8, radius: 68 },
+    { x: -250 + Math.floor(seededValue(70, 80, seed) * 17) - 8, z: -350 + Math.floor(seededValue(80, 90, seed) * 17) - 8, radius: 64 },
+  ];
+}
+
+// Each grid cell holds at most one island, so the map is mostly sea with islands spread across it.
+function generatedIslandAt(cellX, cellZ, seed) {
+  if (seededValue(cellX * 2.3 + 5, cellZ * 3.7 - 9, seed) > 0.55) return null;
+  return {
+    x: cellX * ISLAND_CELL_SIZE + 15 + Math.floor(seededValue(cellX * 4.1, cellZ * 1.9 + 3, seed) * 70),
+    z: cellZ * ISLAND_CELL_SIZE + 15 + Math.floor(seededValue(cellX * 1.3 - 7, cellZ * 5.1, seed) * 70),
+    radius: 22 + Math.floor(seededValue(cellX * 6.7, cellZ * 2.9 + 11, seed) * 26),
+  };
+}
+
+// Returns the island's ground height at (x, z), or null when the point is in the sea.
+function islandHeightAt(x, z, island, seed) {
+  const shapeRadius = island.radius * (1 + 0.2 * noise2d(x * 0.09 + island.x, z * 0.09 + island.z, seed));
+  const margin = shapeRadius - Math.hypot(x - island.x, z - island.z);
+  if (margin < 0) return null;
+  const bump = (noise2d(x * 0.06 + island.x, z * 0.06 + island.z, seed) + 1) / 2;
+  return Math.round((2 + Math.round(bump * 4)) * smoothStep(0, 10, margin));
+}
+
 export function terrainHeightAt(x, z, seed = 1) {
   x = Math.max(PLANET_MIN_X, Math.min(PLANET_MAX_X, x));
   z = Math.max(PLANET_MIN_Z, Math.min(PLANET_MAX_Z, z));
@@ -714,38 +744,29 @@ export function terrainHeightAt(x, z, seed = 1) {
     mountains * (5 + ridges * 17 + roughness * 2);
 
   const worldHeight = Math.max(0, Math.min(30, Math.round(height)));
-  const islandCenters = [
-    { x: 0, z: 0, radius: 318 },
-    { x: 500 + Math.floor(seededValue(10, 20, worldSeed) * 17) - 8, z: 52 + Math.floor(seededValue(20, 30, worldSeed) * 17) - 8, radius: 68 },
-    { x: -520 + Math.floor(seededValue(30, 40, worldSeed) * 17) - 8, z: -100 + Math.floor(seededValue(40, 50, worldSeed) * 17) - 8, radius: 72 },
-    { x: 120 + Math.floor(seededValue(50, 60, worldSeed) * 17) - 8, z: 360 + Math.floor(seededValue(60, 70, worldSeed) * 17) - 8, radius: 68 },
-    { x: -250 + Math.floor(seededValue(70, 80, worldSeed) * 17) - 8, z: -350 + Math.floor(seededValue(80, 90, worldSeed) * 17) - 8, radius: 64 },
-  ];
-  let nearest = Infinity;
-  let radius = 0;
-  for (const island of islandCenters) {
-    const distanceToIsland = Math.hypot(x - island.x, z - island.z);
-    if (distanceToIsland < nearest) {
-      nearest = distanceToIsland;
-      if (island.x === 0 && island.z === 0) {
-        const direction = Math.atan2(x, z);
-        const verdantDirection = Math.atan2(120, 360);
-        const angleDifference = Math.abs(Math.atan2(
-          Math.sin(direction - verdantDirection),
-          Math.cos(direction - verdantDirection),
-        ));
-        const seaPassage = smoothStep(0.07, 0.14, angleDifference);
-        radius = 260 + seaPassage * (island.radius - 260);
-      } else {
-        radius = island.radius;
-      }
+  const homeRadius = 230 * (1 + 0.12 * ridgeNoise);
+  const homeMargin = homeRadius - distance;
+  if (homeMargin >= 0) return Math.round(worldHeight * smoothStep(0, 18, homeMargin));
+
+  for (const location of WORLD_LOCATIONS) {
+    if (location.type === "island") continue;
+    if (Math.hypot(x - location.x, z - location.z) <= 26) return Math.min(4, worldHeight);
+  }
+
+  const islands = namedIslands(worldSeed);
+  const cellX = Math.floor(x / ISLAND_CELL_SIZE);
+  const cellZ = Math.floor(z / ISLAND_CELL_SIZE);
+  for (let i = cellX - 1; i <= cellX + 1; i++) {
+    for (let j = cellZ - 1; j <= cellZ + 1; j++) {
+      const island = generatedIslandAt(i, j, worldSeed);
+      if (island) islands.push(island);
     }
   }
-  if (nearest >= radius) return oceanSeabedAt(x, z, worldSeed);
-  if (nearest >= radius - 18) {
-    return Math.min(worldHeight, Math.round(worldHeight * (1 - smoothStep(radius - 18, radius, nearest))));
+  for (const island of islands) {
+    const landHeight = islandHeightAt(x, z, island, worldSeed);
+    if (landHeight !== null) return landHeight;
   }
-  return worldHeight;
+  return oceanSeabedAt(x, z, worldSeed);
 }
 
 function seededValue(x, z, seed) {

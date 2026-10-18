@@ -91,7 +91,7 @@ test("generates seeded islands, ocean water, and connected landmark routes", () 
   assert.ok(seaFloor <= -12 && seaFloor >= -20);
   assert.equal(getBaseBlockAt(700, seaFloor + 1, 52, seed), "water");
   assert.equal(getBaseBlockAt(700, seaFloor, 52, seed), "sand");
-  for (const [x, z] of [[350, 52], [420, 52], [580, 52], [500, 150]]) {
+  for (const [x, z] of [[350, 52], [350, -40], [420, -60], [580, -60], [500, -120]]) {
     assert.ok(terrainHeightAt(x, z, seed) < 0);
     assert.equal(getBaseBlockAt(x, 0, z, seed), "water");
   }
@@ -105,7 +105,7 @@ test("generates seeded islands, ocean water, and connected landmark routes", () 
   const islandChunk = createChunkBlocks(Math.floor(700 / 16), Math.floor(52 / 16), seed);
   assert.equal(islandChunk.get(blockKey(700, seaFloor + 1, 52)), "water");
   assert.equal(islandChunk.get(blockKey(700, seaFloor, 52)), "sand");
-  for (const [x, z] of [[94, 281], [-187, -262]]) {
+  for (const [x, z] of [[-100, 300], [-400, -300], [600, 120]]) {
     const channelFloor = terrainHeightAt(x, z, seed);
     assert.ok(channelFloor <= -12);
     assert.equal(getBaseBlockAt(x, 0, z, seed), "water");

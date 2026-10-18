@@ -4,6 +4,7 @@ import {
   MISSION_BOARD_SIZE,
   MISSION_TIME_LIMIT_MS,
   acceptMission,
+  addMissionToBoard,
   createEmptyMissions,
   failMission,
   isMissionExpired,
@@ -11,6 +12,27 @@ import {
   progressMission,
   refreshMissionOffers,
 } from "../shared/missions.js";
+
+test("addMissionToBoard adds one specific mission and rejects duplicates and a full board", () => {
+  const first = addMissionToBoard(createEmptyMissions(), "sell-fish-small", 1);
+  assert.equal(first.error, null);
+  assert.equal(first.missions.offers.length, 1);
+  assert.equal(first.missions.offers[0].templateId, "sell-fish-small");
+
+  const duplicate = addMissionToBoard(first.missions, "sell-fish-small", 2);
+  assert.match(duplicate.error, /already/);
+  assert.equal(duplicate.missions.offers.length, 1);
+
+  const unknown = addMissionToBoard(first.missions, "nope", 3);
+  assert.ok(unknown.error);
+
+  let board = first.missions;
+  board = addMissionToBoard(board, "defeat-small", 4).missions;
+  board = addMissionToBoard(board, "defeat-large", 5).missions;
+  assert.equal(board.offers.length, MISSION_BOARD_SIZE);
+  const full = addMissionToBoard(board, "sell-fish-large", 6);
+  assert.match(full.error, /full/);
+});
 
 test("refreshMissionOffers fills the board with distinct missions", () => {
   const missions = refreshMissionOffers(createEmptyMissions(), () => 0);

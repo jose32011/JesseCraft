@@ -125,6 +125,7 @@ const missionsActive = document.querySelector("#missions-active");
 const missionsOffers = document.querySelector("#missions-offers");
 const missionsNotice = document.querySelector("#missions-notice");
 const abandonMissionButton = document.querySelector("#abandon-mission-button");
+const tradeFishButton = document.querySelector("#trade-fish-button");
 let missionState = null;
 let missionClockOffset = 0;
 let missionTimer = null;
@@ -227,6 +228,20 @@ function nearestFoodShop(maxDistance = 7) {
     const distance = Math.hypot(wrapPlanetX(shop.x - playerPosition.x), shop.z - playerPosition.z);
     if (distance < nearestDistance) {
       nearest = shop;
+      nearestDistance = distance;
+    }
+  }
+  return nearest;
+}
+
+function nearestMissionGiver(maxDistance = 4) {
+  let nearest = null;
+  let nearestDistance = maxDistance;
+  for (const bot of state.roomBots) {
+    if (!bot.missionGiver) continue;
+    const distance = Math.hypot(wrapPlanetX(bot.x - playerPosition.x), bot.z - playerPosition.z);
+    if (distance < nearestDistance) {
+      nearest = bot;
       nearestDistance = distance;
     }
   }
@@ -804,9 +819,15 @@ for (const path of Object.keys(modAssetUrls)) {
         : "mod-low-poly-plane";
   assetModelFiles.set(`${assetPrefix}/${fileName}`, path);
 }
+const kenneyNatureUrls = import.meta.glob("./assets/kenney-nature-kit/*.glb", { query: "?url", import: "default", eager: true });
+for (const path of Object.keys(kenneyNatureUrls)) {
+  assetModelFiles.set(`kenney-nature-kit/${path.split("/").at(-1)}`, path);
+}
 for (const path of Object.keys(foodPackAssetUrls)) {
   assetModelFiles.set(`food-pack/${path.split("/").at(-1)}`, path);
 }
+
+const cropMeshes = new Map();
 const droppedItemMeshes = new Map();
 const marinePlantMeshes = [];
 const ambientFish = [];
@@ -884,11 +905,11 @@ let toastTimer;
 let worldRenderTimer;
 let chunkWorker = null;
 
-function notify(message) {
+function notify(message, duration = 2400) {
   toast.textContent = message;
   toast.classList.add("visible");
   window.clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => toast.classList.remove("visible"), 2400);
+  toastTimer = window.setTimeout(() => toast.classList.remove("visible"), duration);
 }
 
 function updateCamera() {
@@ -1343,7 +1364,7 @@ function loadPlacedAssetModel(assetKey) {
       const gltf = await placedAssetModelLoader.parseAsync(JSON.stringify(document), "");
       scene = gltf.scene;
     } else {
-      const url = modAssetUrls[sourcePath] ?? kenneyBlasterUrls[sourcePath] ?? foodPackAssetUrls[sourcePath];
+      const url = modAssetUrls[sourcePath] ?? kenneyBlasterUrls[sourcePath] ?? foodPackAssetUrls[sourcePath] ?? kenneyNatureUrls[sourcePath];
       if (typeof url !== "string") {
         throw new Error(`The model for ${assetKey} is unavailable.`);
       }
@@ -2160,7 +2181,7 @@ function scheduleWorldRender() {
   }, state.vehicleId ? 400 : 100);
 }
 
-function avatarLabel(text, color) {
+function avatarLabel(text, color, height = 1.65) {
   const labelCanvas = document.createElement("canvas");
   labelCanvas.width = 256;
   labelCanvas.height = 64;
@@ -2183,7 +2204,7 @@ function avatarLabel(text, color) {
   texture.colorSpace = THREE.SRGBColorSpace;
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true }));
   sprite.scale.set(1.65, 0.42, 1);
-  sprite.position.y = 1.65;
+  sprite.position.y = height;
   return sprite;
 }
 
@@ -2296,18 +2317,48 @@ function createSwordModel() {
   return group;
 }
 
+// Body-part geometry is identical for every avatar, so it is built once and shared.
+let sharedAvatarGeometries = null;
+function avatarGeometries() {
+  sharedAvatarGeometries ??= {
+    body: new THREE.BoxGeometry(0.48, 0.68, 0.32),
+    head: new THREE.BoxGeometry(0.42, 0.42, 0.42),
+    eye: new THREE.BoxGeometry(0.07, 0.07, 0.02),
+    mouth: new THREE.TorusGeometry(0.07, 0.016, 4, 10, Math.PI),
+    arm: new THREE.BoxGeometry(0.17, 0.55, 0.21),
+    leg: new THREE.BoxGeometry(0.19, 0.48, 0.23),
+    boot: new THREE.BoxGeometry(0.2, 0.12, 0.25),
+    bodyArmor: new THREE.BoxGeometry(0.54, 0.58, 0.37),
+    headArmor: new THREE.BoxGeometry(0.48, 0.2, 0.48),
+  };
+  return sharedAvatarGeometries;
+}
+
 function makeAvatar(entity, isBot = false) {
   const group = new THREE.Group();
   const skin = isBot ? "#e4c39c" : "#ecd2b4";
   const bodyMaterial = new THREE.MeshLambertMaterial({ color: entity.color ?? "#7eaa80" });
   const skinMaterial = new THREE.MeshLambertMaterial({ color: skin });
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.68, 0.32), bodyMaterial);
+  const body = new THREE.Mesh(avatarGeometries().body, bodyMaterial);
   body.position.y = 0.78;
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.42, 0.42), skinMaterial);
+  const head = new THREE.Mesh(avatarGeometries().head, skinMaterial);
   head.position.y = 1.34;
-  const armGeometry = new THREE.BoxGeometry(0.17, 0.55, 0.21);
-  const legGeometry = new THREE.BoxGeometry(0.19, 0.48, 0.23);
-  const bootGeometry = new THREE.BoxGeometry(0.2, 0.12, 0.25);
+  // Face details on the front (-z) of the head so the character looks forward.
+  const faceMaterial = new THREE.MeshLambertMaterial({ color: "#2b2320" });
+  const eyeGeometry = avatarGeometries().eye;
+  for (const side of [-1, 1]) {
+    const eye = new THREE.Mesh(eyeGeometry, faceMaterial);
+    eye.position.set(side * 0.1, 0.04, -0.215);
+    head.add(eye);
+  }
+  // Half ring flipped to a U shape, so the mouth curves up into a smile.
+  const mouth = new THREE.Mesh(avatarGeometries().mouth, faceMaterial);
+  mouth.position.set(0, -0.05, -0.215);
+  mouth.rotation.z = Math.PI;
+  head.add(mouth);
+  const armGeometry = avatarGeometries().arm;
+  const legGeometry = avatarGeometries().leg;
+  const bootGeometry = avatarGeometries().boot;
   const bootMaterial = new THREE.MeshLambertMaterial({ color: "#514d45" });
   const leftArm = new THREE.Group();
   const rightArm = new THREE.Group();
@@ -2317,10 +2368,10 @@ function makeAvatar(entity, isBot = false) {
   const rightBoot = new THREE.Mesh(bootGeometry, bootMaterial);
   const armorMaterial = new THREE.MeshLambertMaterial({ color: "#9caeb6" });
   const helmetMaterial = new THREE.MeshLambertMaterial({ color: "#d1b46d" });
-  const bodyArmor = new THREE.Mesh(new THREE.BoxGeometry(0.54, 0.58, 0.37), armorMaterial);
+  const bodyArmor = new THREE.Mesh(avatarGeometries().bodyArmor, armorMaterial);
   bodyArmor.position.y = 0.8;
   bodyArmor.visible = false;
-  const headArmor = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.2, 0.48), helmetMaterial);
+  const headArmor = new THREE.Mesh(avatarGeometries().headArmor, helmetMaterial);
   headArmor.position.y = 1.55;
   headArmor.visible = false;
   const healthBar = avatarHealthBar(entity.health);
@@ -2339,7 +2390,7 @@ function makeAvatar(entity, isBot = false) {
   group.add(
     body,
     head,
-    avatarLabel(entity.name, "#ffffff"),
+    avatarLabel(entity.name, "#ffffff", 2.3),
     leftArm,
     rightArm,
     leftLeg,
@@ -2607,7 +2658,8 @@ function updateAvatars(
     avatar.visible = !entity.vehicleId;
     if (entity.color) avatar.children[0].material.color.set(entity.color);
     updateAvatarHealth(avatar.userData.healthBar, entity.health);
-    avatar.userData.walking = Boolean(entity.walking);
+    if (isBot) avatar.userData.walking = Boolean(entity.walking);
+    else updateRemotePlayerWalking(avatar, entity);
     if (hasHumanoidPose) {
       const seated = Boolean(entity.sittingAt || entity.seated);
       setAvatarSeatedPose(avatar, seated, Boolean(entity.eating), avatar.userData.gait);
@@ -2638,6 +2690,33 @@ function animateBots(delta) {
     bot.userData.leftArm.rotation.x = -stride * 0.85;
     bot.userData.rightArm.rotation.x = stride * 0.85;
     bot.position.y += bob;
+  }
+}
+
+// The server snapshot does not flag walking for players, so infer it from recent movement.
+function updateRemotePlayerWalking(avatar, entity) {
+  const data = avatar.userData;
+  const previous = data.networkPosition;
+  if (previous && Math.hypot(wrapPlanetX(entity.x - previous.x), entity.z - previous.z) > 0.01) {
+    data.lastMovedAt = performance.now();
+  }
+  data.networkPosition = { x: entity.x, z: entity.z };
+  data.walking = performance.now() - (data.lastMovedAt ?? -Infinity) < 250;
+}
+
+function animateRemotePlayers(delta) {
+  for (const avatar of remotePlayers.values()) {
+    const data = avatar.userData;
+    data.gait += delta * (data.walking ? 12 : 2);
+    if (data.seated) {
+      setAvatarSeatedPose(avatar, true, data.eating, data.gait);
+      continue;
+    }
+    const stride = data.walking ? Math.sin(data.gait) * 0.75 : 0;
+    data.leftLeg.rotation.x = stride;
+    data.rightLeg.rotation.x = -stride;
+    data.leftArm.rotation.x = -stride * 0.85;
+    data.rightArm.rotation.x = stride * 0.85;
   }
 }
 
@@ -3425,6 +3504,7 @@ function updateVehicleButton() {
   const mountedHorse = state.roomAnimals.find(({ id }) => id === state.mountId);
   const nearbyHorse = current || mountedHorse ? null : nearestAvailableHorse();
   const restaurantBot = !current && !mountedHorse ? nearestRestaurantBot() : null;
+  const missionGiver = !current && !mountedHorse ? nearestMissionGiver() : null;
   const atRestaurant = !current && !mountedHorse &&
     isNearRestaurant(playerPosition.x, playerPosition.z, state.seed);
   const inVehicle = Boolean(current || mountedHorse);
@@ -3446,7 +3526,7 @@ function updateVehicleButton() {
   fishButton.hidden = inVehicle;
   fishMenuButton.hidden = inVehicle;
   vehicleButton.hidden = !isCoarsePointer && !current && !nearby && !mountedHorse && !nearbyHorse &&
-    !atRestaurant && !restaurantBot && !state.sittingAt;
+    !atRestaurant && !restaurantBot && !missionGiver && !state.sittingAt;
   vehicleButton.textContent = current
     ? `Exit ${current.type}`
     : mountedHorse
@@ -3455,6 +3535,8 @@ function updateVehicleButton() {
         ? "Stand up"
         : restaurantBot
           ? `Talk to ${restaurantBot.name}`
+      : missionGiver
+        ? `Talk to ${missionGiver.name} for missions`
       : atRestaurant
         ? "Enter dining shop"
         : nearby
@@ -3715,6 +3797,14 @@ function animateAnimals(delta) {
 function updateLocalAvatar() {
   if (!selfAvatar) return;
   selfAvatar.visible = thirdPersonView && state.connected && (!state.vehicleId || state.mountId);
+  // Track local movement so the walk cycle plays; the server snapshot never flags the local player as walking.
+  const selfData = selfAvatar.userData;
+  const previousLocal = selfData.localPosition;
+  if (previousLocal && Math.hypot(wrapPlanetX(playerPosition.x - previousLocal.x), playerPosition.z - previousLocal.z) > 0.01) {
+    selfData.lastMovedAt = performance.now();
+  }
+  selfData.localPosition = { x: playerPosition.x, z: playerPosition.z };
+  selfData.walking = performance.now() - (selfData.lastMovedAt ?? -Infinity) < 250;
   if (!selfAvatar.visible) return;
   const surfaceHeight = playerPosition.y - 1.65 - (state.sittingAt ? 0.5 : 0);
   const point = planetPointAt(playerPosition.x, surfaceHeight, playerPosition.z);
@@ -3739,6 +3829,44 @@ function updateCharacterArmor() {
   }
   updateHeldAssetVisibility();
   updateHeldWeaponVisibility();
+}
+
+function renderCrops(crops) {
+  const ids = new Set(crops.map((crop) => crop.id));
+  for (const [id, mesh] of cropMeshes) {
+    if (!ids.has(id)) {
+      scene.remove(mesh);
+      cropMeshes.delete(id);
+    }
+  }
+
+  for (const crop of crops) {
+    const assetKey = crop.stage === "ripe"
+      ? "kenney-nature-kit/plant_flatTall.glb"
+      : "kenney-nature-kit/plant_flatShort.glb";
+    let mesh = cropMeshes.get(crop.id);
+    if (mesh && mesh.userData.assetKey !== assetKey) {
+      scene.remove(mesh);
+      cropMeshes.delete(crop.id);
+      mesh = null;
+    }
+    if (!mesh) {
+      mesh = new THREE.Group();
+      mesh.userData.assetKey = assetKey;
+      mesh.scale.setScalar(1.6);
+      scene.add(mesh);
+      cropMeshes.set(crop.id, mesh);
+      loadPlacedAssetModel(assetKey).then((model) => {
+        if (!model || cropMeshes.get(crop.id) !== mesh) return;
+        mesh.add(model.clone());
+        scheduleWorldRender();
+      });
+    }
+    mesh.userData.baseY = terrainHeightAt(crop.x, crop.z, state.seed) + 0.2;
+    const point = planetPointAt(crop.x, mesh.userData.baseY, crop.z);
+    mesh.position.set(point.x, point.y, point.z);
+    mesh.quaternion.copy(surfaceQuaternionAt(crop.x, crop.z));
+  }
 }
 
 function renderDroppedItems(drops) {
@@ -3818,6 +3946,7 @@ function applySnapshot(message) {
   updateAvatars(message.monsters ?? [], monsters, true, monsterAvatars, makeMonster, false);
   updateAnimals(state.roomAnimals);
   renderDroppedItems(message.drops ?? []);
+  renderCrops(message.crops ?? []);
   renderWorldMapMarkers(playerList);
   if (!shopPanel.hidden) renderHomeProperties();
 }
@@ -3937,6 +4066,8 @@ function drawWorldMap() {
           color = "#d2c38b";
         } else if (distance <= HARBOR_WATER_OUTER_RADIUS) {
           color = "#286a75";
+        } else if (height < 0) {
+          color = "#2f6f86";
         } else if (height >= 20) {
           color = "#92988a";
         } else if (distance < 228) {
@@ -4095,7 +4226,7 @@ function renderRoomList(container, rooms, emptyMessage) {
     name.textContent = room.name;
     const meta = document.createElement("div");
     meta.className = "lobby-room-meta";
-    meta.textContent = `${room.mode === "design" ? "Design" : "Survival"} · ${room.saved ? "Saved" : `${room.players}/${room.maxPlayers} players · ${room.started ? "In progress" : "Waiting"}`}`;
+    meta.textContent = `${room.mode === "design" ? "Design" : room.mode === "tank-war" ? "Tank war" : "Survival"} · ${room.saved ? "Saved" : `${room.players}/${room.maxPlayers} players · ${room.started ? "In progress" : "Waiting"}`}`;
     description.append(name, meta);
     const join = document.createElement("button");
     join.type = "button";
@@ -4229,6 +4360,7 @@ function connect() {
       localStorage.removeItem(activeRoomStorageKey);
       resumeRequested = false;
       showLobbyHome();
+      if (message.message) showLobbyNotice(message.message);
     } else if (message.type === "name_result") {
       lobbyPlayerNameInput.value = message.name;
       profileNameInput.value = message.name;
@@ -4309,6 +4441,11 @@ function connect() {
       updateCamera();
       updateLocalAvatar();
       notify(message.message);
+    } else if (message.type === "bot_greeting") {
+      // Stop the player while the villager's reply (e.g. a mission offer) is shown.
+      botTalkFreezeUntil = Date.now() + BOT_TALK_FREEZE_MS;
+      moveKeys.clear();
+      notify(`${message.botName}: ${message.greeting}`, BOT_TALK_FREEZE_MS);
     } else if (message.type === "restaurant_dialogue") {
       const shop = listCityShops(state.seed).find(({ id }) => id === message.shopId);
       state.activeFoodShopId = message.shopId;
@@ -4515,6 +4652,9 @@ function connect() {
     } else if (message.type === "mission_result") {
       missionsNotice.textContent = message.message;
       notify(message.message);
+    } else if (message.type === "bot_trade_result") {
+      updateCoins(message.coins);
+      notify(message.message);
     } else if (message.type === "sell_result") {
       updateCoins(message.coins);
       notify(message.message);
@@ -4707,6 +4847,11 @@ function useVehicleOrPlace() {
   }
   if (isNearBoatWorkshop(playerPosition.x, playerPosition.z)) {
     openBoatWorkshop();
+    return;
+  }
+  const missionGiver = nearestMissionGiver();
+  if (missionGiver) {
+    sendLobbyMessage({ type: "bot_talk", botId: missionGiver.id });
     return;
   }
   const restaurantBot = nearestRestaurantBot();
@@ -4907,6 +5052,22 @@ document.querySelector("#close-missions-button").addEventListener("click", () =>
   missionsPanel.hidden = true;
 });
 abandonMissionButton.addEventListener("click", () => sendLobbyMessage({ type: "mission_abandon" }));
+
+tradeFishButton.addEventListener("click", () => {
+  const villager = nearestMissionGiver();
+  if (!villager) {
+    notify("Stand next to a villager to sell fish.");
+    return;
+  }
+  const fishItems = [...state.inventory].filter(([id, count]) => FISH_TYPE_BY_ID.has(id) && count > 0);
+  if (fishItems.length === 0) {
+    notify("You have no fish to sell.");
+    return;
+  }
+  for (const [id, count] of fishItems) {
+    sendLobbyMessage({ type: "bot_trade", botId: villager.id, item: id, count });
+  }
+});
 document.querySelector("#close-restaurant-button").addEventListener("click", () => {
   restaurantPanel.hidden = true;
 });
@@ -6267,6 +6428,7 @@ function waterSurfaceEyeAt(x, z) {
 
 function jump() {
   if (state.vehicleId || state.mountId || state.sittingAt) return;
+  if (Date.now() < botTalkFreezeUntil) return;
   const groundY = groundEyeAt(playerPosition.x, playerPosition.z, playerPosition.y);
   if (playerPosition.y <= groundY + 0.02) {
     playerPosition.y = groundY;
@@ -6490,7 +6652,16 @@ window.addEventListener("gamepaddisconnected", (event) => {
   notify("Controller disconnected.");
 });
 
+const BOT_TALK_FREEZE_MS = 10000;
+let botTalkFreezeUntil = 0;
+
 function updateMovement(delta) {
+  const talkFrozen = Date.now() < botTalkFreezeUntil;
+  if (talkFrozen) {
+    moveKeys.clear();
+    state.flyVerticalDirection = 0;
+    state.swimDirection = 0;
+  }
   if (!state.connected || state.sittingAt || !gameMenu.hidden || !worldMapPanel.hidden || !shopPanel.hidden || !restaurantPanel.hidden || boatWorkshopDialog.open) return;
   if (playerOccupiesSolidBlock(playerPosition.x, playerPosition.z, playerPosition.y)) {
     let safeEyeY = groundEyeAt(playerPosition.x, playerPosition.z, playerPosition.y);
@@ -6511,6 +6682,10 @@ function updateMovement(delta) {
   strafeInput += joystickVector.x;
   forwardInput += gamepadMoveVector.y;
   strafeInput += gamepadMoveVector.x;
+  if (talkFrozen) {
+    forwardInput = 0;
+    strafeInput = 0;
+  }
   const magnitude = Math.hypot(forwardInput, strafeInput);
   if (magnitude > 1) {
     forwardInput /= magnitude;
@@ -6735,6 +6910,7 @@ function animate(timestamp) {
   updateMovement(delta);
   animatePlayerAttack(delta);
   animateBots(delta);
+  animateRemotePlayers(delta);
   animateMonsterEffects(delta);
   animateAnimals(delta);
   animateVehicles(delta);
