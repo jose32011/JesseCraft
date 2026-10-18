@@ -48,6 +48,7 @@ import {
   MODEL_ITEM_BY_ID,
 } from "../shared/models.js";
 import { RESTAURANT_MENU, RESTAURANT_MENU_BY_ID } from "../shared/food.js";
+import { CROP_HARVEST_ITEM } from "../shared/farm.js";
 import grassTextureUrl from "./assets/blocks/own/grass_top.png";
 import dirtTextureUrl from "./assets/new/PixelTexturePack/Textures/Rocks/DIRT.png";
 import stoneTextureUrl from "./assets/new/PixelTexturePack/Textures/Rocks/GRAYROCKS.png";
@@ -5203,7 +5204,7 @@ function renderInventory() {
       dropButton.textContent = "Drop 1";
       dropButton.setAttribute("aria-label", `Drop one ${itemName(id)}`);
       dropButton.addEventListener("click", () => sendInventoryAction({ type: "drop", item: id, count: 1 }));
-      const isFood = RESTAURANT_MENU_BY_ID.has(id);
+      const isFood = RESTAURANT_MENU_BY_ID.has(id) || id === CROP_HARVEST_ITEM;
       const itemActions = [];
       if (isFood) {
         const eatButton = document.createElement("button");
