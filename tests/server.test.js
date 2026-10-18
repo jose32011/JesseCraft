@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createGameServer } from "../server/index.js";
+import { createGameServer, updateCityTraffic } from "../server/index.js";
 import { BLOCK_TYPES, FISH_ITEMS, MAX_STACK_SIZE } from "../server/world.js";
 import { WebSocket } from "ws";
 import { MODEL_CATALOG, MODEL_ITEM_BY_ID } from "../shared/models.js";
@@ -2149,4 +2149,23 @@ test("fishing is limited to the harbor and awards fish with a cooldown", async (
     for (const socket of sockets) socket.terminate();
     await server.close();
   }
+});
+
+test("city cars keep circulating through the streets instead of reversing on straight roads", () => {
+  const seed = 4242;
+  let z = -160;
+  while (getBaseBlockAt(14, 0, z, seed) !== "black_concrete" || Math.abs(z % 32) < 4) z += 0.5;
+  const car = { id: "city-car-1", type: "car", x: 14, y: 0, z, yaw: 0, laneAxis: "z", laneDir: 1, stopped: false, occupantId: null };
+  const room = { seed, members: new Set(), bots: new Map(), vehicles: new Map([[car.id, car]]) };
+  let turns = 0;
+  let lastAxis = car.laneAxis;
+  for (let tick = 0; tick < 1500; tick += 1) {
+    updateCityTraffic(room, new Map());
+    assert.ok(["black_concrete", "white_concrete"].includes(getBaseBlockAt(Math.round(car.x), 0, Math.round(car.z), seed)));
+    if (car.laneAxis !== lastAxis) {
+      turns += 1;
+      lastAxis = car.laneAxis;
+    }
+  }
+  assert.ok(turns >= 3, `expected the car to turn at crossings, got ${turns} turns`);
 });

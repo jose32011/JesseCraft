@@ -1013,7 +1013,7 @@ function chooseBotStep(room, bot, step) {
   if (distance < 0.001) return null;
   const desiredAngle = Math.atan2(targetZ, targetX);
   const direction = Math.sign((bot.id.charCodeAt(bot.id.length - 1) || 0) % 2 ? 1 : -1);
-  const offsets = [0, direction * Math.PI / 6, -direction * Math.PI / 6, direction * Math.PI / 3, -direction * Math.PI / 3, direction * Math.PI / 2, -direction * Math.PI / 2, Math.PI];
+  const offsets = [0, direction * Math.PI / 6, -direction * Math.PI / 6, direction * Math.PI / 3, -direction * Math.PI / 3, direction * Math.PI / 2, -direction * Math.PI / 2];
   let best = null;
   let bestScore = -Infinity;
   for (const offset of offsets) {
@@ -1048,7 +1048,7 @@ function chooseBotStep(room, bot, step) {
 }
 
 const BOT_TALK_DURATION_MS = 10000;
-const BOT_STEP = 0.7; // units per bot tick (250ms)
+const BOT_STEP = 1.05; // units per bot tick (250ms), matching the 4.2 units/s on-foot player speed
 const CITY_CAR_STEP = 1.2; // units per traffic tick (250ms)
 const CITY_CAR_STOP_AHEAD = 5; // a city car stops when someone is this close ahead in its lane
 const ROAD_CAR_CLEARANCE = 9; // bots wait before stepping onto a road this close to a moving car
@@ -1059,6 +1059,12 @@ function isCityCar(vehicle) {
 
 function isRoadAt(room, x, z) {
   return getBaseBlockAt(Math.round(x), 0, Math.round(z), room.seed) === "black_concrete";
+}
+
+// Cars drive on black or white street tiles, since crosswalks and lane lines at crossings are white.
+function isCityStreetAt(room, x, z) {
+  const type = getBaseBlockAt(Math.round(x), 0, Math.round(z), room.seed);
+  return type === "black_concrete" || type === "white_concrete";
 }
 
 // True when a moving city car is close enough that a bot should wait before stepping onto the road.
@@ -1089,20 +1095,75 @@ function pedestrianAhead(room, vehicle, axis, dir, players) {
   return false;
 }
 
-// Drives unoccupied city cars along their lane, stopping for pedestrians and turning back at road ends.
-function updateCityTraffic(room, players) {
+// Streets run along the cell grid, centred on x and z = 16 + 32k. Cars drive about 2 units either side of a
+// street centre line, and crossings fall on the centre lines.
+const CITY_LANE_OFFSET = 2;
+
+// The nearest street centre line to a coordinate.
+function nearestCityStreet(value) {
+  const origin = CITY_BLOCK_SIZE / 2;
+  return CITY_BLOCK_SIZE * Math.round((value - origin) / CITY_BLOCK_SIZE) + origin;
+}
+
+// The next crossing ahead of a coordinate when travelling in direction dir (+1 or -1).
+function nextCityStreetAhead(value, dir) {
+  const nearest = nearestCityStreet(value);
+  return (nearest - value) * dir >= -1e-6 ? nearest : nearest + dir * CITY_BLOCK_SIZE;
+}
+
+// Drives unoccupied city cars around the street grid. Cars never U-turn on a straight street. At each crossing
+// they pick straight on, left or right at random, so they keep circulating. They only turn around at a dead end.
+export function updateCityTraffic(room, players) {
   for (const vehicle of room.vehicles.values()) {
     if (!isCityCar(vehicle) || vehicle.occupantId) continue;
-    const axis = vehicle.laneAxis ?? "z";
-    const dir = vehicle.laneDir ?? 1;
+    let axis = vehicle.laneAxis ?? "z";
+    let dir = vehicle.laneDir ?? 1;
     if (pedestrianAhead(room, vehicle, axis, dir, players)) {
       vehicle.stopped = true;
       continue;
     }
     vehicle.stopped = false;
+
+    const along = axis === "x" ? vehicle.x : vehicle.z;
+    const ahead = nextCityStreetAhead(along, dir);
+    const crossingKey = `${axis}:${ahead}`;
+    if ((ahead - along) * dir <= CITY_CAR_STEP && vehicle.crossingKey !== crossingKey) {
+      vehicle.crossingKey = crossingKey;
+      // Reach the crossing, then pick a route: straight on, or turn left or right.
+      if (axis === "x") vehicle.x = ahead;
+      else vehicle.z = ahead;
+      const perp = axis === "x" ? "z" : "x";
+      const perpValue = axis === "x" ? vehicle.z : vehicle.x;
+      const side = perpValue >= nearestCityStreet(perpValue) ? 1 : -1;
+      const routes = [
+        { axis, dir },
+        { axis: perp, dir: side },
+        { axis: perp, dir: -side },
+      ].sort(() => Math.random() - 0.5);
+      const route = routes.find((candidate) => {
+        const trialX = candidate.axis === "x" ? vehicle.x + candidate.dir * CITY_CAR_STEP : vehicle.x;
+        const trialZ = candidate.axis === "z" ? vehicle.z + candidate.dir * CITY_CAR_STEP : vehicle.z;
+        return isCityStreetAt(room, trialX, trialZ);
+      });
+      if (route) {
+        if (route.axis !== axis) {
+          // Turning: move onto the lane of the new street, keeping the same side of its centre line.
+          if (route.axis === "x") vehicle.z = nearestCityStreet(vehicle.z) + side * CITY_LANE_OFFSET;
+          else vehicle.x = nearestCityStreet(vehicle.x) + side * CITY_LANE_OFFSET;
+        }
+        axis = route.axis;
+        dir = route.dir;
+      } else {
+        dir = -dir;
+      }
+      vehicle.laneAxis = axis;
+      vehicle.laneDir = dir;
+    }
+
     const nextX = axis === "x" ? vehicle.x + dir * CITY_CAR_STEP : vehicle.x;
     const nextZ = axis === "z" ? vehicle.z + dir * CITY_CAR_STEP : vehicle.z;
-    if (!isRoadAt(room, nextX, nextZ)) {
+    if (!isCityStreetAt(room, nextX, nextZ)) {
+      // Dead end, such as the edge of the city: turn around.
       vehicle.laneDir = -dir;
       continue;
     }
