@@ -79,9 +79,26 @@ jobs:
 
           echo "Scanning VPS host key..."
           ssh-keyscan -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
+      - name: Test VPS SSH authentication
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          echo "Testing SSH authentication for $VPS_USER@$VPS_HOST"
+
+          ssh -vv \
+            -i "$HOME/.ssh/voxland_deploy" \
+            -o IdentitiesOnly=yes \
+            -o BatchMode=yes \
+            -o ConnectTimeout=10 \
+            "$VPS_USER@$VPS_HOST" \
+            'echo "GitHub Actions SSH login successful"'
+
           chmod 600 "$HOME/.ssh/known_hosts"
 
           echo "SSH key validation completed."
+          
 
       - name: Prepare VPS upload directory
         env:
