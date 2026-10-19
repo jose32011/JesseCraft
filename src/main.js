@@ -23,6 +23,7 @@ import {
   isNearBoatWorkshop,
   isNearHarbor,
   listCityProperties,
+  isInsideResidence,
   listCityShops,
   MAX_BUILD_HEIGHT,
   MAX_STACK_SIZE,
@@ -163,6 +164,21 @@ const expandWorldMapButton = document.querySelector("#expand-world-map-button");
 const aimCrosshair = document.querySelector(".aim-crosshair");
 const teleportTarget = document.querySelector("#teleport-target");
 const teleportButton = document.querySelector("#teleport-button");
+const raceCarTarget = document.querySelector("#race-car-target");
+const raceCarButton = document.querySelector("#race-car-button");
+const raceModeTarget = document.querySelector("#race-mode-target");
+const raceOpponentTarget = document.querySelector("#race-opponent-target");
+const raceArenaButton = document.querySelector("#race-arena-button");
+const raceReadyButton = document.querySelector("#race-ready-button");
+const raceLeaveButton = document.querySelector("#race-leave-button");
+const raceDuelStatus = document.querySelector("#race-duel-status");
+let raceTrackGroup = null;
+let raceTrackKey = "";
+let raceTrackCenter = null;
+let raceTrackRadius = 0;
+const racingArenaPanel = document.querySelector("#racing-arena-panel");
+let raceCarMenuKey = "";
+let raceOpponentKey = "";
 const mapTargetOptions = new Map();
 const mapMarkerElements = new Map();
 let selectedMapTarget = null;
@@ -2647,7 +2663,7 @@ function updateAvatars(
       updateCharacterArmor();
       selfAvatar.visible = thirdPersonView && state.connected && (!state.vehicleId || entity.mountId);
       updateAvatarHealth(selfAvatar.userData.healthBar, entity.health);
-      setAvatarSeatedPose(selfAvatar, Boolean(entity.sittingAt));
+      setAvatarSeatedPose(selfAvatar, Boolean(entity.sittingAt || entity.mountId || state.mountId));
       continue;
     }
     let avatar = avatarMeshes.get(entity.id);
@@ -2662,7 +2678,7 @@ function updateAvatars(
     if (isBot) avatar.userData.walking = Boolean(entity.walking);
     else updateRemotePlayerWalking(avatar, entity);
     if (hasHumanoidPose) {
-      const seated = Boolean(entity.sittingAt || entity.seated);
+      const seated = Boolean(entity.sittingAt || entity.seated || entity.mountId);
       setAvatarSeatedPose(avatar, seated, Boolean(entity.eating), avatar.userData.gait);
     }
     const surfaceHeight = entity.y === undefined
@@ -3602,6 +3618,92 @@ function updateVehicles(current = []) {
     updateVehicleMesh(vehicle, mesh);
   }
   updateVehicleButton();
+  updateRaceCarMenu();
+}
+
+// Draws the racing oval as a flat road ribbon. Points come from the server snapshot with terrain heights.
+function updateRaceTrack(points) {
+  const key = points?.length ? `${points.length}:${points[0].x},${points[0].z}` : "";
+  if (key === raceTrackKey) return;
+  raceTrackKey = key;
+  raceTrackCenter = points?.length
+    ? {
+        x: points.reduce((sum, point) => sum + point.x, 0) / points.length,
+        z: points.reduce((sum, point) => sum + point.z, 0) / points.length,
+      }
+    : null;
+  raceTrackRadius = raceTrackCenter
+    ? Math.max(...points.map((point) => Math.hypot(point.x - raceTrackCenter.x, point.z - raceTrackCenter.z)))
+    : 0;
+  if (raceTrackGroup) {
+    scene.remove(raceTrackGroup);
+    raceTrackGroup.geometry.dispose();
+    raceTrackGroup.material.dispose();
+    raceTrackGroup = null;
+  }
+  if (!points || points.length < 3) return;
+  const halfWidth = 2.4;
+  const positions = [];
+  const indices = [];
+  for (let i = 0; i < points.length; i += 1) {
+    const prev = points[(i - 1 + points.length) % points.length];
+    const next = points[(i + 1) % points.length];
+    const point = points[i];
+    const tx = next.x - prev.x;
+    const tz = next.z - prev.z;
+    const length = Math.hypot(tx, tz) || 1;
+    const offsetX = (-tz / length) * halfWidth;
+    const offsetZ = (tx / length) * halfWidth;
+    const left = planetPointAt(point.x + offsetX, point.y + 0.12, point.z + offsetZ);
+    const right = planetPointAt(point.x - offsetX, point.y + 0.12, point.z - offsetZ);
+    positions.push(left.x, left.y, left.z, right.x, right.y, right.z);
+    const a = i * 2;
+    const b = ((i + 1) % points.length) * 2;
+    indices.push(a, b, a + 1, a + 1, b, b + 1);
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  const material = new THREE.MeshStandardMaterial({ color: 0x2b2b30, roughness: 0.92, side: THREE.DoubleSide });
+  raceTrackGroup = new THREE.Mesh(geometry, material);
+  scene.add(raceTrackGroup);
+}
+
+// Lists racing cars that nobody is driving, and enables joining the selected one.
+function updateRaceCarMenu() {
+  const free = state.vehicles.filter((vehicle) => vehicle.id.startsWith("race-car-") && !vehicle.occupantId);
+  const key = free.map(({ id }) => id).join(",");
+  if (key !== raceCarMenuKey) {
+    raceCarMenuKey = key;
+    const options = free.length
+      ? free.map(({ id }) => new Option(`Race car ${id.slice("race-car-".length)}`, id))
+      : [new Option("No racing cars free", "")];
+    raceCarTarget.replaceChildren(...options);
+  }
+  raceCarTarget.disabled = free.length === 0;
+  raceCarButton.disabled = free.length === 0 || Boolean(state.vehicleId);
+  // Challenge targets are the players listed in the teleport menu.
+  const racers = Array.from(teleportTarget.options).filter((option) => option.value && !option.value.startsWith("location:"));
+  const racerKey = racers.map(({ value }) => value).join(",");
+  if (racerKey !== raceOpponentKey) {
+    raceOpponentKey = racerKey;
+    raceOpponentTarget.replaceChildren(...(racers.length ? racers.map(({ value, text }) => new Option(text, value)) : [new Option("No other players", "")]));
+  }
+  const duelMode = raceModeTarget.value === "duel";
+  raceOpponentTarget.hidden = !duelMode;
+  raceOpponentTarget.disabled = !racers.length;
+  raceArenaButton.textContent = duelMode ? "Challenge player" : "Start single race";
+  raceArenaButton.disabled = duelMode ? !racers.length || Boolean(state.vehicleId) : raceCarButton.disabled;
+}
+
+// The racing arena panel is only shown while the player is inside the racing oval (or driving a race car).
+function updateRacingArenaPanel() {
+  const inArena = Boolean(raceTrackCenter) &&
+    Math.hypot(playerPosition.x - raceTrackCenter.x, playerPosition.z - raceTrackCenter.z) <= raceTrackRadius + 6;
+  const drivingRaceCar = Boolean(state.vehicleId?.startsWith("race-car-"));
+  const shouldShow = inArena || drivingRaceCar;
+  racingArenaPanel.hidden = !shouldShow;
 }
 
 function updateVehicleMesh(vehicle, mesh) {
@@ -3935,6 +4037,7 @@ function applySnapshot(message) {
     }
   }
   updateVehicles(message.vehicles ?? state.vehicles);
+  updateRaceTrack(message.raceTrack ?? null);
   const self = playerList.find((player) => player.id === state.id);
   if (self?.name) state.playerName = self.name;
   const previousVehicleId = state.vehicleId;
@@ -4186,6 +4289,23 @@ function renderWorldMapMarkers(playerList = state.roomPlayers ?? []) {
     });
   }
 
+  if (raceTrackCenter) {
+    const targetValue = "location:racing-track";
+    ensureOption(targetValue, "Racing Track");
+    const key = "location:racing-track";
+    activeMarkers.add(key);
+    upsertMapMarker({
+      key,
+      className: "map-marker location-marker",
+      x: raceTrackCenter.x,
+      z: raceTrackCenter.z,
+      title: "Racing Track (teleport point)",
+      ariaLabel: "Racing Track, teleport point",
+      label: "Racing Track",
+      targetValue,
+    });
+  }
+
   for (const [value, option] of mapTargetOptions) {
     if (!activeOptions.has(value)) {
       option.remove();
@@ -4412,6 +4532,19 @@ function connect() {
       boatWorkshopMaterials.textContent = message.message;
       if (message.success) boatWorkshopDialog.close();
       notify(message.message);
+    } else if (message.type === "race_invite") {
+      const accept = window.confirm(`${message.fromName} challenges you to a two player race. Accept?`);
+      sendLobbyMessage({ type: accept ? "race_accept" : "race_decline" });
+    } else if (message.type === "race_status") {
+      raceDuelStatus.textContent = message.message;
+    } else if (message.type === "race_duel") {
+      const inRace = message.status !== "ended";
+      raceReadyButton.hidden = message.status !== "ready" && message.status !== "waiting";
+      raceLeaveButton.hidden = !inRace;
+      if (message.status === "ready") raceDuelStatus.textContent = "Race accepted. Both racers press Ready to start.";
+      else if (message.status === "waiting") raceDuelStatus.textContent = `${message.readyIds.length} of 2 ready.`;
+      else if (message.status === "racing") raceDuelStatus.textContent = "Race on! Push your rival off the track or wreck their car.";
+      else raceDuelStatus.textContent = `${message.reason} ${message.winnerId ? (message.winnerId === state.id ? "You win!" : "You lose.") : "Draw."}`;
     } else if (message.type === "vehicle_result") {
       state.vehicleId = message.vehicleId;
       state.vehicleType = message.vehicleType ?? null;
@@ -5118,6 +5251,19 @@ teleportButton.addEventListener("click", () => {
     sendLobbyMessage({ type: "teleport", targetId: teleportTarget.value });
   }
 });
+raceArenaButton.addEventListener("click", () => {
+  if (raceModeTarget.value === "duel") {
+    if (raceOpponentTarget.value) sendLobbyMessage({ type: "race_invite", targetId: raceOpponentTarget.value });
+  } else if (raceCarTarget.value) {
+    sendLobbyMessage({ type: "race_car_join", vehicleId: raceCarTarget.value });
+  }
+});
+raceModeTarget.addEventListener("change", () => updateRaceCarMenu());
+raceReadyButton.addEventListener("click", () => sendLobbyMessage({ type: "race_ready" }));
+raceLeaveButton.addEventListener("click", () => sendLobbyMessage({ type: "race_leave" }));
+raceCarButton.addEventListener("click", () => {
+  if (raceCarTarget.value) sendLobbyMessage({ type: "race_car_join", vehicleId: raceCarTarget.value });
+});
 mapTeleportButton.addEventListener("click", () => {
   if (!selectedMapTarget) return;
   if (selectedMapTarget.startsWith("location:")) {
@@ -5822,6 +5968,36 @@ function renderHomeProperties() {
     }
     row.append(name, button);
     homeProperties.append(row);
+  }
+  const ownedProperty = properties.find(({ owned }) => owned);
+  if (ownedProperty) {
+    const residents = (state.roomPlayers ?? []).filter((player) =>
+      player.id !== state.id && isInsideResidence(ownedProperty, player.x, player.z),
+    );
+    const heading = document.createElement("div");
+    heading.className = "home-property";
+    const label = document.createElement("span");
+    label.textContent = residents.length
+      ? `Residents · ${residents.length}`
+      : "No other players are inside your home.";
+    heading.append(label);
+    homeProperties.append(heading);
+    for (const resident of residents) {
+      const row = document.createElement("div");
+      row.className = "home-property";
+      const name = document.createElement("span");
+      name.textContent = resident.name;
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = "Kick out";
+      button.addEventListener("click", () => sendLobbyMessage({
+        type: "kick_resident",
+        propertyId: ownedProperty.id,
+        playerId: resident.id,
+      }));
+      row.append(name, button);
+      homeProperties.append(row);
+    }
   }
   if (properties.length === 0) {
     homeNotice.textContent = "No residences are available in this city.";
@@ -6921,6 +7097,7 @@ function animate(timestamp) {
   const delta = Math.min(timer.getDelta(), 0.05);
   pollGamepad(delta);
   updateMovement(delta);
+  updateRacingArenaPanel();
   animatePlayerAttack(delta);
   animateBots(delta);
   animateRemotePlayers(delta);

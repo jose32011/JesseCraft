@@ -29,6 +29,7 @@ import {
   cityPropertyNear,
   isNearRestaurant,
   listCityProperties,
+  isInsideResidence,
   listCityShops,
   PLANET_MAX_X,
   PLANET_MAX_Z,
@@ -176,7 +177,43 @@ function findRaceTrack(seed) {
   return track;
 }
 
+// Teleport/map entry for the racing track: its centre, using the track's waypoints for the seed.
+function raceTrackLocation(seed) {
+  const track = findRaceTrack(seed);
+  if (!track) return null;
+  const x = track.reduce((sum, point) => sum + point.x, 0) / track.length;
+  const z = track.reduce((sum, point) => sum + point.z, 0) / track.length;
+  return { id: "racing-track", name: "Racing Track", x, z, yaw: 0, type: "racing" };
+}
+
+function residenceLandingSpot(room, property) {
+  const landingSpots = [
+    [property.entranceX, property.entranceZ],
+    [property.entranceX, property.entranceZ - 2],
+    [property.entranceX - 2, property.entranceZ],
+    [property.entranceX + 2, property.entranceZ],
+    [property.entranceX, property.entranceZ + 2],
+  ];
+  return landingSpots.find(([x, z]) =>
+    playerCanOccupy(room, x, terrainHeightAt(x, z, room.seed) + 2.65, z),
+  );
+}
+
+// Tries the strict oval first so existing worlds keep their track, then looser profiles so every world gets one.
 function searchRaceTrack(seed) {
+  const profiles = [
+    { rx: RACE_TRACK_RX, rz: RACE_TRACK_RZ, minHeight: 2, maxRange: 3 },
+    { rx: RACE_TRACK_RX, rz: RACE_TRACK_RZ, minHeight: 1, maxRange: 6 },
+    { rx: 24, rz: 16, minHeight: 1, maxRange: 6 },
+  ];
+  for (const profile of profiles) {
+    const track = searchRaceTrackProfile(seed, profile);
+    if (track) return track;
+  }
+  return null;
+}
+
+function searchRaceTrackProfile(seed, { rx, rz, minHeight, maxRange }) {
   for (let cx = -780; cx <= 780; cx += 30) {
     for (let cz = -380; cz <= 380; cz += 30) {
       if (Math.hypot(cx - ARMY_BASE.x, cz - ARMY_BASE.z) < 70) continue;
@@ -185,12 +222,12 @@ function searchRaceTrack(seed) {
       let highest = -Infinity;
       for (let index = 0; index < RACE_TRACK_POINTS; index += 1) {
         const theta = (index / RACE_TRACK_POINTS) * Math.PI * 2;
-        const x = Math.round(cx + Math.cos(theta) * RACE_TRACK_RX);
-        const z = Math.round(cz + Math.sin(theta) * RACE_TRACK_RZ);
+        const x = Math.round(cx + Math.cos(theta) * rx);
+        const z = Math.round(cz + Math.sin(theta) * rz);
         const height = terrainHeightAt(x, z, seed);
         lowest = Math.min(lowest, height);
         highest = Math.max(highest, height);
-        if (lowest < 2 || highest - lowest > 3) break;
+        if (lowest < minHeight || highest - lowest > maxRange) break;
         points.push({ x, z });
       }
       if (points.length < RACE_TRACK_POINTS) continue;
@@ -1196,6 +1233,114 @@ function updateRaceCars(room) {
   }
 }
 
+// Two-player racing: a host invites a player, both ready up, then each drives a free race car.
+const RACE_DUEL_HIT_DISTANCE = 3;
+const RACE_DUEL_HIT_DAMAGE = 25;
+const RACE_DUEL_HIT_COOLDOWN_MS = 800;
+const RACE_DUEL_OFF_TRACK_DISTANCE = 6;
+const RACE_DUEL_TIME_LIMIT_MS = 60000;
+const RACE_CAR_RESPAWN_MS = 30000;
+
+function sendToPlayers(ids, message) {
+  for (const id of ids) {
+    const target = players.get(id);
+    if (target?.socket) writeJson(target.socket, message);
+  }
+}
+
+function distanceToRaceTrack(track, x, z) {
+  let best = Infinity;
+  for (const point of track) best = Math.min(best, Math.hypot(wrapPlanetX(x - point.x), z - point.z));
+  return best;
+}
+
+function endRaceDuel(room, winnerId, reason) {
+  const duel = room.raceDuel;
+  if (!duel) return;
+  const ids = [duel.hostId, duel.guestId];
+  room.raceDuel = null;
+  for (const id of ids) {
+    const participant = players.get(id);
+    if (participant) releaseVehicle(room, participant);
+  }
+  sendToPlayers(ids, { type: "race_duel", status: "ended", winnerId: winnerId ?? null, reason });
+  broadcastToRoom(room, roomSnapshot(room));
+}
+
+// Runs each tick while a duel is racing: pushes the cars apart on contact, applies damage,
+// destroys cars that run out of health, and ends the duel when a car leaves the track.
+function updateRaceDuels(room, now = Date.now()) {
+  const duel = room.raceDuel;
+  if (!duel || duel.status !== "racing") return;
+  const hostPlayer = players.get(duel.hostId);
+  const guestPlayer = players.get(duel.guestId);
+  const hostCar = hostPlayer?.vehicleId ? room.vehicles.get(hostPlayer.vehicleId) : null;
+  const guestCar = guestPlayer?.vehicleId ? room.vehicles.get(guestPlayer.vehicleId) : null;
+  if (!hostCar || !guestCar) {
+    const winner = hostCar ? duel.hostId : guestCar ? duel.guestId : null;
+    endRaceDuel(room, winner, "A driver left the race.");
+    return;
+  }
+  if (now - duel.startedAt > RACE_DUEL_TIME_LIMIT_MS) {
+    const winner = hostCar.health === guestCar.health ? null : hostCar.health > guestCar.health ? duel.hostId : duel.guestId;
+    endRaceDuel(room, winner, "Time is up.");
+    return;
+  }
+
+  const dx = wrapPlanetX(hostCar.x - guestCar.x);
+  const dz = hostCar.z - guestCar.z;
+  const distance = Math.hypot(dx, dz);
+  if (distance < RACE_DUEL_HIT_DISTANCE) {
+    const length = distance || 1;
+    const push = (RACE_DUEL_HIT_DISTANCE - distance) / 2 + 0.5;
+    const nx = dx / length;
+    const nz = dz / length;
+    const moves = [
+      [hostPlayer, hostCar, nx, nz],
+      [guestPlayer, guestCar, -nx, -nz],
+    ];
+    for (const [participant, car, sx, sz] of moves) {
+      car.x = wrapPlanetX(car.x + sx * push);
+      car.z += sz * push;
+      car.y = terrainHeightAt(car.x, car.z, room.seed);
+      participant.x = car.x;
+      participant.z = car.z;
+      participant.y = car.y + 2.65;
+      sendToPlayers([participant.id], {
+        type: "teleport_result",
+        position: { x: participant.x, y: participant.y, z: participant.z, yaw: participant.yaw },
+        targetId: null,
+        locationId: null,
+        locationName: null,
+      });
+    }
+    if (now - duel.lastHitAt > RACE_DUEL_HIT_COOLDOWN_MS) {
+      duel.lastHitAt = now;
+      hostCar.health = Math.max(0, hostCar.health - RACE_DUEL_HIT_DAMAGE);
+      guestCar.health = Math.max(0, guestCar.health - RACE_DUEL_HIT_DAMAGE);
+    }
+  }
+
+  const track = room.vehicles.raceTrack;
+  const cars = [
+    { participantId: duel.hostId, car: hostCar, otherId: duel.guestId },
+    { participantId: duel.guestId, car: guestCar, otherId: duel.hostId },
+  ];
+  for (const { participantId, car, otherId } of cars) {
+    if (car.health <= 0) {
+      room.vehicles.delete(car.id);
+      const respawn = { ...car, health: car.maxHealth, occupantId: null };
+      setTimeout(() => room.vehicles.set(respawn.id, respawn), RACE_CAR_RESPAWN_MS);
+      endRaceDuel(room, otherId, "A race car was destroyed.");
+      return;
+    }
+    if (track && distanceToRaceTrack(track, car.x, car.z) > RACE_DUEL_OFF_TRACK_DISTANCE) {
+      endRaceDuel(room, otherId, "A driver was pushed off the track.");
+      return;
+    }
+  }
+}
+
 // Farmer bots walk to a ripe plot to harvest it, or an empty plot to plant it, then wait briefly.
 function updateFarmerBot(room, bot, now) {
   if (now < bot.farmWaitUntil) return;
@@ -1637,6 +1782,7 @@ export function createGameServer({
       z,
     })),
     vehicles: [...room.vehicles.values()],
+    raceTrack: room.vehicles.raceTrack?.map(({ x, z }) => ({ x, z, y: terrainHeightAt(x, z, room.seed) })) ?? null,
     crops: serializeCrops(room),
     openDoors: [...(room.openDoors ?? [])],
     properties: [...(room.properties ?? new Map()).entries()].map(([id, property]) => ({ id, ...property })),
@@ -1706,6 +1852,7 @@ export function createGameServer({
     monsters: serializeMonsters(room),
     drops: [...room.droppedItems.values()].map(({ id, item, count, x, z }) => ({ id, item, count, x, z })),
     vehicles: [...room.vehicles.values()],
+    raceTrack: room.vehicles.raceTrack?.map(({ x, z }) => ({ x, z, y: terrainHeightAt(x, z, room.seed) })) ?? null,
     openDoors: [...(room.openDoors ?? [])],
     properties: [...(room.properties ?? new Map()).entries()].map(([id, property]) => ({ id, ...property })),
     position: { x: player.x, y: player.y, z: player.z, yaw: player.yaw },
@@ -1821,6 +1968,7 @@ export function createGameServer({
       }
       updateCityTraffic(room, players);
       updateRaceCars(room);
+      updateRaceDuels(room);
       for (const animal of room.animals.values()) {
         if (animal.riderId) continue;
         if (animal.flying) {
@@ -2275,7 +2423,9 @@ export function createGameServer({
       if (message.type === "teleport") {
         const room = rooms.get(player.roomId);
         const location = room?.started
-          ? WORLD_LOCATIONS.find((candidate) => candidate.id === message.locationId)
+          ? message.locationId === "racing-track"
+            ? raceTrackLocation(room.seed)
+            : WORLD_LOCATIONS.find((candidate) => candidate.id === message.locationId)
           : null;
         const target = room?.started && room.members.has(message.targetId)
           ? players.get(message.targetId)
@@ -2348,6 +2498,48 @@ export function createGameServer({
         return;
       }
 
+      if (message.type === "kick_resident") {
+        const room = rooms.get(player.roomId);
+        if (!room?.started || player.health <= 0) return;
+        const ownerId = player.profileId || player.name.toLowerCase();
+        const property = listCityProperties(room.seed).find(({ id }) =>
+          id === message.propertyId && room.properties.get(id)?.ownerId === ownerId,
+        );
+        if (!property) {
+          writeJson(socket, { type: "home_result", success: false, message: "You do not own that residence in this world." });
+          return;
+        }
+        const resident = players.get(message.playerId);
+        if (
+          !resident ||
+          resident.id === player.id ||
+          !room.members.has(resident.id) ||
+          !isInsideResidence(property, resident.x, resident.z)
+        ) {
+          writeJson(socket, { type: "home_result", success: false, message: "That player is not inside your residence." });
+          return;
+        }
+        const landing = residenceLandingSpot(room, property);
+        if (!landing) {
+          writeJson(socket, { type: "home_result", success: false, message: "There is no clear ground-level landing spot by that residence." });
+          return;
+        }
+        releaseVehicle(room, resident);
+        resident.x = landing[0];
+        resident.z = landing[1];
+        resident.y = terrainHeightAt(resident.x, resident.z, room.seed) + 2.65;
+        resident.yaw = 0;
+        writeJson(resident.socket, {
+          type: "home_result",
+          success: true,
+          message: `${player.name} asked you to leave ${property.name}.`,
+          position: { x: resident.x, y: resident.y, z: resident.z, yaw: resident.yaw },
+        });
+        writeJson(socket, { type: "home_result", success: true, message: `${resident.name} was kicked out of ${property.name}.` });
+        broadcastToRoom(room, roomSnapshot(room));
+        return;
+      }
+
       if (message.type === "home_teleport") {
         const room = rooms.get(player.roomId);
         if (!room?.started || player.health <= 0) return;
@@ -2363,16 +2555,7 @@ export function createGameServer({
           });
           return;
         }
-        const landingSpots = [
-          [property.entranceX, property.entranceZ],
-          [property.entranceX, property.entranceZ - 2],
-          [property.entranceX - 2, property.entranceZ],
-          [property.entranceX + 2, property.entranceZ],
-          [property.entranceX, property.entranceZ + 2],
-        ];
-        const landing = landingSpots.find(([x, z]) =>
-          playerCanOccupy(room, x, terrainHeightAt(x, z, room.seed) + 2.65, z),
-        );
+        const landing = residenceLandingSpot(room, property);
         if (!landing) {
           writeJson(socket, {
             type: "home_result",
@@ -3502,7 +3685,87 @@ export function createGameServer({
         return;
       }
 
-      if (message.type === "vehicle_enter" || message.type === "vehicle_exit") {
+      if (message.type === "race_invite") {
+        const room = rooms.get(player.roomId);
+        if (!room?.started || !room.members.has(message.targetId) || message.targetId === player.id || room.raceDuel) {
+          writeJson(socket, { type: "error", message: "You cannot invite that player right now." });
+          return;
+        }
+        room.raceInvites ??= new Map();
+        room.raceInvites.set(message.targetId, player.id);
+        sendToPlayers([message.targetId], { type: "race_invite", fromId: player.id, fromName: player.name });
+        writeJson(socket, { type: "race_status", message: "Invite sent." });
+        return;
+      }
+
+      if (message.type === "race_accept" || message.type === "race_decline") {
+        const room = rooms.get(player.roomId);
+        const hostId = room?.raceInvites?.get(player.id);
+        if (!room || !hostId) {
+          writeJson(socket, { type: "error", message: "No race invite to answer." });
+          return;
+        }
+        room.raceInvites.delete(player.id);
+        if (message.type === "race_decline" || room.raceDuel) {
+          sendToPlayers([hostId], { type: "race_status", message: `${player.name} did not join the race.` });
+          return;
+        }
+        room.raceDuel = { hostId, guestId: player.id, ready: new Set(), status: "ready", startedAt: 0, lastHitAt: 0 };
+        sendToPlayers([hostId, player.id], { type: "race_duel", status: "ready", hostId, guestId: player.id });
+        return;
+      }
+
+      if (message.type === "race_ready" || message.type === "race_leave") {
+        const room = rooms.get(player.roomId);
+        const duel = room?.raceDuel;
+        if (!duel || (duel.hostId !== player.id && duel.guestId !== player.id)) {
+          writeJson(socket, { type: "error", message: "You are not in a race." });
+          return;
+        }
+        if (message.type === "race_leave") {
+          endRaceDuel(room, duel.hostId === player.id ? duel.guestId : duel.hostId, "A player left the race.");
+          return;
+        }
+        if (duel.status !== "ready") return;
+        duel.ready.add(player.id);
+        if (duel.ready.size < 2) {
+          sendToPlayers([duel.hostId, duel.guestId], { type: "race_duel", status: "waiting", readyIds: [...duel.ready] });
+          return;
+        }
+        const freeCars = [...room.vehicles.values()].filter((vehicle) => isRaceCar(vehicle) && !vehicle.occupantId);
+        if (freeCars.length < 2) {
+          duel.ready.clear();
+          writeJson(socket, { type: "error", message: "Two race cars must be free to start a race." });
+          return;
+        }
+        const seat = (participantId, car) => {
+          const participant = players.get(participantId);
+          if (!participant) return;
+          releaseVehicle(room, participant);
+          car.occupantId = participantId;
+          participant.vehicleId = car.id;
+          participant.x = car.x;
+          participant.z = car.z;
+          participant.y = car.y + 2.65;
+          participant.yaw = car.yaw;
+          sendToPlayers([participantId], {
+            type: "teleport_result",
+            position: { x: participant.x, y: participant.y, z: participant.z, yaw: participant.yaw },
+            targetId: null,
+            locationId: null,
+            locationName: null,
+          });
+        };
+        seat(duel.hostId, freeCars[0]);
+        seat(duel.guestId, freeCars[1]);
+        duel.status = "racing";
+        duel.startedAt = Date.now();
+        sendToPlayers([duel.hostId, duel.guestId], { type: "race_duel", status: "racing", hostId: duel.hostId, guestId: duel.guestId });
+        broadcastToRoom(room, roomSnapshot(room));
+        return;
+      }
+
+      if (message.type === "vehicle_enter" || message.type === "vehicle_exit" || message.type === "race_car_join") {
         const room = rooms.get(player.roomId);
         if (!room?.started || player.health <= 0) return;
         if (message.type === "vehicle_exit") {
@@ -3524,12 +3787,17 @@ export function createGameServer({
           !vehicle ||
           (vehicle.occupantId && vehicle.occupantId !== player.id) ||
           (room.mode === "tank-war" && vehicle.type === "tank" && vehicle.ownerId !== player.id) ||
-          Math.hypot(wrapPlanetX(vehicle.x - player.x), vehicle.z - player.z) > 4
+          (message.type === "race_car_join" && !isRaceCar(vehicle)) ||
+          (message.type !== "race_car_join" && Math.hypot(wrapPlanetX(vehicle.x - player.x), vehicle.z - player.z) > 4)
         ) {
           writeJson(socket, { type: "vehicle_result", vehicleId: null, message: "Move closer to an available vehicle." });
           return;
         }
         releaseVehicle(room, player);
+        if (message.type === "race_car_join") {
+          player.x = vehicle.x;
+          player.z = vehicle.z;
+        }
         if (!playerCanOccupy(room, vehicle.x, vehicle.y + 2.65, vehicle.z)) {
           writeJson(socket, { type: "vehicle_result", vehicleId: null, message: "There is not enough room to enter that vehicle." });
           return;
@@ -3540,6 +3808,15 @@ export function createGameServer({
         player.z = vehicle.z;
         player.y = vehicle.y + 2.65;
         player.yaw = vehicle.yaw;
+        if (message.type === "race_car_join") {
+          writeJson(socket, {
+            type: "teleport_result",
+            position: { x: player.x, y: player.y, z: player.z, yaw: player.yaw },
+            targetId: null,
+            locationId: null,
+            locationName: null,
+          });
+        }
         writeJson(socket, {
           type: "vehicle_result",
           vehicleId: vehicle.id,

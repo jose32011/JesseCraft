@@ -1821,6 +1821,28 @@ kbd {
   color: var(--lime);
 }
 
+.racing-arena-panel {
+  top: 88px;
+  right: 22px;
+  left: auto;
+  width: min(320px, calc(100vw - 44px));
+}
+
+.racing-arena-panel select {
+  min-height: 34px;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #1d2b24;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+}
+
+.racing-arena-panel .game-menu-status {
+  padding: 0;
+}
+
 .game-menu {
   position: absolute;
   z-index: 8;

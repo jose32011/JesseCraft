@@ -104,6 +104,8 @@ export const WORLD_LOCATIONS = [
   { id: "verdant-dungeon", name: "Rootdeep Dungeon", x: 140, z: 342, yaw: 0, type: "dungeon" },
   { id: "frost-isle", name: "Frost Isle", x: -250, z: -350, yaw: 0, type: "island" },
   { id: "frost-village", name: "Snowcap Village", x: -270, z: -336, yaw: 0, type: "village" },
+  { id: "chocolate-isle", name: "Chocolate Isle", x: 330, z: -260, yaw: 0, type: "island" },
+  { id: "chocolate-factory", name: "Charlies Schokoladenfabrik", x: 330, z: -260, yaw: 0, type: "factory" },
 ];
 
 function isFarmArea(x, z) {
@@ -129,6 +131,7 @@ export const VILLAGE_TRAVEL_NETWORK = [
   { from: "verdant-isle", to: "frost-isle", route: "Farwater Passage", distance: "long" },
   { from: "ember-isle", to: "ember-village", route: "Cinder Trail", distance: "short" },
   { from: "ember-isle", to: "ember-dungeon", route: "Ashen Steps", distance: "short" },
+  { from: "ember-isle", to: "chocolate-isle", route: "Candy Ferry", distance: "long" },
   { from: "storm-isle", to: "storm-village", route: "Cloud Path", distance: "short" },
   { from: "storm-isle", to: "storm-ruins", route: "Thunder Track", distance: "short" },
   { from: "verdant-isle", to: "verdant-village", route: "Fern Trail", distance: "short" },
@@ -558,6 +561,30 @@ function structureBlockAt(x, y, z, seed = 1) {
     }
   }
 
+  const factory = WORLD_LOCATIONS.find((entry) => entry.id === "chocolate-factory");
+  if (factory && Math.abs(wrapPlanetX(x - factory.x)) <= 16 && Math.abs(z - factory.z) <= 10) {
+    // Charlie's Schokoladenfabrik: a stone facade with a central tower, spires and a brick roof.
+    const fx = wrapPlanetX(x - factory.x);
+    const fz = z - factory.z;
+    const ground = terrainHeightAt(factory.x, factory.z, seed);
+    if (fz === -8 && Math.abs(fx) <= 1 && y <= ground + 3) return null;
+    if (y === ground + 1 && Math.abs(fx) <= 14 && Math.abs(fz) <= 8) return "stone";
+    const towerTop = ground + 22;
+    if (Math.abs(fx) <= 3 && Math.abs(fz) <= 3 && y >= ground + 2 && y <= towerTop) {
+      if (fx === 0 && fz === -3 && y >= ground + 10 && y <= ground + 14) return "glass";
+      return y === towerTop ? "brick" : "stone";
+    }
+    const spire = [-9, -6, 6, 9].includes(fx) && Math.abs(fz) <= 1;
+    if (spire && y >= ground + 2 && y <= ground + 16) return y === ground + 16 ? "brick" : "stone";
+    const wall = Math.abs(fx) === 14 || Math.abs(fz) === 8;
+    if (wall && y >= ground + 2 && y <= ground + 6) {
+      if (y === ground + 6) return Math.abs(fx + fz) % 2 === 0 ? "brick" : null;
+      return Math.abs(fx + fz) % 2 === 0 ? "brick" : "stone";
+    }
+    if (y === ground + 6 && Math.abs(fx) <= 13 && Math.abs(fz) <= 7) return "brick";
+    return null;
+  }
+
   if (airport) {
     const airportX = x - airport.x;
     const airportZ = z - airport.z;
@@ -691,6 +718,7 @@ function namedIslands(seed) {
     { x: -520 + Math.floor(seededValue(30, 40, seed) * 17) - 8, z: -100 + Math.floor(seededValue(40, 50, seed) * 17) - 8, radius: 72 },
     { x: 120 + Math.floor(seededValue(50, 60, seed) * 17) - 8, z: 360 + Math.floor(seededValue(60, 70, seed) * 17) - 8, radius: 68 },
     { x: -250 + Math.floor(seededValue(70, 80, seed) * 17) - 8, z: -350 + Math.floor(seededValue(80, 90, seed) * 17) - 8, radius: 64 },
+    { x: 330, z: -260, radius: 64 },
   ];
 }
 
@@ -749,7 +777,7 @@ export function terrainHeightAt(x, z, seed = 1) {
   if (homeMargin >= 0) return Math.round(worldHeight * smoothStep(0, 18, homeMargin));
 
   for (const location of WORLD_LOCATIONS) {
-    if (location.type === "island") continue;
+    if (location.type === "island" || location.type === "factory") continue;
     if (Math.hypot(x - location.x, z - location.z) <= 26) return Math.min(4, worldHeight);
   }
 
@@ -1034,6 +1062,12 @@ export function cityPropertyNear(x, z, seed = 1, maxDistance = 5) {
     }
   }
   return nearest;
+}
+
+export const RESIDENCE_RADIUS = 10;
+
+export function isInsideResidence(property, x, z) {
+  return Math.hypot(wrapPlanetX(x - property.x), z - property.z) <= RESIDENCE_RADIUS;
 }
 
 function cityBlockAt(x, y, z, seed) {
