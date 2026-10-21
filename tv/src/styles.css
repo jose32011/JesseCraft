@@ -1,0 +1,295 @@
+:root {
+  color-scheme: dark;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: #0f1419;
+  color: #e6e9ef;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem 1rem 3rem;
+}
+
+h1 {
+  margin: 0 0 0.25rem;
+  font-size: 2rem;
+}
+
+.subtitle {
+  margin: 0 0 1.5rem;
+  color: #9aa4b2;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.controls input {
+  flex: 1 1 260px;
+  padding: 0.6rem 0.8rem;
+  border-radius: 8px;
+  border: 1px solid #2a3441;
+  background: #171e27;
+  color: inherit;
+  font: inherit;
+}
+
+.filters {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.filters button {
+  padding: 0.55rem 1rem;
+  border-radius: 8px;
+  border: 1px solid #2a3441;
+  background: #171e27;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.filters button.active {
+  background: #00a8e1;
+  border-color: #00a8e1;
+  color: #04121a;
+  font-weight: 600;
+}
+
+.status {
+  color: #9aa4b2;
+}
+
+.status.error {
+  color: #ff7b7b;
+}
+
+.grid {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 1.25rem;
+}
+
+.card {
+  background: #171e27;
+  border: 1px solid #222c38;
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.card img,
+.poster-placeholder {
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+  background: #222c38;
+}
+
+.poster-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #6b7785;
+}
+
+.card-body {
+  padding: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.card h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.date {
+  margin: 0;
+  color: #00a8e1;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.overview {
+  margin: 0;
+  color: #9aa4b2;
+  font-size: 0.8rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.badge {
+  align-self: flex-start;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  background: #222c38;
+}
+
+.card {
+  padding: 0;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.card:hover {
+  border-color: #00a8e1;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 2rem 1rem;
+  overflow-y: auto;
+  z-index: 10;
+}
+
+.modal {
+  position: relative;
+  width: 100%;
+  max-width: 760px;
+  background: #171e27;
+  border: 1px solid #222c38;
+  border-radius: 14px;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.modal-close {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.75rem;
+  background: none;
+  border: none;
+  color: #9aa4b2;
+  font-size: 1.75rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.modal-header {
+  display: flex;
+  gap: 1.25rem;
+}
+
+.modal-header img {
+  width: 140px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+}
+
+.modal-header h2 {
+  margin: 0.4rem 0 0.25rem;
+  font-size: 1.4rem;
+}
+
+.tagline {
+  margin: 0.25rem 0;
+  font-style: italic;
+  color: #9aa4b2;
+}
+
+.meta {
+  margin: 0;
+  color: #6b7785;
+  font-size: 0.85rem;
+}
+
+.modal-overview {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.modal h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+
+.trailer iframe {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 0;
+  border-radius: 8px;
+}
+
+.cast ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 0.75rem;
+}
+
+.cast li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.85rem;
+}
+
+.cast img,
+.avatar-placeholder {
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  border-radius: 8px;
+  object-fit: cover;
+  background: #222c38;
+}
+
+.cast-name {
+  font-weight: 600;
+}
+
+.cast-role {
+  color: #9aa4b2;
+}
+
+@media (max-width: 560px) {
+  .modal-header {
+    flex-direction: column;
+  }
+
+  .modal-header img {
+    width: 120px;
+  }
+}
+
+footer {
+  margin-top: 2.5rem;
+  color: #6b7785;
+  font-size: 0.85rem;
+}
