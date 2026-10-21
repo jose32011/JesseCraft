@@ -200,6 +200,22 @@ const DINING_ASSETS = [
   { file: "woodBowl.glb", name: "Wooden Bowl", category: "furniture", color: "#a96f48" },
 ];
 
+const KENNEY_SURVIVAL_ASSETS = [
+  { file: "tool-pickaxe.glb", name: "Pickaxe", category: "tool", color: "#8a8f98" },
+  { file: "tool-axe.glb", name: "Axe", category: "tool", color: "#8a8f98" },
+  { file: "tool-hammer.glb", name: "Hammer", category: "tool", color: "#8a8f98" },
+  { file: "tool-shovel.glb", name: "Shovel", category: "tool", color: "#8a8f98" },
+  { file: "tool-hoe.glb", name: "Hoe", category: "tool", color: "#8a8f98" },
+  { file: "campfire-pit.glb", name: "Campfire Pit", category: "furniture", color: "#6b5140" },
+  { file: "campfire-stand.glb", name: "Campfire Stand", category: "furniture", color: "#6b5140" },
+  { file: "workbench-anvil.glb", name: "Anvil Workbench", category: "furniture", color: "#5d6470" },
+  { file: "bucket.glb", name: "Bucket", category: "tool", color: "#6f8fa3" },
+  { file: "fish.glb", name: "Fish", category: "food", color: "#6fa3c9" },
+  { file: "fish-large.glb", name: "Large Fish", category: "food", color: "#5b8fb8" },
+  { file: "resource-wood.glb", name: "Wood Pile", category: "asset", color: "#a07850" },
+  { file: "resource-stone.glb", name: "Stone Pile", category: "asset", color: "#9a9a95" },
+];
+
 const humanizeModAssetName = (slug) => slug
   .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
   .replace(/[-_]+/g, " ")
@@ -260,6 +276,17 @@ const MOD_ASSET_CATALOG = [
     variant: index,
     assetKey: `food-pack/${asset.file}`,
     source: "Low Poly Food Pack",
+  })),
+  ...KENNEY_SURVIVAL_ASSETS.map((asset, index) => ({
+    id: `survival_${asset.file.replace(/\.glb$/, "").replace(/[^a-z0-9]+/g, "_")}`,
+    name: asset.name,
+    category: asset.category,
+    categoryLabel: { tool: "Tools", food: "Food", asset: "Imported assets", furniture: "Furniture" }[asset.category],
+    color: asset.color,
+    price: 60 + (index % 5) * 12,
+    variant: index,
+    assetKey: `kenney-survival-kit/${asset.file}`,
+    source: "Kenney Survival Kit",
   })),
 ];
 

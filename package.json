@@ -5,7 +5,7 @@
   "packageManager": "pnpm@10.34.6",
   "type": "module",
   "scripts": {
-    "dev": "npm run build:pokemon && npm run build:jesse-craft:dev && concurrently --restart-tries 10 --restart-after 2000 -n arcade,client,world -c green,blue,magenta \"npm:dev:arcade-server\" \"npm:dev:arcade-client\" \"npm:dev:watch-jesse-craft\"",
+    "dev": "npm run build:pokemon && npm run build:minicraft && npm run build:jesse-craft:dev && concurrently --restart-tries 10 --restart-after 2000 -n arcade,client,world -c green,blue,magenta \"npm:dev:arcade-server\" \"npm:dev:arcade-client\" \"npm:dev:watch-jesse-craft\"",
     "dev:arcade-server": "PORT=3101 node JesseArcade/server.js",
     "dev:arcade-client": "vite --config vite.arcade.config.js --host 0.0.0.0",
     "dev:jesse-craft-server": "PORT=3001 node server/index.js",
@@ -20,7 +20,11 @@
     "build": "vite build",
     "install:pokemon": "npm exec --yes pnpm@10.34.6 -- --dir Pokemon install --frozen-lockfile --reporter=silent",
     "build:pokemon": "npm run install:pokemon && npm exec --yes pnpm@10.34.6 -- --dir Pokemon run typecheck && PORT=5001 BASE_PATH=/pokemon-arena/ npm exec --yes pnpm@10.34.6 -- --dir Pokemon --filter @workspace/api-server --filter @workspace/pokemon-arena run build",
-    "build:arcade": "npm run build:pokemon && vite build --base=/jesse-craft/ --outDir=JesseArcade/dist",
+    "install:minicraft": "npm --prefix minicraft-main install --no-audit --no-fund",
+    "build:minicraft": "npm run install:minicraft && npm --prefix minicraft-main run build -- --base=/minicraft/",
+    "install:prime-upcoming": "npm --prefix tv install --no-audit --no-fund",
+    "build:prime-upcoming": "npm run install:prime-upcoming && npm --prefix tv run build -- --base=/prime-upcoming/",
+    "build:arcade": "npm run build:pokemon && npm run build:minicraft && npm run build:prime-upcoming && vite build --base=/jesse-craft/ --outDir=JesseArcade/dist",
     "prestart": "npm run build:arcade",
     "start": "node JesseArcade/server.js",
     "test": "node --test"

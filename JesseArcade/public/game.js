@@ -5,6 +5,10 @@ const jesseCraftScreen = document.getElementById('jesseCraftScreen');
 const jesseCraftFrame = document.getElementById('jesseCraftFrame');
 const pokemonScreen = document.getElementById('pokemonScreen');
 const pokemonFrame = document.getElementById('pokemonFrame');
+const minicraftScreen = document.getElementById('minicraftScreen');
+const primeUpcomingScreen = document.getElementById('primeUpcomingScreen');
+const primeUpcomingFrame = document.getElementById('primeUpcomingFrame');
+const minicraftFrame = document.getElementById('minicraftFrame');
 let currentRoom = '';
 let playerName = '';
 const playerTokenStorageKey = 'yugioh-player-token';
@@ -78,6 +82,18 @@ document.querySelectorAll('.game-menu-card').forEach(card => {
             jesseCraftFrame.src = '/jesse-craft/';
             return;
         }
+        if (card.dataset.game === 'prime-upcoming') {
+            localStorage.setItem('arcade-active-game', 'prime-upcoming');
+            window.leaveSnakesLaddersSession?.('prime-upcoming');
+            window.leaveChessScreen?.('prime-upcoming');
+            window.leaveLudoSession?.('prime-upcoming');
+            window.leaveUnoSession?.('prime-upcoming');
+            gameMenu.style.display = 'none';
+            gameMenuStatus.textContent = '';
+            primeUpcomingScreen.hidden = false;
+            primeUpcomingFrame.src = '/prime-upcoming/';
+            return;
+        }
         if (card.dataset.game === 'pokemon') {
             localStorage.setItem('arcade-active-game', 'pokemon');
             window.leaveSnakesLaddersSession?.('pokemon');
@@ -88,6 +104,18 @@ document.querySelectorAll('.game-menu-card').forEach(card => {
             gameMenuStatus.textContent = '';
             pokemonScreen.hidden = false;
             pokemonFrame.src = '/pokemon-arena/';
+            return;
+        }
+        if (card.dataset.game === 'minicraft') {
+            localStorage.setItem('arcade-active-game', 'minicraft');
+            window.leaveSnakesLaddersSession?.('minicraft');
+            window.leaveChessScreen?.('minicraft');
+            window.leaveLudoSession?.('minicraft');
+            window.leaveUnoSession?.('minicraft');
+            gameMenu.style.display = 'none';
+            gameMenuStatus.textContent = '';
+            minicraftScreen.hidden = false;
+            showMinicraftLobby();
             return;
         }
         if (card.dataset.game === 'pacman') {
@@ -202,9 +230,145 @@ document.getElementById('backFromJesseCraftBtn').addEventListener('click', () =>
     localStorage.setItem('arcade-active-game', 'menu');
 });
 
+document.getElementById('backFromPrimeUpcomingBtn').addEventListener('click', () => {
+    primeUpcomingFrame.src = 'about:blank';
+    primeUpcomingScreen.hidden = true;
+    gameMenu.style.display = 'flex';
+    localStorage.setItem('arcade-active-game', 'menu');
+});
+
 document.getElementById('backFromPokemonBtn').addEventListener('click', () => {
     pokemonFrame.src = 'about:blank';
     pokemonScreen.hidden = true;
+    gameMenu.style.display = 'flex';
+    localStorage.setItem('arcade-active-game', 'menu');
+});
+
+const minicraftLobby = document.getElementById('minicraftLobby');
+const minicraftLeaveBtn = document.getElementById('minicraftLeaveBtn');
+const minicraftPlayerNameInput = document.getElementById('minicraftPlayerName');
+const minicraftWorldNameInput = document.getElementById('minicraftWorldName');
+let minicraftLobbyTimer = null;
+const minicraftLobbyList = document.getElementById('minicraftLobbyList');
+const minicraftNameStorageKey = 'minicraft-player-name';
+minicraftPlayerNameInput.value = localStorage.getItem(minicraftNameStorageKey) || '';
+
+function showMinicraftLobby() {
+    minicraftFrame.src = 'about:blank';
+    minicraftFrame.hidden = true;
+    minicraftLobby.hidden = false;
+    minicraftLeaveBtn.hidden = true;
+    refreshMinicraftLobbies();
+    window.clearInterval(minicraftLobbyTimer);
+    minicraftLobbyTimer = window.setInterval(refreshMinicraftLobbies, 3000);
+}
+
+function launchMinicraft(src) {
+    window.clearInterval(minicraftLobbyTimer);
+    minicraftLobby.hidden = true;
+    minicraftFrame.hidden = false;
+    minicraftLeaveBtn.hidden = false;
+    minicraftFrame.src = src;
+}
+
+function readMinicraftPlayerName() {
+    const name = minicraftPlayerNameInput.value.trim().slice(0, 20);
+    if (!name) {
+        minicraftPlayerNameInput.setCustomValidity('Enter a player name.');
+        minicraftPlayerNameInput.reportValidity();
+        return null;
+    }
+    minicraftPlayerNameInput.setCustomValidity('');
+    localStorage.setItem(minicraftNameStorageKey, name);
+    return name;
+}
+
+function minicraftLaunchUrl(room, create, world) {
+    const params = new URLSearchParams({ room, name: readMinicraftPlayerName() || '' });
+    if (create) {
+        params.set('create', '1');
+        params.set('world', world || 'World');
+    }
+    return `/minicraft/?${params.toString()}`;
+}
+
+function createMinicraftCode() {
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    const bytes = crypto.getRandomValues(new Uint8Array(6));
+    return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join('');
+}
+
+document.getElementById('minicraftCreateBtn').addEventListener('click', () => {
+    if (!readMinicraftPlayerName()) return;
+    const world = minicraftWorldNameInput.value.trim().slice(0, 24) || 'My world';
+    const room = createMinicraftCode();
+    window.alert(`Your lobby code is ${room}. Share it so others can join.`);
+    launchMinicraft(minicraftLaunchUrl(room, true, world));
+});
+
+function renderMinicraftLobbies(rooms) {
+    minicraftLobbyList.replaceChildren();
+    if (rooms.length === 0) {
+        const empty = document.createElement('li');
+        empty.className = 'minicraft-lobby-empty';
+        empty.textContent = 'No open lobbies. Create one to start.';
+        minicraftLobbyList.append(empty);
+        return;
+    }
+    for (const room of rooms) {
+        const item = document.createElement('li');
+        const info = document.createElement('span');
+        info.textContent = `${room.world} • hosted by ${room.host} • ${room.players}/${room.maxPlayers} players`;
+        const joinButton = document.createElement('button');
+        joinButton.type = 'button';
+        joinButton.textContent = 'Join';
+        joinButton.addEventListener('click', () => {
+            if (!readMinicraftPlayerName()) return;
+            launchMinicraft(minicraftLaunchUrl(room.code, false));
+        });
+        item.append(info, joinButton);
+        minicraftLobbyList.append(item);
+    }
+}
+
+function refreshMinicraftLobbies() {
+    const url = new URL('/ws/minicraft', window.location.href);
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    const socket = new WebSocket(url.toString());
+    const timeout = window.setTimeout(() => socket.close(), 5000);
+    const finish = () => {
+        window.clearTimeout(timeout);
+        socket.close();
+    };
+    socket.addEventListener('open', () => socket.send(JSON.stringify({ type: 'list' })));
+    socket.addEventListener('message', (event) => {
+        const message = JSON.parse(String(event.data));
+        if (message.type === 'rooms') {
+            renderMinicraftLobbies(message.rooms);
+            finish();
+        }
+    });
+    socket.addEventListener('error', () => {
+        minicraftLobbyList.replaceChildren();
+        const failed = document.createElement('li');
+        failed.className = 'minicraft-lobby-empty';
+        failed.textContent = 'Could not load open lobbies.';
+        minicraftLobbyList.append(failed);
+        finish();
+    });
+}
+
+document.getElementById('minicraftRefreshBtn').addEventListener('click', refreshMinicraftLobbies);
+
+document.getElementById('minicraftSoloBtn').addEventListener('click', () => {
+    launchMinicraft('/minicraft/');
+});
+
+minicraftLeaveBtn.addEventListener('click', showMinicraftLobby);
+
+document.getElementById('backFromMinicraftBtn').addEventListener('click', () => {
+    minicraftFrame.src = 'about:blank';
+    minicraftScreen.hidden = true;
     gameMenu.style.display = 'flex';
     localStorage.setItem('arcade-active-game', 'menu');
 });

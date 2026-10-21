@@ -285,11 +285,21 @@ export const RECIPES = [
     resultCount: 1,
   },
   {
+    id: "grilled_fish",
+    label: "Grilled fish ×1",
+    ingredients: { raw_fish: 1, oak_log: 1 },
+    result: "grilled_fish",
+    resultCount: 1,
+    cooked: true,
+    station: "campfire",
+  },
+  {
     id: "iron_ingot",
     label: "Iron ingot ×1",
     ingredients: { iron_ore: 2, campfire: 1 },
     result: "iron_ingot",
     resultCount: 1,
+    smelted: true,
   },
   {
     id: "steel_ingot",
@@ -430,6 +440,7 @@ export const RECIPES = [
     ingredients: { copper_ore: 2, campfire: 1 },
     result: "copper_ingot",
     resultCount: 1,
+    smelted: true,
   },
 ];
 
@@ -561,29 +572,6 @@ function structureBlockAt(x, y, z, seed = 1) {
     }
   }
 
-  const factory = WORLD_LOCATIONS.find((entry) => entry.id === "chocolate-factory");
-  if (factory && Math.abs(wrapPlanetX(x - factory.x)) <= 16 && Math.abs(z - factory.z) <= 10) {
-    // Charlie's Schokoladenfabrik: a stone facade with a central tower, spires and a brick roof.
-    const fx = wrapPlanetX(x - factory.x);
-    const fz = z - factory.z;
-    const ground = terrainHeightAt(factory.x, factory.z, seed);
-    if (fz === -8 && Math.abs(fx) <= 1 && y <= ground + 3) return null;
-    if (y === ground + 1 && Math.abs(fx) <= 14 && Math.abs(fz) <= 8) return "stone";
-    const towerTop = ground + 22;
-    if (Math.abs(fx) <= 3 && Math.abs(fz) <= 3 && y >= ground + 2 && y <= towerTop) {
-      if (fx === 0 && fz === -3 && y >= ground + 10 && y <= ground + 14) return "glass";
-      return y === towerTop ? "brick" : "stone";
-    }
-    const spire = [-9, -6, 6, 9].includes(fx) && Math.abs(fz) <= 1;
-    if (spire && y >= ground + 2 && y <= ground + 16) return y === ground + 16 ? "brick" : "stone";
-    const wall = Math.abs(fx) === 14 || Math.abs(fz) === 8;
-    if (wall && y >= ground + 2 && y <= ground + 6) {
-      if (y === ground + 6) return Math.abs(fx + fz) % 2 === 0 ? "brick" : null;
-      return Math.abs(fx + fz) % 2 === 0 ? "brick" : "stone";
-    }
-    if (y === ground + 6 && Math.abs(fx) <= 13 && Math.abs(fz) <= 7) return "brick";
-    return null;
-  }
 
   if (airport) {
     const airportX = x - airport.x;
@@ -741,7 +729,8 @@ function islandHeightAt(x, z, island, seed) {
   return Math.round((2 + Math.round(bump * 4)) * smoothStep(0, 10, margin));
 }
 
-export function terrainHeightAt(x, z, seed = 1) {
+// Raw procedural ground, before the racing track is flattened into it.
+function rawTerrainHeightAt(x, z, seed = 1) {
   x = Math.max(PLANET_MIN_X, Math.min(PLANET_MAX_X, x));
   z = Math.max(PLANET_MIN_Z, Math.min(PLANET_MAX_Z, z));
   if (Math.abs(x) <= 84 && z >= 115 && z <= 136) return -3;
@@ -795,6 +784,85 @@ export function terrainHeightAt(x, z, seed = 1) {
     if (landHeight !== null) return landHeight;
   }
   return oceanSeabedAt(x, z, worldSeed);
+}
+
+// Racing oval shapes to try, largest first. Each oval's ground is levelled so cars can drive on it.
+const RACE_TRACK_SHAPES = [
+  { rx: 34, rz: 22 },
+  { rx: 24, rz: 16 },
+];
+const RACE_TRACK_POINT_COUNT = 48;
+const RACE_TRACK_FLAT_RANGE = 5.4; // half the road width plus a shoulder: fully levelled
+const RACE_TRACK_BLEND_RANGE = 11.4; // beyond this distance from the centreline the ground is untouched
+const raceTrackZoneCache = new Map();
+
+function raceTrackRingPoint(zone, index) {
+  const theta = (index / RACE_TRACK_POINT_COUNT) * Math.PI * 2;
+  return {
+    x: Math.round(zone.cx + Math.cos(theta) * zone.rx),
+    z: Math.round(zone.cz + Math.sin(theta) * zone.rz),
+  };
+}
+
+// Finds a dry oval site on raw ground and records the height the whole track is levelled to.
+function findRaceTrackZone(worldSeed) {
+  for (const { rx, rz } of RACE_TRACK_SHAPES) {
+    for (let cx = -780; cx <= 780; cx += 30) {
+      for (let cz = -380; cz <= 380; cz += 30) {
+        const nearLocation = WORLD_LOCATIONS.some(
+          (location) => Math.hypot(wrapPlanetX(cx - location.x), cz - location.z) < Math.max(rx, rz) + 45,
+        );
+        if (nearLocation) continue;
+        const zone = { cx, cz, rx, rz, height: 0 };
+        let total = 0;
+        let dry = true;
+        for (let index = 0; index < RACE_TRACK_POINT_COUNT && dry; index += 1) {
+          const { x, z } = raceTrackRingPoint(zone, index);
+          const height = rawTerrainHeightAt(x, z, worldSeed);
+          if (height < 1) dry = false;
+          total += height;
+        }
+        if (dry) return { ...zone, height: Math.round(total / RACE_TRACK_POINT_COUNT) };
+      }
+    }
+  }
+  return null;
+}
+
+function raceTrackZone(seed) {
+  const worldSeed = normalizeSeed(seed);
+  if (!raceTrackZoneCache.has(worldSeed)) raceTrackZoneCache.set(worldSeed, findRaceTrackZone(worldSeed));
+  return raceTrackZoneCache.get(worldSeed);
+}
+
+// Waypoints around the racing oval for this seed, or null when no dry site exists.
+export function raceTrackFootprint(seed = 1) {
+  const zone = raceTrackZone(seed);
+  if (!zone) return null;
+  return Array.from({ length: RACE_TRACK_POINT_COUNT }, (_, index) => raceTrackRingPoint(zone, index));
+}
+
+// True within the racing oval's clearing, where no buildings or trees may stand so the road stays open.
+function inRaceTrackClearing(x, z, seed = 1) {
+  const zone = raceTrackZone(seed);
+  if (!zone) return false;
+  const qx = wrapPlanetX(x - zone.cx) / zone.rx;
+  const qz = (z - zone.cz) / zone.rz;
+  return Math.abs(Math.hypot(qx, qz) - 1) * (zone.rx + zone.rz) / 2 < RACE_TRACK_BLEND_RANGE;
+}
+
+// Ground height: raw terrain, levelled to the racing oval near its centreline.
+export function terrainHeightAt(x, z, seed = 1) {
+  const raw = rawTerrainHeightAt(x, z, seed);
+  const zone = raceTrackZone(seed);
+  if (!zone) return raw;
+  const qx = wrapPlanetX(x - zone.cx) / zone.rx;
+  const qz = (z - zone.cz) / zone.rz;
+  const distance = Math.abs(Math.hypot(qx, qz) - 1) * (zone.rx + zone.rz) / 2;
+  if (distance >= RACE_TRACK_BLEND_RANGE) return raw;
+  if (distance <= RACE_TRACK_FLAT_RANGE) return zone.height;
+  const blend = smoothStep(RACE_TRACK_FLAT_RANGE, RACE_TRACK_BLEND_RANGE, distance);
+  return Math.round(zone.height + (raw - zone.height) * blend);
 }
 
 function seededValue(x, z, seed) {
@@ -1180,14 +1248,17 @@ export function getBaseBlockAt(x, y, z, seed = 1) {
   }
 
   if (y === BEDROCK_Y) return "stone";
-  const house = houseBlockAt(x, y, z);
-  if (house) return house;
-  const cityBlock = cityBlockAt(wrapPlanetX(x), y, z, normalizeSeed(seed));
-  if (cityBlock) return cityBlock;
-  const harbor = harborBlockAt(x, y, z, seed);
-  if (harbor) return harbor;
-  const structure = structureBlockAt(x, y, z, seed);
-  if (structure) return structure;
+  const cleared = inRaceTrackClearing(x, z, seed);
+  if (!cleared) {
+    const house = houseBlockAt(x, y, z);
+    if (house) return house;
+    const cityBlock = cityBlockAt(wrapPlanetX(x), y, z, normalizeSeed(seed));
+    if (cityBlock) return cityBlock;
+    const harbor = harborBlockAt(x, y, z, seed);
+    if (harbor) return harbor;
+    const structure = structureBlockAt(x, y, z, seed);
+    if (structure) return structure;
+  }
   const surface = terrainHeightAt(x, z, seed);
   const beach = surface >= 0 && surface <= 1 && Math.hypot(wrapPlanetX(x), z) > CITY_RADIUS;
   if (beach && y === 0) return "sand";
@@ -1197,7 +1268,7 @@ export function getBaseBlockAt(x, y, z, seed = 1) {
   }
   if (x >= -2 && x <= 3 && y === 0 && z === 2) return "sand";
 
-  const tree = treeBlockAt(x, y, z, normalizeSeed(seed));
+  const tree = cleared ? null : treeBlockAt(x, y, z, normalizeSeed(seed));
   if (tree) return tree;
 
   if (y > surface) return null;
@@ -1253,6 +1324,7 @@ export function createChunkBlocks(chunkX, chunkZ, seed = 1) {
         if (x < startX || x >= startX + CHUNK_SIZE) continue;
         for (let z = tree.z - 2; z <= tree.z + 2; z += 1) {
           if (z < startZ || z >= startZ + CHUNK_SIZE) continue;
+          if (inRaceTrackClearing(x, z, seed)) continue;
           if (x === tree.x && z === tree.z) {
             for (let y = tree.ground + 1; y <= trunkTop; y += 1) {
               blocks.set(blockKey(x, y, z), "oak_log");
@@ -1271,7 +1343,7 @@ export function createChunkBlocks(chunkX, chunkZ, seed = 1) {
   const citySeed = normalizeSeed(seed);
   for (let x = Math.max(startX, -CITY_RADIUS); x < Math.min(startX + CHUNK_SIZE, CITY_RADIUS + 1); x += 1) {
     for (let z = Math.max(startZ, -CITY_RADIUS); z < Math.min(startZ + CHUNK_SIZE, CITY_RADIUS + 1); z += 1) {
-      const column = cityColumnAt(x, z, citySeed);
+      const column = inRaceTrackClearing(x, z, citySeed) ? null : cityColumnAt(x, z, citySeed);
       if (!column) continue;
       const structureHeight = column.height + (column.skyline ? 5 : 0);
       for (let y = 0; y <= Math.min(structureHeight, MAX_CITY_BUILDING_HEIGHT); y += 1) {
@@ -1284,7 +1356,7 @@ export function createChunkBlocks(chunkX, chunkZ, seed = 1) {
   for (let x = Math.max(startX, -18); x < Math.min(startX + CHUNK_SIZE, 19); x += 1) {
     for (let z = Math.max(startZ, HARBOR_DOCK_MIN_Z); z < Math.min(startZ + CHUNK_SIZE, HARBOR_DOCK_MAX_Z + 1); z += 1) {
       for (let y = HARBOR_SEABED_Y - 5; y <= 5; y += 1) {
-        const type = harborBlockAt(x, y, z, seed);
+        const type = inRaceTrackClearing(x, z, seed) ? null : harborBlockAt(x, y, z, seed);
         if (type) blocks.set(blockKey(x, y, z), type);
       }
     }
@@ -1292,7 +1364,7 @@ export function createChunkBlocks(chunkX, chunkZ, seed = 1) {
 
   for (let x = Math.max(startX, -CITY_RADIUS); x < Math.min(startX + CHUNK_SIZE, CITY_RADIUS + 1); x += 1) {
     for (let z = Math.max(startZ, -CITY_RADIUS); z < Math.min(startZ + CHUNK_SIZE, CITY_RADIUS + 1); z += 1) {
-      const tree = cityTreeAt(x, z, normalizeSeed(seed));
+      const tree = inRaceTrackClearing(x, z, seed) ? null : cityTreeAt(x, z, normalizeSeed(seed));
       if (!tree) continue;
       const trunkTop = tree.ground + tree.height;
       for (let y = tree.ground + 1; y <= trunkTop; y += 1) {

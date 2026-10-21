@@ -496,10 +496,14 @@ function registerAdminDashboard(app, gameMetrics, {
       return;
     }
     const snapshot = accessControl.snapshot();
+    const pageSize = parsePageSize(request.query.pageSize);
+    const connections = paginate(snapshot.activeConnections, request.query.connectionsPage, pageSize);
+    const logs = paginate(snapshot.events, request.query.logsPage, pageSize);
+    const blocked = paginate(snapshot.blockedIps, request.query.blockedPage, pageSize);
     const ips = new Set([
-      ...snapshot.activeConnections.map(connection => connection.ip),
-      ...snapshot.events.map(event => event.ip),
-      ...snapshot.blockedIps.map(entry => entry.ip)
+      ...connections.items.map(connection => connection.ip),
+      ...logs.items.map(event => event.ip),
+      ...blocked.items.map(entry => entry.ip)
     ].map(normalizeIpAddress).filter(Boolean));
     const locations = {};
     let locationStatus = ipLocation.configured ? 'ready' : 'not-configured';
@@ -516,6 +520,10 @@ function registerAdminDashboard(app, gameMetrics, {
     }
     response.json({
       ...snapshot,
+      activeConnections: connections.items,
+      events: logs.items,
+      blockedIps: blocked.items,
+      pagination: { connections: connections.info, logs: logs.info, blocked: blocked.info },
       locations,
       locationStatus
     });
@@ -584,6 +592,30 @@ function registerAdminDashboard(app, gameMetrics, {
       response.status(503).json({ error: 'The IP could not be unblocked.' });
     }
   });
+}
+
+const DEFAULT_PAGE_SIZE = 10;
+const MAX_PAGE_SIZE = 100;
+
+function parsePositiveInteger(value, fallback, max = Number.MAX_SAFE_INTEGER) {
+  const number = Number.parseInt(value, 10);
+  return Number.isSafeInteger(number) && number > 0 ? Math.min(number, max) : fallback;
+}
+
+function parsePageSize(value) {
+  return parsePositiveInteger(value, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE);
+}
+
+// Returns one page of items; the requested page is clamped to the last available page.
+function paginate(items, requestedPage, pageSize) {
+  const total = items.length;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(parsePositiveInteger(requestedPage, 1), pageCount);
+  const start = (page - 1) * pageSize;
+  return {
+    items: items.slice(start, start + pageSize),
+    info: { page, pageSize, total, pageCount }
+  };
 }
 
 module.exports = {

@@ -402,6 +402,15 @@ test('connectivity and IP block APIs require admin login', async () => {
       const snapshotData = await snapshot.json();
       assert.equal(snapshotData.events.length, 0);
       assert.equal(snapshotData.blockedIps[0].ip, '192.0.2.20');
+      assert.deepEqual(snapshotData.pagination.logs, { page: 1, pageSize: 10, total: 0, pageCount: 1 });
+      assert.deepEqual(snapshotData.pagination.blocked, { page: 1, pageSize: 10, total: 1, pageCount: 1 });
+
+      const clampedPage = await fetch(`${baseUrl}/api/admin/connections?blockedPage=99&pageSize=1`, {
+        headers: { cookie }
+      });
+      const clampedData = await clampedPage.json();
+      assert.deepEqual(clampedData.pagination.blocked, { page: 1, pageSize: 1, total: 1, pageCount: 1 });
+      assert.equal(clampedData.blockedIps[0].ip, '192.0.2.20');
 
       const unblock = await fetch(`${baseUrl}/api/admin/ip-blocks`, {
         method: 'DELETE',

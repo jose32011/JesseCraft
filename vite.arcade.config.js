@@ -39,6 +39,7 @@ export default defineConfig({
       "/api": arcadeServer,
       "/admin": arcadeServer,
       "/jesse-craft": arcadeServer,
+      "/minicraft": arcadeServer,
       "/pokemon-arena": arcadeServer,
       "/pokemon": arcadeServer,
     },

@@ -94,6 +94,7 @@
               <tbody id="connectionRows"></tbody>
             </table>
           </div>
+          <nav class="pager" id="connectionsPager" aria-label="Connected players pages"></nav>
         </section>
         <section class="panel">
           <div class="panel-heading">
@@ -103,10 +104,10 @@
           <p class="muted access-note">Select an IP address to see its activity. Locations are approximate and require a local GeoIP database.</p>
           <div class="table-scroll">
             <table>
-              <thead><tr><th>Time</th><th>Game</th><th>IP address</th><th>Event</th><th></th></tr></thead>
-              <tbody id="connectionLogRows"></tbody>
-            </table>
-          </div>
+              <thead><tr><th>Time</th><th>Game</th><th>IP address</th><th>Event</th><th></th></tr></thead><tbody id="connectionLogRows"></tbody>
+              </table>
+            </div>
+            <nav class="pager" id="logsPager" aria-label="Connectivity log pages"></nav>
           <section id="ipActivityPanel" class="ip-activity" aria-labelledby="ipActivityTitle" hidden>
             <div class="panel-heading">
               <h3 id="ipActivityTitle">IP activity</h3>
@@ -133,6 +134,7 @@
             <tbody id="blockedIpRows"></tbody>
           </table>
         </div>
+        <nav class="pager" id="blockedPager" aria-label="Blocked IP pages"></nav>
       </section>
 
       <details class="panel password-settings">

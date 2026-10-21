@@ -56,6 +56,18 @@
                 <span class="game-menu-description">Build, explore, and adventure together.</span>
                 <span class="game-menu-action">Play now</span>
             </button>
+            <button class="game-menu-card minicraft-menu-card" type="button" data-game="minicraft">
+                <span class="game-menu-icon" aria-hidden="true">⛏</span>
+                <span class="game-menu-name">Minicraft</span>
+                <span class="game-menu-description">Explore a voxel world. Mine, build, and ride horses.</span>
+                <span class="game-menu-action">Play now</span>
+            </button>
+            <button class="game-menu-card prime-upcoming-menu-card" type="button" data-game="prime-upcoming">
+                <span class="game-menu-icon" aria-hidden="true">▶</span>
+                <span class="game-menu-name">Prime Upcoming</span>
+                <span class="game-menu-description">See upcoming movies and series on Prime Video in South Africa.</span>
+                <span class="game-menu-action">Open</span>
+            </button>
             <button class="game-menu-card pokemon-menu-card" type="button" data-game="pokemon">
                 <span class="game-menu-icon" aria-hidden="true">✦</span>
                 <span class="game-menu-name">Pokémon Arena</span>
@@ -88,6 +100,14 @@
         <p id="gameMenuStatus" class="game-menu-status" role="status" aria-live="polite"></p>
     </main>
 
+    <section id="primeUpcomingScreen" class="jesse-craft-screen" aria-label="Prime Upcoming" hidden>
+        <header class="jesse-craft-toolbar">
+            <span>Prime Upcoming</span>
+            <button id="backFromPrimeUpcomingBtn" type="button">← All games</button>
+        </header>
+        <iframe id="primeUpcomingFrame" title="Prime Video upcoming titles" src="about:blank"></iframe>
+    </section>
+
     <section id="jesseCraftScreen" class="jesse-craft-screen" aria-label="JesseCraft" hidden>
         <header class="jesse-craft-toolbar">
             <span>JesseCraft</span>
@@ -102,6 +122,37 @@
             <button id="backFromPokemonBtn" type="button">← All games</button>
         </header>
         <iframe id="pokemonFrame" title="Pokémon Arena multiplayer game" src="about:blank"></iframe>
+    </section>
+
+    <section id="minicraftScreen" class="jesse-craft-screen" aria-label="Minicraft" hidden>
+        <header class="jesse-craft-toolbar">
+            <span>Minicraft</span>
+            <button id="minicraftLeaveBtn" type="button" hidden>Leave game</button>
+            <button id="backFromMinicraftBtn" type="button">← All games</button>
+        </header>
+        <div id="minicraftLobby" class="minicraft-lobby">
+            <div class="minicraft-lobby-panel">
+                <h2>Create a lobby</h2>
+                <label>Your name
+                    <input id="minicraftPlayerName" type="text" maxlength="20" placeholder="Player name" autocomplete="off">
+                </label>
+                <label>World name
+                    <input id="minicraftWorldName" type="text" maxlength="24" placeholder="My world" autocomplete="off">
+                </label>
+                <button id="minicraftCreateBtn" type="button">Create lobby</button>
+                <p class="minicraft-lobby-note">Share the lobby code so others can join.</p>
+            </div>
+            <div class="minicraft-lobby-panel">
+                <h2>Join a lobby</h2>
+                <div class="minicraft-lobby-list-header">
+                    <h2>Open lobbies</h2>
+                    <button id="minicraftRefreshBtn" type="button">Refresh</button>
+                </div>
+                <ul id="minicraftLobbyList" class="minicraft-lobby-list"></ul>
+                <button id="minicraftSoloBtn" type="button" class="minicraft-solo">Play solo</button>
+            </div>
+        </div>
+        <iframe id="minicraftFrame" title="Minicraft voxel game" src="about:blank"></iframe>
     </section>
 
     <div id="loginScreen" style="display: none;">

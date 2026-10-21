@@ -321,9 +321,52 @@ function renderIpActivity(events, locations) {
   });
 }
 
+const IP_PAGE_SIZE = 10;
+const ipPageState = { connections: 1, logs: 1, blocked: 1 };
+
+function renderPager(pager, key, info) {
+  pager.replaceChildren();
+  pager.hidden = info.pageCount <= 1;
+  if (pager.hidden) return;
+  const previous = document.createElement('button');
+  previous.type = 'button';
+  previous.className = 'small-secondary';
+  previous.textContent = 'Previous';
+  previous.disabled = info.page <= 1;
+  previous.addEventListener('click', () => {
+    ipPageState[key] = info.page - 1;
+    loadConnections();
+  });
+  const label = document.createElement('span');
+  label.textContent = `Page ${info.page} of ${info.pageCount} (${info.total} total)`;
+  const next = document.createElement('button');
+  next.type = 'button';
+  next.className = 'small-secondary';
+  next.textContent = 'Next';
+  next.disabled = info.page >= info.pageCount;
+  next.addEventListener('click', () => {
+    ipPageState[key] = info.page + 1;
+    loadConnections();
+  });
+  pager.append(previous, label, next);
+}
+
 async function loadConnections() {
   try {
-    const data = await request('/api/admin/connections');
+    const query = new URLSearchParams({
+      connectionsPage: ipPageState.connections,
+      logsPage: ipPageState.logs,
+      blockedPage: ipPageState.blocked,
+      pageSize: IP_PAGE_SIZE
+    });
+    const data = await request(`/api/admin/connections?${query}`);
+    const { pagination } = data;
+    ipPageState.connections = pagination.connections.page;
+    ipPageState.logs = pagination.logs.page;
+    ipPageState.blocked = pagination.blocked.page;
+    renderPager(document.getElementById('connectionsPager'), 'connections', pagination.connections);
+    renderPager(document.getElementById('logsPager'), 'logs', pagination.logs);
+    renderPager(document.getElementById('blockedPager'), 'blocked', pagination.blocked);
     const blocked = new Set(data.blockedIps.map(entry => entry.ip));
 
     const connectionRows = document.getElementById('connectionRows');
@@ -384,7 +427,7 @@ async function loadConnections() {
         ? ' The local GeoIP database could not be read; check the server configuration and logs.'
         : '';
     setStatus(document.getElementById('accessStatus'),
-      `Showing up to ${data.events.length} recent events.${locationStatus}`,
+      `Showing ${data.events.length} of ${pagination.logs.total} recent events.${locationStatus}`,
       data.locationStatus === 'error' ? 'error' : 'success');
   } catch (error) {
     if (error.status === 401) {

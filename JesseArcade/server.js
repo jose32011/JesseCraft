@@ -10,6 +10,7 @@ const cardApi = require('./cardApi');
 const { registerAdminDashboard } = require('./adminDashboard');
 const { createIpAccessControl, normalizeIpAddress } = require('./ipAccessControl');
 const { registerLudoHandlers } = require('./ludo');
+const { createMinicraftServer } = require('./minicraftMultiplayer');
 const { registerChessHandlers } = require('./chess');
 const { registerSnakesLaddersHandlers } = require('./snakesLadders');
 const { registerUnoHandlers } = require('./uno');
@@ -25,6 +26,8 @@ const accessControl = createIpAccessControl();
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 const JESSE_CRAFT_BUILD_DIR = path.join(__dirname, 'dist');
+const MINICRAFT_BUILD_DIR = path.join(__dirname, '..', 'minicraft-main', 'dist');
+const PRIME_UPCOMING_BUILD_DIR = path.join(__dirname, '..', 'tv', 'dist');
 const POKEMON_ARENA_BUILD_DIR = path.join(
   __dirname,
   '..',
@@ -73,6 +76,8 @@ app.get(['/admin', '/admin/'], (_request, response) => {
 // Serve static files
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/jesse-craft', express.static(JESSE_CRAFT_BUILD_DIR));
+app.use('/minicraft', express.static(MINICRAFT_BUILD_DIR));
+app.use('/prime-upcoming', express.static(PRIME_UPCOMING_BUILD_DIR));
 app.use('/pokemon-arena', express.static(POKEMON_ARENA_BUILD_DIR));
 app.get(['/pokemon', '/pokemon/'], (_request, response) => {
   response.redirect(302, '/pokemon-arena/');
@@ -1318,6 +1323,7 @@ async function startServer() {
     resolveClientIp
   });
   jesseCraftServerInstance = jesseCraftServer;
+  const minicraftServer = createMinicraftServer({ httpServer: server, accessControl, resolveClientIp });
   jesseCraftMetrics = () => ({
     playersOnline: jesseCraftServer.players.size,
     activeWorlds: [...jesseCraftServer.rooms.values()].filter(room => room.started).length,
@@ -1340,6 +1346,7 @@ async function startServer() {
   const shutdown = async () => {
     await stopPokemonApi();
     await jesseCraftServer.close();
+    await minicraftServer.close();
     server.close(() => process.exit(0));
   };
   process.once('SIGINT', shutdown);

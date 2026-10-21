@@ -1,0 +1,393 @@
+@font-face {
+  font-family: "Minecraft";
+  src: url("/Minecraft.woff") format("woff");
+}
+
+body {
+  font-family: "Minecraft", mono;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-align: center;
+  color: #2c3e50;
+
+  margin: 0;
+  padding: 0;
+
+  overflow: hidden;
+}
+
+#lobby-stat {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  color: white;
+  text-shadow: 1.5px 1.5px 0px rgba(75, 75, 75, 0.8);
+  font-family: "Minecraft", mono;
+  z-index: 1000;
+  pointer-events: none;
+}
+
+#debug {
+  position: absolute;
+  display: none;
+  flex-direction: column;
+  top: 64px;
+  left: 16px;
+  color: white;
+  text-shadow: 1.5px 1.5px 0px rgba(75, 75, 75, 0.8);
+  font-family: "Minecraft", mono;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  z-index: 1000;
+}
+
+.stat {
+  padding: 0px 8px;
+  background: rgba(255, 255, 255, 0.1);
+  width: "100%";
+  text-align: left;
+}
+
+#cursor {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  mix-blend-mode: difference;
+  transform: translate(-50%, -50%);
+}
+
+/* Vanilla hotbar geometry in GUI pixels (hotbar.png is 182x22): slots every
+   20 px, 16 px item icons at (3 + 20i, 3), 24 px selection frame at -1 */
+#toolbar {
+  --hotbar-width: min(728px, 45vw);
+  --px: calc(var(--hotbar-width) / 182);
+  --selected: 0;
+  position: absolute;
+  display: flex;
+  width: var(--hotbar-width);
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+
+  #toolbar-bg {
+    position: relative;
+    width: 100%;
+    image-rendering: pixelated;
+  }
+
+  #toolbar-active-border {
+    position: absolute;
+    top: calc(var(--px) * -1);
+    left: calc(var(--px) * (20 * var(--selected) - 1));
+    width: calc(var(--px) * 24);
+    height: calc(var(--px) * 24);
+    image-rendering: pixelated;
+  }
+
+  .toolbar-slot {
+    position: absolute;
+    top: calc(var(--px) * 3);
+    width: calc(var(--px) * 16);
+    height: calc(var(--px) * 16);
+    image-rendering: pixelated;
+    background-size: 100% 100%;
+    background-repeat: no-repeat;
+    background-position: center;
+
+    .count {
+      position: absolute;
+      right: -6%;
+      bottom: -4%;
+      color: white;
+      font-size: clamp(14px, 1.6vw, 26px);
+      text-shadow: 2px 2px #3f3f3f;
+      pointer-events: none;
+    }
+  }
+
+  @for $i from 1 through 9 {
+    #toolbar-slot-#{$i} {
+      left: calc(var(--px) * (3 + 20 * #{$i - 1}));
+    }
+  }
+}
+
+/* Narrow screens (phones): the hotbar spans most of the width */
+@media (max-width: 600px) {
+  #toolbar {
+    --hotbar-width: 96vw;
+  }
+}
+
+/* Phones in landscape: keep the hotbar clear of the joystick on the left
+   and the buttons on the right */
+@media (max-height: 500px) {
+  #toolbar {
+    --hotbar-width: 50vw;
+  }
+
+  #pause #map-frame #world-map {
+    width: min(256px, 70vw, 30vh);
+  }
+}
+
+/* Touch overlay: joystick bottom-left, buttons bottom-right, all above the
+   hotbar. Shown only while playing on a touch device (see TouchControls). */
+#touch-controls {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+
+  #touch-stick {
+    position: absolute;
+    left: max(16px, env(safe-area-inset-left));
+    bottom: 56px;
+    width: min(120px, 30vmin);
+    height: min(120px, 30vmin);
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.15);
+    border: 2px solid rgba(255, 255, 255, 0.35);
+    box-sizing: border-box;
+  }
+
+  #touch-stick-knob {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 43%;
+    height: 43%;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.4);
+    transform: translate(-50%, -50%);
+  }
+
+  .touch-button {
+    position: absolute;
+    bottom: 56px;
+    width: min(72px, 18vmin);
+    height: min(72px, 18vmin);
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.45);
+    background: rgba(0, 0, 0, 0.35);
+    color: white;
+    font-family: "Minecraft", mono;
+    font-size: 13px;
+    text-shadow: 1px 1px #000a;
+    padding: 0;
+    touch-action: none;
+
+    &.active {
+      background: rgba(100, 100, 255, 0.5);
+    }
+  }
+
+  [data-action="attack"] {
+    right: max(16px, env(safe-area-inset-right));
+    bottom: 56px;
+  }
+
+  [data-action="place"] {
+    right: calc(max(16px, env(safe-area-inset-right)) + min(72px, 18vmin) + 12px);
+    bottom: 56px;
+  }
+
+  [data-action="jump"] {
+    right: max(16px, env(safe-area-inset-right));
+    bottom: calc(56px + min(72px, 18vmin) + 12px);
+  }
+
+  [data-action="pause"] {
+    right: max(16px, env(safe-area-inset-right));
+    top: max(16px, env(safe-area-inset-top));
+    bottom: auto;
+    width: min(56px, 14vmin);
+    height: min(56px, 14vmin);
+    font-size: 11px;
+  }
+
+  [data-action="inventory"] {
+    right: calc(max(16px, env(safe-area-inset-right)) + min(56px, 14vmin) + 12px);
+    top: max(16px, env(safe-area-inset-top));
+    bottom: auto;
+    width: min(56px, 14vmin);
+    height: min(56px, 14vmin);
+    font-size: 11px;
+  }
+}
+
+/* Pause-menu overview map: 256 px, scaled down on small screens */
+#map-frame {
+  display: inline-block;
+  border: 2px solid #000;
+  background: #000;
+  margin-top: 16px;
+
+  #world-map {
+    display: block;
+    width: min(256px, 70vw);
+    height: auto;
+    aspect-ratio: 1 / 1;
+    image-rendering: pixelated;
+  }
+}
+
+#map-label {
+  color: white;
+  text-shadow: 1.5px 1.5px 0px rgba(75, 75, 75, 0.8);
+  margin: 4px 0 0;
+}
+
+#main-menu {
+  /* Buttons are 10 button-heights wide; shrink them on narrow phones */
+  --btn-size: min(30px, calc((100vw - 32px) / 10));
+  width: calc(var(--btn-size) * 10);
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 48px;
+
+  img {
+    width: min(130%, 90vw);
+    height: auto;
+  }
+}
+
+#buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: calc(var(--btn-size) * 10);
+
+  .mc-button {
+    position: relative;
+    height: var(--btn-size);
+  }
+
+  /* Vanilla-style slider: an invisible range input over the button label */
+  #render-distance-slider,
+  #music-volume-slider {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    opacity: 0;
+    cursor: ew-resize;
+  }
+}
+
+#menu {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-image: linear-gradient(rgba(0, 0, 0, 0.75), rgba(0, 0, 0, 0.75)),
+    url("/textures/dirt.png");
+  background-repeat: repeat;
+  background-size: 64px 64px;
+  image-rendering: pixelated;
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+
+  p {
+    color: white;
+    text-shadow: 1.5px 1.5px 0px rgba(75, 75, 75, 0.8);
+  }
+
+  #loading {
+    display: none;
+  }
+
+  #loading-progress {
+    width: 200px;
+    height: 3px;
+    background: #808080;
+
+    #loading-progress-bar {
+      width: 0%;
+      height: 100%;
+      background: #80ff80;
+    }
+  }
+}
+
+#pause {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 16px;
+  overflow-y: auto;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  /* Auto margins centre short content but let tall content scroll instead
+     of clipping above the top edge (justify-content: center does that) */
+  > * {
+    margin-block: auto;
+  }
+  background: rgba(0, 0, 0, 0.55);
+
+  p {
+    color: white;
+    text-shadow: 1.5px 1.5px 0px rgba(75, 75, 75, 0.8);
+  }
+}
+
+.mc-button {
+  height: var(--btn-size);
+  width: calc(var(--btn-size) * 10);
+  cursor: pointer;
+  overflow: hidden;
+  white-space: nowrap;
+  user-select: none;
+
+  background: #999 url("https://i.ibb.co/rb2TWXL/bgbtn.png") center / cover;
+  image-rendering: pixelated;
+  border: 2px solid #000;
+
+  &:focus {
+    outline: none;
+  }
+
+  /* Mouse over */
+  &:hover .title,
+  &:focus .title {
+    background-color: rgba(100, 100, 255, 0.45);
+    text-shadow: 2px 2px #202013cc;
+    color: #ffffa0;
+  }
+  &:active .title {
+    box-shadow: inset -2px -4px #0004, inset 2px 2px #fff5;
+  }
+  /* Button title */
+  .title {
+    width: 100%;
+    height: 100%;
+    padding-bottom: 0.3em;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    color: #ddd;
+    text-shadow: 2px 2px #000a;
+    box-shadow: inset -2px -4px #0006, inset 2px 2px #fff7;
+  }
+  /* Others */
+  &.full {
+    width: 100%;
+    height: 100%;
+  }
+}

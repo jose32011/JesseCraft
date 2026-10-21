@@ -41,6 +41,7 @@ import {
   isNearBoatWorkshop,
   isNearHarbor,
   rollFishReward,
+  raceTrackFootprint,
   terrainHeightAt,
   wrapPlanetX,
 } from "./world.js";
@@ -67,7 +68,7 @@ import {
   isMissionExpired,
   normalizeMissions,
   progressMission,
-  refreshMissionOffers,
+  refreshDailyMissions,
 } from "../shared/missions.js";
 
 const GAME_DIR = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -147,8 +148,6 @@ const RIVAL_TANK_PAINTS = [
 ];
 
 const RACE_TRACK_POINTS = 48;
-const RACE_TRACK_RX = 34; // oval half-width along X
-const RACE_TRACK_RZ = 22; // oval half-depth along Z
 const RACE_CAR_STEP = 1.1; // units per race tick (250ms)
 const RACE_CAR_COUNT = 4;
 const RACE_CAR_PAINTS = [
@@ -163,16 +162,21 @@ function isRaceCar(vehicle) {
 }
 
 // Average distance between track waypoints, used to convert car speed into waypoint progress.
-function raceTrackSpacing() {
-  const radius = Math.sqrt((RACE_TRACK_RX * RACE_TRACK_RX + RACE_TRACK_RZ * RACE_TRACK_RZ) / 2);
-  return (2 * Math.PI * radius) / RACE_TRACK_POINTS;
+function raceTrackSpacing(track) {
+  let length = 0;
+  for (let index = 0; index < track.length; index += 1) {
+    const from = track[index];
+    const to = track[(index + 1) % track.length];
+    length += Math.hypot(to.x - from.x, to.z - from.z);
+  }
+  return length / track.length;
 }
 
 // Finds flat dry land for a racing oval and returns its waypoints, or null when none fits.
 const raceTrackCache = new Map();
 function findRaceTrack(seed) {
   if (raceTrackCache.has(seed)) return raceTrackCache.get(seed);
-  const track = searchRaceTrack(seed);
+  const track = raceTrackFootprint(seed);
   raceTrackCache.set(seed, track);
   return track;
 }
@@ -197,47 +201,6 @@ function residenceLandingSpot(room, property) {
   return landingSpots.find(([x, z]) =>
     playerCanOccupy(room, x, terrainHeightAt(x, z, room.seed) + 2.65, z),
   );
-}
-
-// Tries the strict oval first so existing worlds keep their track, then looser profiles so every world gets one.
-function searchRaceTrack(seed) {
-  const profiles = [
-    { rx: RACE_TRACK_RX, rz: RACE_TRACK_RZ, minHeight: 2, maxRange: 3 },
-    { rx: RACE_TRACK_RX, rz: RACE_TRACK_RZ, minHeight: 1, maxRange: 6 },
-    { rx: 24, rz: 16, minHeight: 1, maxRange: 6 },
-  ];
-  for (const profile of profiles) {
-    const track = searchRaceTrackProfile(seed, profile);
-    if (track) return track;
-  }
-  return null;
-}
-
-function searchRaceTrackProfile(seed, { rx, rz, minHeight, maxRange }) {
-  for (let cx = -780; cx <= 780; cx += 30) {
-    for (let cz = -380; cz <= 380; cz += 30) {
-      if (Math.hypot(cx - ARMY_BASE.x, cz - ARMY_BASE.z) < 70) continue;
-      const points = [];
-      let lowest = Infinity;
-      let highest = -Infinity;
-      for (let index = 0; index < RACE_TRACK_POINTS; index += 1) {
-        const theta = (index / RACE_TRACK_POINTS) * Math.PI * 2;
-        const x = Math.round(cx + Math.cos(theta) * rx);
-        const z = Math.round(cz + Math.sin(theta) * rz);
-        const height = terrainHeightAt(x, z, seed);
-        lowest = Math.min(lowest, height);
-        highest = Math.max(highest, height);
-        if (lowest < minHeight || highest - lowest > maxRange) break;
-        points.push({ x, z });
-      }
-      if (points.length < RACE_TRACK_POINTS) continue;
-      const sampled = points.filter((_, index) => index % 6 === 0);
-      if (sampled.every((point) => vehicleHasGroundClearance({ type: "car" }, point.x, point.z, 0, seed))) {
-        return points;
-      }
-    }
-  }
-  return null;
 }
 
 // Finds dry land for the second army base, away from the first one.
@@ -345,10 +308,23 @@ function applyMissionEvent(player, type, amount) {
   missions = result.missions;
   if (result.completed) {
     player.coins = (player.coins ?? 0) + result.completed;
-    notice = `Mission complete! +${result.completed} coins.`;
+    if (result.xp) {
+      player.xp = (player.xp ?? 0) + result.xp;
+      player.level = levelForExperience(player.xp);
+      writeJson(player.socket, { type: "xp", xp: player.xp, level: player.level });
+    }
+    notice = `Mission complete! +${result.completed} coins${result.xp ? ` · +${result.xp} XP` : ""}.`;
   }
   player.missions = missions;
   return notice;
+}
+
+// Records a job action (mining, cooking, repairs) and tells the player about any change.
+function recordJobProgress(player, type, amount) {
+  const notice = applyMissionEvent(player, type, amount);
+  sendMissionState(player);
+  writeJson(player.socket, { type: "currency", coins: player.coins });
+  if (notice) writeJson(player.socket, { type: "mission_result", message: notice });
 }
 
 function sendMissionState(player) {
@@ -564,6 +540,12 @@ function addRoamingBots(bots, seed) {
   }
 }
 
+// Some vehicles spawn damaged and need a repair job before they are fixed. The choice is fixed per vehicle id.
+function spawnsDamaged(id) {
+  if (id.startsWith("race-car-") || id.startsWith("player-boat-")) return false;
+  return [...id].reduce((sum, char) => sum + char.charCodeAt(0), 0) % 3 === 0;
+}
+
 function createVehicles(seed = 1, mode = "survival") {
   const spawns = VEHICLE_SPAWNS.map((spawn) => {
     const position = findClearVehiclePosition({ ...spawn, yaw: spawn.yaw ?? 0 }, seed);
@@ -669,6 +651,7 @@ function createVehicles(seed = 1, mode = "survival") {
       health: 100,
       maxHealth: 100,
       airborne: false,
+      damaged: spawnsDamaged(id),
       occupantId: null,
     },
   ]));
@@ -996,6 +979,22 @@ function getRoomBlockAt(room, x, y, z) {
   return room.blocks.has(key) ? room.blocks.get(key) : getBaseBlockAt(x, y, z, room.seed);
 }
 
+// True when a block of the given type sits within three cells of the player.
+function hasNearbyBlock(room, player, blockType) {
+  if (!room) return false;
+  const px = Math.round(player.x);
+  const py = Math.round(player.y);
+  const pz = Math.round(player.z);
+  for (let dx = -3; dx <= 3; dx += 1) {
+    for (let dy = -1; dy <= 2; dy += 1) {
+      for (let dz = -3; dz <= 3; dz += 1) {
+        if (getRoomBlockAt(room, wrapPlanetX(px + dx), py + dy, pz + dz) === blockType) return true;
+      }
+    }
+  }
+  return false;
+}
+
 function cachedBaseBlockAt(room, x, y, z) {
   room.baseBlockCache ??= new Map();
   const key = blockKey(x, y, z);
@@ -1215,7 +1214,7 @@ export function updateCityTraffic(room, players) {
 function updateRaceCars(room) {
   const track = room.vehicles.raceTrack;
   if (!track) return;
-  const spacing = raceTrackSpacing();
+  const spacing = raceTrackSpacing(track);
   for (const vehicle of room.vehicles.values()) {
     if (!isRaceCar(vehicle) || vehicle.occupantId) continue;
     const count = track.length;
@@ -2996,9 +2995,7 @@ export function createGameServer({
 
       if (message.type === "mission_offers") {
         expireMissionIfDue(player);
-        if (!player.missions.active && player.missions.offers.length === 0) {
-          player.missions = refreshMissionOffers(player.missions);
-        }
+        player.missions = refreshDailyMissions(player.missions ?? createEmptyMissions(), Date.now());
         sendMissionState(player);
         return;
       }
@@ -3058,6 +3055,7 @@ export function createGameServer({
           message: `You caught a ${fish.label}!`,
         });
         writeJson(socket, { type: "inventory", items: inventoryItems(player.inventory) });
+        recordJobProgress(player, "catch", 1);
         return;
       }
 
@@ -3827,6 +3825,30 @@ export function createGameServer({
         return;
       }
 
+      if (message.type === "repair_vehicle") {
+        const room = rooms.get(player.roomId);
+        if (!room?.started || player.health <= 0) return;
+        const vehicle = [...room.vehicles.values()].find((entry) =>
+          Math.hypot(wrapPlanetX(entry.x - player.x), entry.z - player.z) <= 4);
+        if (!vehicle) {
+          writeJson(socket, { type: "error", message: "Move closer to a vehicle to repair it." });
+          return;
+        }
+        if (!vehicle.damaged) {
+          writeJson(socket, { type: "error", message: "That vehicle doesn't need repairs." });
+          return;
+        }
+        if (!removeItems(player.inventory, "iron_ingot", 1)) {
+          writeJson(socket, { type: "error", message: "You need an iron ingot to repair a vehicle." });
+          return;
+        }
+        vehicle.damaged = false;
+        broadcastToRoom(room, roomSnapshot(room));
+        writeJson(socket, { type: "inventory", items: inventoryItems(player.inventory) });
+        recordJobProgress(player, "repair", 1);
+        return;
+      }
+
       if (message.type === "fly_toggle") {
         const room = rooms.get(player.roomId);
         if (!room?.started || player.health <= 0 || typeof message.enabled !== "boolean" || (message.enabled && player.mountId)) {
@@ -3949,6 +3971,10 @@ export function createGameServer({
           writeJson(socket, { type: "error", message: "You do not have the materials for that recipe." });
           return;
         }
+        if (recipe.station && !hasNearbyBlock(rooms.get(player.roomId), player, recipe.station)) {
+          writeJson(socket, { type: "error", message: `Place a ${recipe.station.replace("_", " ")} next to you to cook this.` });
+          return;
+        }
         for (const [item, amount] of Object.entries(recipe.ingredients)) {
           removeItems(player.inventory, item, amount);
         }
@@ -3958,6 +3984,8 @@ export function createGameServer({
         await incrementProfileStat(player, "itemsCrafted", recipe.resultCount, profiles, pool);
         writeJson(socket, { type: "xp", xp: player.xp, level: player.level });
         writeJson(socket, { type: "inventory", items: inventoryItems(player.inventory) });
+        if (recipe.cooked) recordJobProgress(player, "cook", 1);
+        if (recipe.smelted) recordJobProgress(player, "smelt", recipe.resultCount);
         return;
       }
 
@@ -4048,6 +4076,7 @@ export function createGameServer({
         }
         room.blockChanges.set(key, action === "remove" ? null : block);
         await incrementProfileStat(player, action === "remove" ? "blocksMined" : "blocksPlaced", 1, profiles, pool);
+        if (action === "remove") recordJobProgress(player, "mine", 1);
         broadcastToRoom(room, { type: "block", action, position, block: changedBlock });
         writeJson(socket, { type: "inventory", items: inventoryItems(player.inventory) });
       }

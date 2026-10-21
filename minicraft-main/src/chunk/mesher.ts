@@ -1,0 +1,909 @@
+import {
+  BlockBox,
+  BlockDef,
+  fluidHeight,
+  getBlockDef,
+  RenderGeometry,
+  RenderLayer,
+} from "../Block/blocks";
+
+import {
+  blockIndex,
+  ChunkNeighborhood,
+  ChunkSize,
+  NEIGHBORHOOD_CENTER,
+} from "./ChunkData";
+import { ChunkEdits, LitVolume, MAX_LIGHT } from "./lighting";
+
+/**
+ * Vertex layout for chunk meshes (see ChunkMaterial):
+ *  position  vec3   float32  block-space position within the chunk
+ *  uv        vec2   uint16   texture coordinates in 1/UV_SCALE tiles (repeat wrapping)
+ *  layer     float  uint8    texture array layer
+ *  flags     float  uint8    bits 0-2 face index (+X,-X,+Y,-Y,+Z,-Z), bit 3 emissive,
+ *                            bits 4-5 ambient occlusion (0 darkest .. 3 open)
+ *  light     vec2   uint8    sky and block light, 0-255 (normalized)
+ */
+export type MeshBuffers = {
+  positions: Float32Array;
+  uvs: Uint16Array;
+  layers: Uint8Array;
+  flags: Uint8Array;
+  lights: Uint8Array;
+  indices: Uint32Array;
+  vertexCount: number;
+  indexCount: number;
+};
+
+export type ChunkMesh = {
+  opaque: MeshBuffers;
+  cutout: MeshBuffers;
+  translucent: MeshBuffers;
+  /**
+   * Neighbours (bitmask over neighborIndex) whose meshes are stale because
+   * of the edits this mesh was built for; 0 when built without edits
+   */
+  affectedNeighbors: number;
+};
+
+export const FACE_POS_X = 0;
+export const FACE_NEG_X = 1;
+export const FACE_POS_Y = 2;
+export const FACE_NEG_Y = 3;
+export const FACE_POS_Z = 4;
+export const FACE_NEG_Z = 5;
+
+const EMISSIVE_FLAG = 8;
+const AO_SHIFT = 4;
+
+/** UV attribute units per texture tile; the shader divides by this */
+export const UV_SCALE = 16;
+
+/** Scales a 0-15 light level to a normalized uint8 */
+const LIGHT_SCALE = 255 / MAX_LIGHT;
+
+/** Per-corner shading of a quad: sky, block light (0-15, may be fractional) and AO (0-3) */
+type CornerShade = {
+  sky: number[];
+  block: number[];
+  ao: number[];
+};
+
+const newShade = (): CornerShade => ({
+  sky: [0, 0, 0, 0],
+  block: [0, 0, 0, 0],
+  ao: [0, 0, 0, 0],
+});
+
+class GeometryBuilder {
+  positions = new Float32Array(3 * 1024);
+  uvs = new Uint16Array(2 * 1024);
+  layers = new Uint8Array(1024);
+  flags = new Uint8Array(1024);
+  lights = new Uint8Array(2 * 1024);
+  indices = new Uint32Array(6 * 256);
+  vertexCount = 0;
+  indexCount = 0;
+
+  private ensureVertices(extra: number) {
+    const needed = this.vertexCount + extra;
+    if (needed <= this.layers.length) return;
+    let capacity = this.layers.length;
+    while (capacity < needed) capacity *= 2;
+    this.positions = grow(this.positions, capacity * 3);
+    this.uvs = grow(this.uvs, capacity * 2);
+    this.layers = grow(this.layers, capacity);
+    this.flags = grow(this.flags, capacity);
+    this.lights = grow(this.lights, capacity * 2);
+  }
+
+  private ensureIndices(extra: number) {
+    const needed = this.indexCount + extra;
+    if (needed <= this.indices.length) return;
+    let capacity = this.indices.length;
+    while (capacity < needed) capacity *= 2;
+    this.indices = grow(this.indices, capacity);
+  }
+
+  /**
+   * Adds a quad given its four corners in counter-clockwise order along with
+   * per-corner UVs and shading. The diagonal is chosen from the AO pattern so
+   * occlusion interpolates without directional artefacts.
+   */
+  quad(
+    corners: number[][],
+    uvs: number[][],
+    shade: CornerShade,
+    layer: number,
+    face: number,
+    emissive: boolean
+  ) {
+    this.ensureVertices(4);
+    this.ensureIndices(6);
+    const base = this.vertexCount;
+    for (let i = 0; i < 4; i++) {
+      const vi = base + i;
+      this.positions[vi * 3] = corners[i][0];
+      this.positions[vi * 3 + 1] = corners[i][1];
+      this.positions[vi * 3 + 2] = corners[i][2];
+      this.uvs[vi * 2] = Math.round(uvs[i][0] * UV_SCALE);
+      this.uvs[vi * 2 + 1] = Math.round(uvs[i][1] * UV_SCALE);
+      this.layers[vi] = layer;
+      this.flags[vi] =
+        face | (emissive ? EMISSIVE_FLAG : 0) | (shade.ao[i] << AO_SHIFT);
+      this.lights[vi * 2] = Math.round(shade.sky[i] * LIGHT_SCALE);
+      this.lights[vi * 2 + 1] = Math.round(shade.block[i] * LIGHT_SCALE);
+    }
+    const ii = this.indexCount;
+    // Run the diagonal through the darker pair of corners
+    const flip = shade.ao[0] + shade.ao[2] > shade.ao[1] + shade.ao[3];
+    if (flip) {
+      this.indices[ii] = base + 1;
+      this.indices[ii + 1] = base + 2;
+      this.indices[ii + 2] = base + 3;
+      this.indices[ii + 3] = base + 1;
+      this.indices[ii + 4] = base + 3;
+      this.indices[ii + 5] = base;
+    } else {
+      this.indices[ii] = base;
+      this.indices[ii + 1] = base + 1;
+      this.indices[ii + 2] = base + 2;
+      this.indices[ii + 3] = base;
+      this.indices[ii + 4] = base + 2;
+      this.indices[ii + 5] = base + 3;
+    }
+    this.vertexCount += 4;
+    this.indexCount += 6;
+  }
+
+  build(): MeshBuffers {
+    return {
+      positions: this.positions.slice(0, this.vertexCount * 3),
+      uvs: this.uvs.slice(0, this.vertexCount * 2),
+      layers: this.layers.slice(0, this.vertexCount),
+      flags: this.flags.slice(0, this.vertexCount),
+      lights: this.lights.slice(0, this.vertexCount * 2),
+      indices: this.indices.slice(0, this.indexCount),
+      vertexCount: this.vertexCount,
+      indexCount: this.indexCount,
+    };
+  }
+}
+
+function grow<T extends Float32Array | Uint8Array | Uint16Array | Uint32Array>(
+  arr: T,
+  capacity: number
+): T {
+  const next = new (arr.constructor as new (n: number) => T)(capacity);
+  next.set(arr);
+  return next;
+}
+
+const occludes = (neighbor: BlockDef, self: BlockDef): boolean =>
+  neighbor.opaque || (neighbor.id === self.id && self.cullSelf);
+
+/**
+ * Mask entry: non-zero when a face exists; encodes texture layer, render
+ * layer and emissive flag.
+ */
+const faceKey = (def: BlockDef, face: number): number =>
+  (def.faces[face] + 1) | (def.emissive ? 1 << 9 : 0) | (def.layer << 10);
+
+/**
+ * Smooth lighting and ambient occlusion for the four corners of the face of
+ * block `a` that looks into cell `b`. Each corner samples the four cells
+ * around it on the b side of the face (b itself, the two edge neighbours and
+ * the diagonal), averaging light over the non-opaque ones. AO follows the
+ * classic three-neighbour rule: two occluded edges fully darken the corner.
+ *
+ * Results are packed for greedy merging into `keys`: AO (2 bits per corner),
+ * then sky and block light in quarter levels (8 bits per corner).
+ */
+function cornerShading(
+  vol: LitVolume,
+  b: number[],
+  u: number,
+  v: number,
+  keys: Int32Array
+) {
+  let aoKey = 0;
+  let skyKey = 0;
+  let blockKey = 0;
+  const p = [0, 0, 0];
+  for (let c = 0; c < 4; c++) {
+    const su = c === 1 || c === 2 ? 1 : -1;
+    const sv = c === 2 || c === 3 ? 1 : -1;
+
+    p[0] = b[0];
+    p[1] = b[1];
+    p[2] = b[2];
+    p[u] += su;
+    const side1 = vol.isOpaque(p[0], p[1], p[2]);
+    let sky = 0;
+    let block = 0;
+    let count = 0;
+    if (!side1) {
+      sky += vol.skyLight(p[0], p[1], p[2]);
+      block += vol.blockLight(p[0], p[1], p[2]);
+      count++;
+    }
+
+    p[u] -= su;
+    p[v] += sv;
+    const side2 = vol.isOpaque(p[0], p[1], p[2]);
+    if (!side2) {
+      sky += vol.skyLight(p[0], p[1], p[2]);
+      block += vol.blockLight(p[0], p[1], p[2]);
+      count++;
+    }
+
+    p[u] += su;
+    const corner = side1 && side2 ? true : vol.isOpaque(p[0], p[1], p[2]);
+    if (!corner) {
+      sky += vol.skyLight(p[0], p[1], p[2]);
+      block += vol.blockLight(p[0], p[1], p[2]);
+      count++;
+    }
+
+    if (!vol.isOpaque(b[0], b[1], b[2])) {
+      sky += vol.skyLight(b[0], b[1], b[2]);
+      block += vol.blockLight(b[0], b[1], b[2]);
+      count++;
+    }
+
+    const ao =
+      side1 && side2
+        ? 0
+        : 3 - ((side1 ? 1 : 0) + (side2 ? 1 : 0) + (corner ? 1 : 0));
+    const skyQ = count ? Math.round((sky * 4) / count) : 0;
+    const blockQ = count ? Math.round((block * 4) / count) : 0;
+
+    aoKey |= ao << (c * 2);
+    skyKey |= skyQ << (c * 8);
+    blockKey |= blockQ << (c * 8);
+  }
+  keys[0] = aoKey;
+  keys[1] = skyKey;
+  keys[2] = blockKey;
+}
+
+const unpackShade = (
+  aoKey: number,
+  skyKey: number,
+  blockKey: number,
+  out: CornerShade
+) => {
+  for (let c = 0; c < 4; c++) {
+    out.ao[c] = (aoKey >> (c * 2)) & 3;
+    out.sky[c] = ((skyKey >>> (c * 8)) & 0xff) / 4;
+    out.block[c] = ((blockKey >>> (c * 8)) & 0xff) / 4;
+  }
+};
+
+/**
+ * Builds culled, greedy-merged, smooth-lit geometry for a chunk.
+ */
+export function meshChunk(
+  size: ChunkSize,
+  n: ChunkNeighborhood,
+  edits?: ChunkEdits
+): ChunkMesh {
+  const vol = new LitVolume(size, n);
+  const affectedNeighbors =
+    edits && edits.indices.length > 0 ? vol.affectedNeighbors(n, edits) : 0;
+  const builders = {
+    [RenderLayer.Opaque]: new GeometryBuilder(),
+    [RenderLayer.Cutout]: new GeometryBuilder(),
+    [RenderLayer.Translucent]: new GeometryBuilder(),
+  };
+
+  const data = n.chunks[NEIGHBORHOOD_CENTER] as Uint8Array;
+  meshCubes(size, vol, builders);
+  meshCrosses(size, data, vol, builders);
+  meshBoxes(size, data, vol, builders);
+  meshFluids(size, data, vol, builders);
+
+  return {
+    opaque: builders[RenderLayer.Opaque].build(),
+    cutout: builders[RenderLayer.Cutout].build(),
+    translucent: builders[RenderLayer.Translucent].build(),
+    affectedNeighbors,
+  };
+}
+
+/** Per-slice face masks: block key, AO key and light keys per cell */
+type FaceMask = {
+  key: Int32Array;
+  ao: Int32Array;
+  sky: Int32Array;
+  block: Int32Array;
+};
+
+const newMask = (n: number): FaceMask => ({
+  key: new Int32Array(n),
+  ao: new Int32Array(n),
+  sky: new Int32Array(n),
+  block: new Int32Array(n),
+});
+
+function meshCubes(
+  size: ChunkSize,
+  vol: LitVolume,
+  builders: Record<RenderLayer, GeometryBuilder>
+) {
+  const dims = [size.width, size.height, size.width];
+  const pos = [0, 0, 0];
+  const next = [0, 0, 0];
+  const keys = new Int32Array(3);
+
+  for (let d = 0; d < 3; d++) {
+    const u = (d + 1) % 3;
+    const v = (d + 2) % 3;
+    const du = dims[u];
+    const dv = dims[v];
+    const maskPos = newMask(du * dv);
+    const maskNeg = newMask(du * dv);
+    const facePos = d * 2;
+    const faceNeg = d * 2 + 1;
+    // X faces have u = y, v = z; swap so texture s runs horizontally
+    const swapUV = d === 0;
+
+    for (pos[d] = -1; pos[d] < dims[d]; pos[d]++) {
+      let idx = 0;
+      for (pos[v] = 0; pos[v] < dv; pos[v]++) {
+        for (pos[u] = 0; pos[u] < du; pos[u]++, idx++) {
+          next[0] = pos[0] + (d === 0 ? 1 : 0);
+          next[1] = pos[1] + (d === 1 ? 1 : 0);
+          next[2] = pos[2] + (d === 2 ? 1 : 0);
+          const a = getBlockDef(vol.get(pos[0], pos[1], pos[2]));
+          const b = getBlockDef(vol.get(next[0], next[1], next[2]));
+
+          if (
+            pos[d] >= 0 &&
+            a.geometry === RenderGeometry.Cube &&
+            !occludes(b, a)
+          ) {
+            maskPos.key[idx] = faceKey(a, facePos);
+            cornerShading(vol, next, u, v, keys);
+            maskPos.ao[idx] = keys[0];
+            maskPos.sky[idx] = keys[1];
+            maskPos.block[idx] = keys[2];
+          } else {
+            maskPos.key[idx] = 0;
+          }
+
+          if (
+            pos[d] < dims[d] - 1 &&
+            b.geometry === RenderGeometry.Cube &&
+            !occludes(a, b)
+          ) {
+            maskNeg.key[idx] = faceKey(b, faceNeg);
+            cornerShading(vol, pos, u, v, keys);
+            maskNeg.ao[idx] = keys[0];
+            maskNeg.sky[idx] = keys[1];
+            maskNeg.block[idx] = keys[2];
+          } else {
+            maskNeg.key[idx] = 0;
+          }
+        }
+      }
+
+      const plane = pos[d] + 1;
+      emitGreedy(
+        maskPos,
+        du,
+        dv,
+        d,
+        u,
+        v,
+        plane,
+        facePos,
+        true,
+        swapUV,
+        vol,
+        builders,
+        pos[d]
+      );
+      emitGreedy(
+        maskNeg,
+        du,
+        dv,
+        d,
+        u,
+        v,
+        plane,
+        faceNeg,
+        false,
+        swapUV,
+        vol,
+        builders,
+        pos[d] + 1
+      );
+    }
+  }
+}
+
+const sameFace = (mask: FaceMask, a: number, b: number): boolean =>
+  mask.key[a] === mask.key[b] &&
+  mask.ao[a] === mask.ao[b] &&
+  mask.sky[a] === mask.sky[b] &&
+  mask.block[a] === mask.block[b];
+
+function emitGreedy(
+  mask: FaceMask,
+  du: number,
+  dv: number,
+  d: number,
+  u: number,
+  v: number,
+  plane: number,
+  face: number,
+  positive: boolean,
+  swapUV: boolean,
+  vol: LitVolume,
+  builders: Record<RenderLayer, GeometryBuilder>,
+  blockSlice: number
+) {
+  const shade = newShade();
+  const reordered = newShade();
+
+  for (let j = 0; j < dv; j++) {
+    for (let i = 0; i < du; ) {
+      const n = j * du + i;
+      if (mask.key[n] === 0) {
+        i++;
+        continue;
+      }
+
+      let w = 1;
+      while (i + w < du && sameFace(mask, n, n + w)) w++;
+
+      let h = 1;
+      outer: for (; j + h < dv; h++) {
+        for (let k = 0; k < w; k++) {
+          if (!sameFace(mask, n, n + k + h * du)) break outer;
+        }
+      }
+
+      unpackShade(mask.ao[n], mask.sky[n], mask.block[n], shade);
+      for (let hh = 0; hh < h; hh++) {
+        mask.key.fill(0, n + hh * du, n + hh * du + w);
+      }
+
+      const base = [0, 0, 0];
+      base[d] = plane;
+      base[u] = i;
+      base[v] = j;
+
+      // Sample the block owning this face to pick its render layer
+      const sample = [0, 0, 0];
+      sample[d] = blockSlice;
+      sample[u] = i;
+      sample[v] = j;
+      const def = getBlockDef(vol.get(sample[0], sample[1], sample[2]));
+
+      const p0 = base;
+      const p1 = base.slice();
+      p1[u] += w;
+      const p2 = p1.slice();
+      p2[v] += h;
+      const p3 = base.slice();
+      p3[v] += h;
+
+      const uv = (uOff: number, vOff: number) =>
+        swapUV ? [vOff, uOff] : [uOff, vOff];
+      const uv0 = uv(0, 0);
+      const uv1 = uv(w, 0);
+      const uv2 = uv(w, h);
+      const uv3 = uv(0, h);
+
+      // Corner c of the shading corresponds to p_c; negative faces wind 0,3,2,1
+      const order = positive ? [0, 1, 2, 3] : [0, 3, 2, 1];
+      const corners = order.map((c) => [p0, p1, p2, p3][c]);
+      const uvs = order.map((c) => [uv0, uv1, uv2, uv3][c]);
+      for (let k = 0; k < 4; k++) {
+        reordered.sky[k] = shade.sky[order[k]];
+        reordered.block[k] = shade.block[order[k]];
+        reordered.ao[k] = shade.ao[order[k]];
+      }
+
+      builders[def.layer].quad(
+        corners,
+        uvs,
+        reordered,
+        def.faces[face],
+        face,
+        def.emissive
+      );
+
+      i += w;
+    }
+  }
+}
+
+// Half the diagonal extent of a cross-shaped plant quad so it spans one block
+const CROSS_HALF = Math.SQRT1_2 * 0.5;
+
+function meshCrosses(
+  size: ChunkSize,
+  data: Uint8Array,
+  vol: LitVolume,
+  builders: Record<RenderLayer, GeometryBuilder>
+) {
+  const w = size.width;
+  const shade = newShade();
+  for (let y = 0; y < size.height; y++) {
+    for (let z = 0; z < w; z++) {
+      for (let x = 0; x < w; x++) {
+        const def = getBlockDef(data[blockIndex(size, x, y, z)]);
+        if (def.geometry !== RenderGeometry.Cross) continue;
+
+        const sky = vol.skyLight(x, y, z);
+        const block = vol.blockLight(x, y, z);
+        shade.sky.fill(sky);
+        shade.block.fill(block);
+        shade.ao.fill(3);
+
+        const cx = x + 0.5;
+        const cz = z + 0.5;
+        const r = CROSS_HALF;
+        const layer = def.faces[FACE_POS_Y];
+        const uvs = [
+          [0, 0],
+          [1, 0],
+          [1, 1],
+          [0, 1],
+        ];
+        const builder = builders[def.layer];
+        builder.quad(
+          [
+            [cx - r, y, cz - r],
+            [cx + r, y, cz + r],
+            [cx + r, y + 1, cz + r],
+            [cx - r, y + 1, cz - r],
+          ],
+          uvs,
+          shade,
+          layer,
+          FACE_POS_Y,
+          def.emissive
+        );
+        builder.quad(
+          [
+            [cx - r, y, cz + r],
+            [cx + r, y, cz - r],
+            [cx + r, y + 1, cz - r],
+            [cx - r, y + 1, cz + r],
+          ],
+          uvs,
+          shade,
+          layer,
+          FACE_POS_Y,
+          def.emissive
+        );
+      }
+    }
+  }
+}
+
+/**
+ * Face corners of an AABB [min, max] for face `face`, wound counter-clockwise
+ * seen from outside, paired with the UVs of each corner. Tangent axes map to
+ * texture s/t the same way `meshCubes` does so partial blocks show the
+ * matching crop of their texture.
+ */
+function boxFace(
+  face: number,
+  b: BlockBox,
+  ox: number,
+  oy: number,
+  oz: number
+): { corners: number[][]; uvs: number[][] } {
+  const [x0, y0, z0, x1, y1, z1] = b;
+  const p = (x: number, y: number, z: number) => [ox + x, oy + y, oz + z];
+  switch (face) {
+    case FACE_POS_X:
+      return {
+        corners: [p(x1, y0, z1), p(x1, y0, z0), p(x1, y1, z0), p(x1, y1, z1)],
+        uvs: [
+          [z1, y0],
+          [z0, y0],
+          [z0, y1],
+          [z1, y1],
+        ],
+      };
+    case FACE_NEG_X:
+      return {
+        corners: [p(x0, y0, z0), p(x0, y0, z1), p(x0, y1, z1), p(x0, y1, z0)],
+        uvs: [
+          [z0, y0],
+          [z1, y0],
+          [z1, y1],
+          [z0, y1],
+        ],
+      };
+    case FACE_POS_Y:
+      return {
+        corners: [p(x0, y1, z0), p(x0, y1, z1), p(x1, y1, z1), p(x1, y1, z0)],
+        uvs: [
+          [x0, z0],
+          [x0, z1],
+          [x1, z1],
+          [x1, z0],
+        ],
+      };
+    case FACE_NEG_Y:
+      return {
+        corners: [p(x0, y0, z0), p(x1, y0, z0), p(x1, y0, z1), p(x0, y0, z1)],
+        uvs: [
+          [x0, z0],
+          [x1, z0],
+          [x1, z1],
+          [x0, z1],
+        ],
+      };
+    case FACE_POS_Z:
+      return {
+        corners: [p(x0, y0, z1), p(x1, y0, z1), p(x1, y1, z1), p(x0, y1, z1)],
+        uvs: [
+          [x0, y0],
+          [x1, y0],
+          [x1, y1],
+          [x0, y1],
+        ],
+      };
+    default:
+      return {
+        corners: [p(x1, y0, z0), p(x0, y0, z0), p(x0, y1, z0), p(x1, y1, z0)],
+        uvs: [
+          [x1, y0],
+          [x0, y0],
+          [x0, y1],
+          [x1, y1],
+        ],
+      };
+  }
+}
+
+/** Outward normal of each face */
+const FACE_NORMALS: [number, number, number][] = [
+  [1, 0, 0],
+  [-1, 0, 0],
+  [0, 1, 0],
+  [0, -1, 0],
+  [0, 0, 1],
+  [0, 0, -1],
+];
+
+/**
+ * Blocks smaller than their cell (snow layers, cactus): six unmerged faces at
+ * the block's box. A face flush with the cell boundary is culled like a cube
+ * face; inset faces are always drawn and lit from the block's own cell.
+ */
+function meshBoxes(
+  size: ChunkSize,
+  data: Uint8Array,
+  vol: LitVolume,
+  builders: Record<RenderLayer, GeometryBuilder>
+) {
+  const w = size.width;
+  const shade = newShade();
+  for (let y = 0; y < size.height; y++) {
+    for (let z = 0; z < w; z++) {
+      for (let x = 0; x < w; x++) {
+        const def = getBlockDef(data[blockIndex(size, x, y, z)]);
+        if (def.geometry !== RenderGeometry.Box) continue;
+        const b = def.box;
+        const builder = builders[def.layer];
+
+        for (let face = 0; face < 6; face++) {
+          const [nx, ny, nz] = FACE_NORMALS[face];
+          const axis = face >> 1;
+          const positive = (face & 1) === 0;
+          const flush = positive ? b[axis + 3] >= 1 : b[axis] <= 0;
+          let lx = x;
+          let ly = y;
+          let lz = z;
+          if (flush) {
+            lx += nx;
+            ly += ny;
+            lz += nz;
+            if (occludes(getBlockDef(vol.get(lx, ly, lz)), def)) continue;
+          }
+          shade.sky.fill(vol.skyLight(lx, ly, lz));
+          shade.block.fill(vol.blockLight(lx, ly, lz));
+          shade.ao.fill(3);
+          const { corners, uvs } = boxFace(face, b, x, y, z);
+          builder.quad(
+            corners,
+            uvs,
+            shade,
+            def.faces[face],
+            face,
+            def.emissive
+          );
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Surface height of a liquid at the corner shared by the four cells around
+ * (x, z) at row y, following Minecraft: any of those cells with the same
+ * liquid above it makes the corner full; otherwise it is the average of the
+ * liquid heights, weighting near-full cells heavily and open air as zero.
+ */
+function fluidCornerHeight(
+  vol: LitVolume,
+  source: number,
+  x: number,
+  y: number,
+  z: number
+): number {
+  let total = 0;
+  let weight = 0;
+  for (let dz = -1; dz <= 0; dz++) {
+    for (let dx = -1; dx <= 0; dx++) {
+      const cx = x + dx;
+      const cz = z + dz;
+      if (getBlockDef(vol.get(cx, y + 1, cz)).fluidSource === source) return 1;
+      const def = getBlockDef(vol.get(cx, y, cz));
+      if (def.fluid && def.fluidSource === source) {
+        const h = fluidHeight(def);
+        if (h >= 0.8) {
+          total += h * 10;
+          weight += 10;
+        } else {
+          total += h;
+          weight++;
+        }
+      } else if (!def.opaque) {
+        weight++;
+      }
+    }
+  }
+  return weight ? total / weight : 0;
+}
+
+/** Horizontal side faces of a fluid cell: [dx, dz, face, cornerA, cornerB] */
+const FLUID_SIDES: [number, number, number, number, number][] = [
+  [1, 0, FACE_POS_X, 1, 3],
+  [-1, 0, FACE_NEG_X, 0, 2],
+  [0, 1, FACE_POS_Z, 2, 3],
+  [0, -1, FACE_NEG_Z, 0, 1],
+];
+
+function meshFluids(
+  size: ChunkSize,
+  data: Uint8Array,
+  vol: LitVolume,
+  builders: Record<RenderLayer, GeometryBuilder>
+) {
+  const w = size.width;
+  const shade = newShade();
+  // Corner heights indexed by (cx | cz << 1): 0=(0,0) 1=(1,0) 2=(0,1) 3=(1,1)
+  const h = [0, 0, 0, 0];
+  const light = (x: number, y: number, z: number) => {
+    shade.sky.fill(vol.skyLight(x, y, z));
+    shade.block.fill(vol.blockLight(x, y, z));
+    shade.ao.fill(3);
+  };
+
+  for (let y = 0; y < size.height; y++) {
+    for (let z = 0; z < w; z++) {
+      for (let x = 0; x < w; x++) {
+        const def = getBlockDef(data[blockIndex(size, x, y, z)]);
+        if (def.geometry !== RenderGeometry.Fluid) continue;
+        const source = def.fluidSource;
+        const builder = builders[def.layer];
+        const same = (bx: number, by: number, bz: number) =>
+          getBlockDef(vol.get(bx, by, bz)).fluidSource === source;
+
+        const aboveSame = same(x, y + 1, z);
+        if (aboveSame) {
+          h.fill(1);
+        } else {
+          h[0] = fluidCornerHeight(vol, source, x, y, z);
+          h[1] = fluidCornerHeight(vol, source, x + 1, y, z);
+          h[2] = fluidCornerHeight(vol, source, x, y, z + 1);
+          h[3] = fluidCornerHeight(vol, source, x + 1, y, z + 1);
+        }
+
+        if (!aboveSame && !vol.isOpaque(x, y + 1, z)) {
+          light(x, y + 1, z);
+          builder.quad(
+            [
+              [x, y + h[0], z],
+              [x, y + h[2], z + 1],
+              [x + 1, y + h[3], z + 1],
+              [x + 1, y + h[1], z],
+            ],
+            [
+              [0, 0],
+              [0, 1],
+              [1, 1],
+              [1, 0],
+            ],
+            shade,
+            def.faces[FACE_POS_Y],
+            FACE_POS_Y,
+            def.emissive
+          );
+        }
+
+        if (!same(x, y - 1, z) && !vol.isOpaque(x, y - 1, z)) {
+          light(x, y - 1, z);
+          builder.quad(
+            [
+              [x, y, z],
+              [x + 1, y, z],
+              [x + 1, y, z + 1],
+              [x, y, z + 1],
+            ],
+            [
+              [0, 0],
+              [1, 0],
+              [1, 1],
+              [0, 1],
+            ],
+            shade,
+            def.faces[FACE_NEG_Y],
+            FACE_NEG_Y,
+            def.emissive
+          );
+        }
+
+        for (const [dx, dz, face, ca, cb] of FLUID_SIDES) {
+          const nx = x + dx;
+          const nz = z + dz;
+          if (same(nx, y, nz) || vol.isOpaque(nx, y, nz)) continue;
+          light(nx, y, nz);
+          // Corners a and b are the two surface corners on this side, ordered
+          // so the quad winds counter-clockwise seen from outside
+          const ax = x + (ca & 1);
+          const az = z + (ca >> 1);
+          const bx = x + (cb & 1);
+          const bz = z + (cb >> 1);
+          const ha = h[ca];
+          const hb = h[cb];
+          const flip = face === FACE_POS_X || face === FACE_NEG_Z;
+          const corners = flip
+            ? [
+                [ax, y, az],
+                [ax, y + ha, az],
+                [bx, y + hb, bz],
+                [bx, y, bz],
+              ]
+            : [
+                [ax, y, az],
+                [bx, y, bz],
+                [bx, y + hb, bz],
+                [ax, y + ha, az],
+              ];
+          const uvs = flip
+            ? [
+                [0, 0],
+                [0, 1],
+                [1, 1],
+                [1, 0],
+              ]
+            : [
+                [0, 0],
+                [1, 0],
+                [1, 1],
+                [0, 1],
+              ];
+          builder.quad(
+            corners,
+            uvs,
+            shade,
+            def.faces[face],
+            face,
+            def.emissive
+          );
+        }
+      }
+    }
+  }
+}

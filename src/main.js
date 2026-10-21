@@ -809,6 +809,29 @@ const planeTextureUrls = import.meta.glob("./assets/mods/lowPolyPlanePack/**/*.p
   import: "default",
   eager: true,
 });
+const chocolateFactoryUrls = import.meta.glob("./assets/chocolate-factory/*.glb", {
+  query: "?url",
+  import: "default",
+  eager: true,
+});
+const chocolateFactoryLoader = new GLTFLoader();
+let chocolateFactoryModel = null;
+let chocolateFactoryLoading = null;
+function loadChocolateFactoryModel() {
+  if (chocolateFactoryModel) return Promise.resolve(chocolateFactoryModel);
+  chocolateFactoryLoading ??= (async () => {
+    const url = Object.values(chocolateFactoryUrls)[0];
+    if (typeof url !== "string") throw new Error("The chocolate factory model is missing.");
+    const gltf = await chocolateFactoryLoader.loadAsync(url);
+    chocolateFactoryModel = gltf.scene;
+    return chocolateFactoryModel;
+  })().catch((error) => {
+    chocolateFactoryLoading = null;
+    console.error(error);
+    return null;
+  });
+  return chocolateFactoryLoading;
+}
 const placedAssetModels = new Map();
 const placedAssetModelLoads = new Map();
 const placedAssetModelLoader = new GLTFLoader();
@@ -835,6 +858,10 @@ for (const path of Object.keys(modAssetUrls)) {
         ? "mod-car-kit"
         : "mod-low-poly-plane";
   assetModelFiles.set(`${assetPrefix}/${fileName}`, path);
+}
+const kenneySurvivalUrls = import.meta.glob("./assets/kenney-survival-kit/*.glb", { query: "?url", import: "default", eager: true });
+for (const path of Object.keys(kenneySurvivalUrls)) {
+  assetModelFiles.set(`kenney-survival-kit/${path.split("/").at(-1)}`, path);
 }
 const kenneyNatureUrls = import.meta.glob("./assets/kenney-nature-kit/*.glb", { query: "?url", import: "default", eager: true });
 for (const path of Object.keys(kenneyNatureUrls)) {
@@ -2011,6 +2038,21 @@ function renderWorld() {
     cityInfrastructureMeshes.push(group);
     return true;
   };
+  const factoryLocation = WORLD_LOCATIONS.find((location) => location.id === "chocolate-factory");
+  if (factoryLocation) {
+    if (chocolateFactoryModel) {
+      addCityFixture(
+        chocolateFactoryModel.clone(true),
+        factoryLocation.x,
+        terrainHeightAt(factoryLocation.x, factoryLocation.z, state.seed) + 1,
+        factoryLocation.z,
+      );
+    } else {
+      void loadChocolateFactoryModel().then((model) => {
+        if (model) scheduleWorldRender();
+      });
+    }
+  }
   const isCityFixtureNearby = (x, z) => {
     return Math.hypot(x - playerPosition.x, z - playerPosition.z) <= activeRenderDistance + 10;
   };
@@ -3621,7 +3663,19 @@ function updateVehicles(current = []) {
   updateRaceCarMenu();
 }
 
-// Draws the racing oval as a flat road ribbon. Points come from the server snapshot with terrain heights.
+// Turns each track point into a frame: unit direction, unit left normal and the terrain height.
+function raceTrackFrames(points) {
+  return points.map((point, i) => {
+    const prev = points[(i - 1 + points.length) % points.length];
+    const next = points[(i + 1) % points.length];
+    const tx = next.x - prev.x;
+    const tz = next.z - prev.z;
+    const length = Math.hypot(tx, tz) || 1;
+    return { x: point.x, y: point.y, z: point.z, t: { x: tx / length, z: tz / length }, n: { x: -tz / length, z: tx / length } };
+  });
+}
+
+// Draws the racing oval: asphalt, painted lines, checkered finish, gantry, barriers and a grandstand.
 function updateRaceTrack(points) {
   const key = points?.length ? `${points.length}:${points[0].x},${points[0].z}` : "";
   if (key === raceTrackKey) return;
@@ -3637,36 +3691,118 @@ function updateRaceTrack(points) {
     : 0;
   if (raceTrackGroup) {
     scene.remove(raceTrackGroup);
-    raceTrackGroup.geometry.dispose();
-    raceTrackGroup.material.dispose();
+    raceTrackGroup.traverse((child) => {
+      child.geometry?.dispose();
+      child.material?.dispose();
+    });
     raceTrackGroup = null;
   }
   if (!points || points.length < 3) return;
+  const frames = raceTrackFrames(points);
+  const count = frames.length;
   const halfWidth = 2.4;
-  const positions = [];
-  const indices = [];
-  for (let i = 0; i < points.length; i += 1) {
-    const prev = points[(i - 1 + points.length) % points.length];
-    const next = points[(i + 1) % points.length];
-    const point = points[i];
-    const tx = next.x - prev.x;
-    const tz = next.z - prev.z;
-    const length = Math.hypot(tx, tz) || 1;
-    const offsetX = (-tz / length) * halfWidth;
-    const offsetZ = (tx / length) * halfWidth;
-    const left = planetPointAt(point.x + offsetX, point.y + 0.12, point.z + offsetZ);
-    const right = planetPointAt(point.x - offsetX, point.y + 0.12, point.z - offsetZ);
-    positions.push(left.x, left.y, left.z, right.x, right.y, right.z);
-    const a = i * 2;
-    const b = ((i + 1) % points.length) * 2;
-    indices.push(a, b, a + 1, a + 1, b, b + 1);
+  const center = raceTrackCenter;
+  const buckets = { asphalt: [], white: [], black: [], barrier: [], stand: [], seat: [], yellow: [], gantry: [] };
+  // Side of the track that faces away from the oval centre: +1 or -1 along the frame normal.
+  const outward = (frame) => ((frame.x - center.x) * frame.n.x + (frame.z - center.z) * frame.n.z >= 0 ? 1 : -1);
+  // A point on the flat band: `along` runs with the track, `lateral` across it, `lift` above the terrain.
+  const corner = (frame, along, lateral, lift) =>
+    planetPointAt(
+      frame.x + frame.t.x * along + frame.n.x * lateral,
+      frame.y + 1 + lift,
+      frame.z + frame.t.z * along + frame.n.z * lateral,
+    );
+  const quad = (bucket, a, b, c, d) => {
+    const [p, q, r, s] = [a, b, c, d].map(([frame, along, lateral, lift]) => corner(frame, along, lateral, lift));
+    buckets[bucket].push(p, q, r, p, r, s);
+  };
+  const strip = (bucket, i, lateralA, lateralB, lift) => {
+    const f = frames[i];
+    const g = frames[(i + 1) % count];
+    quad(bucket, [f, 0, lateralA, lift], [g, 0, lateralA, lift], [g, 0, lateralB, lift], [f, 0, lateralB, lift]);
+  };
+  const box = (bucket, frame, a0, a1, l0, l1, h0, h1) => {
+    quad(bucket, [frame, a0, l0, h0], [frame, a1, l0, h0], [frame, a1, l0, h1], [frame, a0, l0, h1]);
+    quad(bucket, [frame, a0, l1, h0], [frame, a1, l1, h0], [frame, a1, l1, h1], [frame, a0, l1, h1]);
+    quad(bucket, [frame, a0, l0, h1], [frame, a1, l0, h1], [frame, a1, l1, h1], [frame, a0, l1, h1]);
+    quad(bucket, [frame, a0, l0, h0], [frame, a0, l1, h0], [frame, a0, l1, h1], [frame, a0, l0, h1]);
+    quad(bucket, [frame, a1, l0, h0], [frame, a1, l1, h0], [frame, a1, l1, h1], [frame, a1, l0, h1]);
+  };
+
+  // Asphalt, white edge lines and a dashed centre line.
+  for (let i = 0; i < count; i += 1) {
+    strip("asphalt", i, -halfWidth, halfWidth, 0.12);
+    strip("white", i, -halfWidth + 0.2, -halfWidth + 0.45, 0.14);
+    strip("white", i, halfWidth - 0.45, halfWidth - 0.2, 0.14);
+    if (i % 4 < 2) strip("white", i, -0.12, 0.12, 0.14);
   }
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-  geometry.setIndex(indices);
-  geometry.computeVertexNormals();
-  const material = new THREE.MeshStandardMaterial({ color: 0x2b2b30, roughness: 0.92, side: THREE.DoubleSide });
-  raceTrackGroup = new THREE.Mesh(geometry, material);
+
+  // Concrete barriers on the inside of the oval.
+  for (let i = 0; i < count; i += 1) {
+    const f = frames[i];
+    const g = frames[(i + 1) % count];
+    const side = -outward(f);
+    const wallLateral = side * (halfWidth + 0.5);
+    quad("barrier", [f, 0, wallLateral, 0.12], [g, 0, wallLateral, 0.12], [g, 0, wallLateral, 1.0], [f, 0, wallLateral, 1.0]);
+    quad("barrier", [f, 0, wallLateral, 1.0], [g, 0, wallLateral, 1.0], [g, 0, wallLateral + side * 0.3, 1.0], [f, 0, wallLateral + side * 0.3, 1.0]);
+  }
+
+  // Checkered start/finish band across the track at point 0.
+  const start = frames[0];
+  for (let cell = 0; cell < 8; cell += 1) {
+    const l0 = -halfWidth + cell * 0.6;
+    const l1 = l0 + 0.6;
+    for (let row = 0; row < 2; row += 1) {
+      const a0 = -0.6 + row * 0.6;
+      const a1 = a0 + 0.6;
+      quad((cell + row) % 2 ? "black" : "white", [start, a0, l0, 0.15], [start, a0, l1, 0.15], [start, a1, l1, 0.15], [start, a1, l0, 0.15]);
+    }
+  }
+
+  // Yellow and black gantry over the finish line.
+  for (let band = 0; band < 6; band += 1) {
+    const bucket = band % 2 ? "black" : "yellow";
+    const h0 = 0.12 + band;
+    box(bucket, start, -0.3, 0.3, halfWidth + 1.0, halfWidth + 1.6, h0, h0 + 1);
+    box(bucket, start, -0.3, 0.3, -halfWidth - 1.6, -halfWidth - 1.0, h0, h0 + 1);
+  }
+  box("gantry", start, -0.5, 0.5, -halfWidth - 1.6, halfWidth + 1.6, 6.12, 6.9);
+
+  // Stepped grandstand on the outside of the right-hand straight.
+  for (let i = 0; i < count; i += 1) {
+    if (i > 8 && i < 40) continue;
+    const f = frames[i];
+    const g = frames[(i + 1) % count];
+    const side = outward(f);
+    for (let tier = 0; tier < 4; tier += 1) {
+      const l0 = side * (halfWidth + 3.5 + tier * 1.5);
+      const l1 = side * (halfWidth + 3.5 + (tier + 1) * 1.5);
+      const riserBase = 0.12 + tier;
+      const top = 0.12 + tier + 1;
+      quad("stand", [f, 0, l0, riserBase], [g, 0, l0, riserBase], [g, 0, l0, top], [f, 0, l0, top]);
+      quad("seat", [f, 0, l0, top], [g, 0, l0, top], [g, 0, l1, top], [f, 0, l1, top]);
+    }
+  }
+
+  raceTrackGroup = new THREE.Group();
+  const materials = {
+    asphalt: 0x3b3d42,
+    white: 0xf2f2f2,
+    black: 0x151515,
+    barrier: 0xc9ccd1,
+    stand: 0x80858e,
+    seat: 0x9aa0a8,
+    yellow: 0xf2c230,
+    gantry: 0x2b2d33,
+  };
+  for (const [key, list] of Object.entries(buckets)) {
+    if (!list.length) continue;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(list.flatMap(({ x, y, z }) => [x, y, z]), 3));
+    geometry.computeVertexNormals();
+    const material = new THREE.MeshStandardMaterial({ color: materials[key], roughness: 0.9, side: THREE.DoubleSide });
+    raceTrackGroup.add(new THREE.Mesh(geometry, material));
+  }
   scene.add(raceTrackGroup);
 }
 
@@ -3702,7 +3838,7 @@ function updateRacingArenaPanel() {
   const inArena = Boolean(raceTrackCenter) &&
     Math.hypot(playerPosition.x - raceTrackCenter.x, playerPosition.z - raceTrackCenter.z) <= raceTrackRadius + 6;
   const drivingRaceCar = Boolean(state.vehicleId?.startsWith("race-car-"));
-  const shouldShow = inArena || drivingRaceCar;
+  const shouldShow = inArena && !drivingRaceCar;
   racingArenaPanel.hidden = !shouldShow;
 }
 
@@ -6422,6 +6558,10 @@ window.addEventListener("keydown", (event) => {
     fishAtHarbor();
     return;
   }
+  if (event.code === "KeyT" && !event.repeat) {
+    if (state.connected && state.health > 0) sendLobbyMessage({ type: "repair_vehicle" });
+    return;
+  }
   if (event.code === "KeyG" && !event.repeat) {
     event.preventDefault();
     requestFlight(!state.isFlying);
@@ -6589,7 +6729,18 @@ function playerOccupiesSolidBlock(x, z, eyeY) {
   return false;
 }
 
+// Mirrors the server's entityCanOccupy footprint (radius 0.3) so the client never
+// walks into a spot the server will reject; a mismatch causes snap-back jitter.
 function hasWallAt(x, z, eyeY) {
+  for (const offsetX of [-0.3, 0, 0.3]) {
+    for (const offsetZ of [-0.3, 0, 0.3]) {
+      if (hasBlockColumnAt(x + offsetX, z + offsetZ, eyeY)) return true;
+    }
+  }
+  return false;
+}
+
+function hasBlockColumnAt(x, z, eyeY) {
   const feetY = Math.floor(eyeY - 1.65 + 0.05);
   const blockX = Math.round(wrapPlanetX(x));
   const blockZ = Math.round(z);
@@ -6604,6 +6755,48 @@ function hasWallAt(x, z, eyeY) {
     ) return true;
   }
   return false;
+}
+
+// Mirrors the server's vehicleFootprint and vehicleHasGroundClearance so a car
+// is never driven into a spot the server would reject.
+const GROUND_VEHICLE_FOOTPRINTS = {
+  car: { halfWidth: 1.05, halfLength: 1.75 },
+  police: { halfWidth: 1.05, halfLength: 1.75 },
+  tank: { halfWidth: 1.45, halfLength: 1.9 },
+};
+
+function vehicleClearanceAt(footprint, x, z, yaw) {
+  const ground = terrainHeightAt(x, z, state.seed);
+  if (ground < 0) return false;
+  const cos = Math.cos(yaw);
+  const sin = Math.sin(yaw);
+  const blockMargin = (Math.abs(cos) + Math.abs(sin)) / 2;
+  const searchRadius = Math.ceil(Math.hypot(footprint.halfWidth, footprint.halfLength) + 1);
+  for (let blockX = Math.floor(x) - searchRadius; blockX <= Math.ceil(x) + searchRadius; blockX += 1) {
+    for (let blockZ = Math.floor(z) - searchRadius; blockZ <= Math.ceil(z) + searchRadius; blockZ += 1) {
+      const dx = wrapPlanetX(blockX - x);
+      const dz = blockZ - z;
+      const localX = dx * cos - dz * sin;
+      const localZ = dx * sin + dz * cos;
+      if (
+        Math.abs(localX) > footprint.halfWidth + blockMargin ||
+        Math.abs(localZ) > footprint.halfLength + blockMargin
+      ) continue;
+      if (terrainHeightAt(blockX, blockZ, state.seed) > ground) return false;
+      for (let blockY = ground + 1; blockY <= ground + 2; blockY += 1) {
+        const type = worldBlocks.get(blockKey(blockX, blockY, blockZ));
+        if (type && type !== "water") return false;
+      }
+    }
+  }
+  return true;
+}
+
+function groundBlockedAt(x, z, eyeY, yaw) {
+  if (hasWallAt(x, z, eyeY)) return true;
+  const vehicleType = state.vehicles.find(({ id }) => id === state.vehicleId)?.type;
+  const footprint = GROUND_VEHICLE_FOOTPRINTS[vehicleType];
+  return footprint ? !vehicleClearanceAt(footprint, x, z, yaw) : false;
 }
 
 function waterSurfaceEyeAt(x, z) {
@@ -6986,7 +7179,7 @@ function updateMovement(delta) {
     if (nextPosition.yaw !== look.yaw) {
       const nextGround = groundEyeAt(nextX, nextZ, playerPosition.y);
       if (
-        !hasWallAt(nextX, nextZ, grounded ? nextGround : playerPosition.y) &&
+        !groundBlockedAt(nextX, nextZ, grounded ? nextGround : playerPosition.y, nextPosition.yaw) &&
         (!grounded || nextGround <= currentGround + 1.05)
       ) {
         playerPosition.x = nextX;
@@ -6997,7 +7190,7 @@ function updateMovement(delta) {
     } else {
       const nextXGround = groundEyeAt(nextX, playerPosition.z, playerPosition.y);
       if (
-        !hasWallAt(nextX, playerPosition.z, grounded ? nextXGround : playerPosition.y) &&
+        !groundBlockedAt(nextX, playerPosition.z, grounded ? nextXGround : playerPosition.y, look.yaw) &&
         (!grounded || nextXGround <= currentGround + 1.05)
       ) {
         playerPosition.x = nextX;
@@ -7006,7 +7199,7 @@ function updateMovement(delta) {
       const nextZGround = groundEyeAt(playerPosition.x, nextZ, playerPosition.y);
       const nowGround = groundEyeAt(playerPosition.x, playerPosition.z, playerPosition.y);
       if (
-        !hasWallAt(playerPosition.x, nextZ, grounded ? nextZGround : playerPosition.y) &&
+        !groundBlockedAt(playerPosition.x, nextZ, grounded ? nextZGround : playerPosition.y, look.yaw) &&
         (!grounded || nextZGround <= nowGround + 1.05)
       ) {
         playerPosition.z = nextZ;

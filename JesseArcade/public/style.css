@@ -159,6 +159,10 @@ body {
     --game-accent: #53d7a0;
 }
 
+.prime-upcoming-menu-card {
+    --game-accent: #00a8e1;
+}
+
 .game-menu-icon {
     display: grid;
     width: 54px;
@@ -225,7 +229,8 @@ body {
     background: rgba(131, 209, 122, 0.16);
 }
 
-#jesseCraftFrame {
+#jesseCraftFrame,
+#primeUpcomingFrame {
     width: 100%;
     min-height: 0;
     flex: 1;
@@ -237,6 +242,120 @@ body {
     min-height: 0;
     flex: 1;
     border: 0;
+}
+
+#minicraftFrame {
+    width: 100%;
+    min-height: 0;
+    flex: 1;
+    border: 0;
+}
+
+.minicraft-lobby {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 16px;
+    padding: 24px;
+    overflow: auto;
+    color: #fff;
+}
+
+.minicraft-lobby[hidden],
+#minicraftFrame[hidden] {
+    display: none;
+}
+
+.minicraft-lobby-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: min(360px, 90vw);
+    padding: 18px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 12px;
+    background: #171e30;
+}
+
+.minicraft-lobby-panel h2 {
+    margin: 0;
+    font-size: 18px;
+}
+
+.minicraft-lobby-panel label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 13px;
+    opacity: 0.85;
+}
+
+.minicraft-lobby-panel input {
+    padding: 7px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    background: #0f1714;
+    color: #fff;
+    font: inherit;
+    font-size: 14px;
+}
+
+.minicraft-lobby-panel button {
+    padding: 8px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    background: rgba(131, 209, 122, 0.16);
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+}
+
+.minicraft-lobby-panel button:hover,
+.minicraft-lobby-panel button:focus-visible {
+    border-color: #83d17a;
+    outline: none;
+}
+
+.minicraft-lobby-note,
+.minicraft-lobby-empty {
+    margin: 0;
+    font-size: 13px;
+    opacity: 0.75;
+}
+
+.minicraft-lobby-list-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.minicraft-lobby-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    max-height: 240px;
+    overflow: auto;
+}
+
+.minicraft-lobby-list li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: #0f1714;
+    font-size: 13px;
+}
+
+.minicraft-solo {
+    background: rgba(255, 255, 255, 0.08) !important;
 }
 
 .pokemon-toolbar {
