@@ -34,6 +34,7 @@ jobs:
         run: |
           npm ci
           npm ci --prefix JesseArcade
+          npm ci --prefix tv
 
       - name: Run tests
         run: |
@@ -42,6 +43,8 @@ jobs:
 
       - name: Build JesseCraft for the arcade
         run: npm run build:arcade
+      - name: Build tv app
+        run: npm run build --prefix tv
 
       - name: Package release
         run: |
@@ -230,6 +233,7 @@ jobs:
 
           npm ci --omit=dev
           npm ci --omit=dev --prefix JesseArcade
+          npm ci --omit=dev --prefix tv
 
           install -m 0644 \
             "$release/deploy/voxland.service" \
